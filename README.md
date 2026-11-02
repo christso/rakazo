@@ -1,8 +1,8 @@
 # Multi-account dogfooding evidence
 
-This branch contains review-only evidence for the multi-account implementation at
-`ad5ac51ff6d1e107bd80bc0db0ff2b63ac966951`. It has independent history and targets an empty orphan base so this
-review can be closed without merging evidence into the application.
+This branch contains review-only evidence for [the multi-account implementation](https://github.com/elie222/rakazo/pull/3123).
+It has independent history and targets an empty orphan base so this review can be
+closed without merging evidence into the application.
 
 These are browser dogfooding captures from the actual two-account journey against
 an isolated local API with fictional accounts. They are not captures from a live
@@ -12,6 +12,18 @@ The journey adds and switches saved accounts without another credential prompt,
 checks each account's unread count, receives a hidden account's notification and
 opens the correct account/chat, follows an account change in another tab, rejects
 a stale-account request, and signs out one or all accounts. It passed.
+
+## Account menu
+
+The account list opens only after selecting “Switch accounts”. The menu keeps the
+current identity visible. Each account's unread count and the selected checkmark
+remain in the picker. Adding an account is also inside that picker.
+
+![Account menu](screenshots/account-menu.png)
+
+Receiving a hidden account's notification leaves the current account displayed.
+Only tapping verifies and selects the owning account before opening its chat.
+The updated real browser journey passed at desktop and phone widths.
 
 ## Desktop switcher
 
