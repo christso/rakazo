@@ -23,7 +23,9 @@ remain in the picker. Adding an account is also inside that picker.
 
 Receiving a hidden account's notification leaves the current account displayed.
 Only tapping verifies and selects the owning account before opening its chat.
-The updated real browser journey passed at desktop and phone widths.
+The updated real browser journey passed at desktop and phone widths. It passed again
+after integrating upstream revision `c511b0477`, preserving the native notification
+lifecycle fix alongside account isolation. Native-device acceptance remains unverified.
 
 ## Desktop switcher
 
