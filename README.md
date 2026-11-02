@@ -1,63 +1,57 @@
 # Multi-account dogfooding evidence
 
-This branch contains review-only evidence for [the multi-account implementation](https://github.com/elie222/rakazo/pull/3123).
-It has independent history and targets an empty orphan base so this review can be
-closed without merging evidence into the application.
+Review captures for [the multi-account implementation](https://github.com/elie222/rakazo/pull/3123).
+This branch has independent history and targets an empty orphan base. The draft
+can be closed after review without merging evidence into the application.
 
-These are browser dogfooding captures from the actual two-account journey against
-an isolated local API with fictional accounts. They are not captures from a live
-deployment. No private account data, credentials or production services were used.
-
-The journey adds and switches saved accounts without another credential prompt,
-checks each account's unread count, receives a hidden account's notification and
-opens the correct account/chat, follows an account change in another tab, rejects
-a stale-account request, and signs out one or all accounts. It passed.
+These screenshots show the browser journey at feature revision `aabeb1f1f69d81d4055ac776a92fd0a37f65f323`,
+which combines upstream `149fdd606`, the maintainer's published cleanup through
+`c3e00c0d0`, and the account picker. They use fictional accounts against an
+isolated API. No production services or private account data were used.
 
 ## Account menu
 
-The account list opens only after selecting “Switch accounts”. The menu keeps the
-current identity visible. Each account's unread count and the selected checkmark
-remain in the picker. Adding an account is also inside that picker.
+The current identity stays visible. The account list and Add account action open
+only after selecting “Switch accounts”.
 
 ![Account menu](screenshots/account-menu.png)
 
-Receiving a hidden account's notification leaves the current account displayed.
-Only tapping verifies and selects the owning account before opening its chat.
-The updated real browser journey passed at desktop and phone widths. It passed again
-after integrating upstream revision `c511b0477`, preserving the native notification
-lifecycle fix alongside account isolation. Native-device acceptance remains unverified.
+## Desktop account picker
 
-## Desktop switcher
+The picker retains account avatars, names, emails, unread counts and the selected
+checkmark from the maintainer's layout.
 
-![Desktop account switcher](screenshots/switcher-desktop.png)
+![Desktop account picker](screenshots/switcher-desktop.png)
 
-## Phone-width browser switcher
+## Phone-width browser picker
 
-![Phone-width account switcher](screenshots/switcher-phone.png)
+![Phone-width browser picker](screenshots/switcher-phone.png)
 
-This is a responsive browser capture, not an iOS or Android device screenshot.
+This is a responsive browser capture, not a native mobile screenshot.
 
 ## Hidden-account unread count
 
-![Hidden account unread count](screenshots/unread.png)
+Receiving another account's notification leaves the current account displayed.
+Tapping verifies and selects the owning saved account before opening its chat.
 
-## Verification limits
-
-Focused offline tests, Postgres tests, the browser journey, type checks, lint and
-the web production build passed. Three unrelated full-suite shell/backup failures
-were reproduced on pristine starting-revision source.
-
-Physical-device push permissions/delivery, native Kotlin compilation and native
-simulator screenshots remain unverified. The implementation adds a native
-screenshot-catalog flow, but that flow was not run.
-
-This draft contains no application code or workflow configuration. It is intended
-for review and closure, not merge or deployment.
+![Hidden-account unread count](screenshots/unread.png)
 
 ## Sign out all confirmation
 
-The follow-up browser journey verifies that cancelling preserves both saved logins,
-then confirming removes both sessions. This screenshot shows the shared confirmation
-dialog from the feature follow-up in [the implementation PR](https://github.com/elie222/rakazo/pull/3123).
+Cancelling preserves both saved logins. Confirming removes both sessions.
 
 ![Sign out all confirmation](screenshots/sign-out-all.png)
+
+## Verification
+
+The real browser journey passed for adding and switching accounts, unread counts,
+hidden-account notification routing, tab refresh, stale-request rejection and
+independent/all-account sign-out. Focused unit tests, three PostgreSQL suites,
+workspace typechecks, lint and the web production build also passed.
+
+Physical-device push delivery, native compilation and the iOS screenshot flow
+remain unverified. This evidence does not cover the maintainer's additional
+unpublished rewrite; integrating that pass needs a published ref.
+
+This draft contains no application code or workflow configuration. It is for
+review and closure, not merge or deployment.
