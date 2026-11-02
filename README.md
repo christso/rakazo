@@ -39,3 +39,11 @@ screenshot-catalog flow, but that flow was not run.
 
 This draft contains no application code or workflow configuration. It is intended
 for review and closure, not merge or deployment.
+
+## Sign out all confirmation
+
+The follow-up browser journey verifies that cancelling preserves both saved logins,
+then confirming removes both sessions. This screenshot shows the shared confirmation
+dialog from the feature follow-up in [the implementation PR](https://github.com/elie222/rakazo/pull/3123).
+
+![Sign out all confirmation](screenshots/sign-out-all.png)
