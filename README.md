@@ -62,9 +62,12 @@ Physical-device push delivery, native compilation and the iOS screenshot flow
 remain unverified. Each browser account poll scans up to 500 recent events and
 returns up to 50 eligible notices from the past 24 hours. Older eligible alerts
 beyond the scan can be omitted. This evidence does not cover the maintainer's additional
-unpublished rewrite; integrating that pass needs a published ref. One review
-finding remains open: the browser feed can alert on creation greetings, progress
-posts or empty completions that push suppresses. Deployment is not yet ready.
+unpublished rewrite; integrating that pass needs a published ref. Two review
+findings remain open: the browser feed can alert on creation greetings, progress
+posts or empty completions that push suppresses; changing servers can remove local
+accounts without revoking their old-server sessions and push registrations. Both
+need consolidation with the unpublished feed/native-session rewrite. Deployment
+is not yet ready.
 
 ## Migration overlap check
 
