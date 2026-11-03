@@ -4,7 +4,8 @@ Review captures for [the multi-account implementation](https://github.com/elie22
 This branch has independent history and targets an empty orphan base. The draft
 can be closed after review without merging evidence into the application.
 
-These screenshots show the browser journey at feature revision `fb91575ccd802e00abfc9891e9bcf1edf1eb9e07`,
+These screenshots show the browser journey at revision `fb91575ccd802e00abfc9891e9bcf1edf1eb9e07`.
+The current feature revision is `cfa9d6a4dca93a1799d1fa35366793ba87b013a8`,
 which combines upstream `b61e0094a`, the maintainer's published cleanup through
 `c3e00c0d0`, and the account picker. They use fictional accounts against an
 isolated API. No production services or private account data were used.
@@ -65,6 +66,15 @@ unpublished rewrite; integrating that pass needs a published ref. One review
 finding remains open: the browser feed can alert on creation greetings, progress
 posts or empty completions that push suppresses. Deployment is not yet ready.
 
+## Migration overlap check
+
+`checks/migration-overlap.cjs` is a standalone review check using the feature
+checkout’s existing PostgreSQL test dependencies and a disposable local container.
+Run it with that checkout as the working directory. It loads the actual migration
+and pauses after backfill, before trigger setup. Two checks reproduced unregister
+and rotation races in the pre-fix migration; four checks verified concurrent
+unregister, rotation, registration and token transfer after the fix.
+
 ## Deployment handoff
 
 The feature branch is `feat/multi-account-notifications`. The reported deployed
@@ -72,7 +82,8 @@ revision `de8b7a890e4804831baa5b57e276a09a4f191981` is an ancestor: this patch a
 includes intervening upstream changes. It is not a patch limited to that release.
 
 The migration adds and backfills `push_registrations`, retaining `push_tokens`
-and synchronizing legacy unregisters and rotations during API overlap. Deploy
+and synchronizing legacy unregisters and rotations during API overlap. The copy
+and trigger setup run in one transaction with a lock on the legacy table. Deploy
 both API and worker with the configured auth origin. Full multi-account delivery
 requires the new worker; old workers can represent only one owner per shared
 device token. Roll back application code while retaining the additive database
