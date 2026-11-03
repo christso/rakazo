@@ -4,8 +4,8 @@ Review captures for [the multi-account implementation](https://github.com/elie22
 This branch has independent history and targets an empty orphan base. The draft
 can be closed after review without merging evidence into the application.
 
-These screenshots show the browser journey at feature revision `a800b0dc8b01486a0124ed06999129896275347c`,
-which combines upstream `28e1ba52c`, the maintainer's published cleanup through
+These screenshots show the browser journey at feature revision `fb91575ccd802e00abfc9891e9bcf1edf1eb9e07`,
+which combines upstream `b61e0094a`, the maintainer's published cleanup through
 `c3e00c0d0`, and the account picker. They use fictional accounts against an
 isolated API. No production services or private account data were used.
 
@@ -53,15 +53,17 @@ PostgreSQL run passed 57 tests, including legacy API unregisters and token rotat
 The full unit run at consolidation revision `41a508e83` passed 20,268 tests and skipped 737; three shell/backup tests
 failed in the same way already reproduced on unchanged baseline source. The first
 final browser run hit Chromium ERR_NETWORK_CHANGED during module loading while
-the full suite ran; the isolated retry passed in 42.7 seconds. After the review follow-up, 383 focused
-tests, the seven-test PostgreSQL account-feed suite, workspace typechecks and lint
-passed. The final real browser journey passed in 43.0 seconds.
+the full suite ran; the isolated retry passed in 42.7 seconds. After the review follow-up, 432 focused
+tests, all 57 PostgreSQL tests, workspace typechecks and lint
+passed. The final real browser journey passed in 42.9 seconds.
 
 Physical-device push delivery, native compilation and the iOS screenshot flow
 remain unverified. Each browser account poll scans up to 500 recent events and
 returns up to 50 eligible notices from the past 24 hours. Older eligible alerts
 beyond the scan can be omitted. This evidence does not cover the maintainer's additional
-unpublished rewrite; integrating that pass needs a published ref.
+unpublished rewrite; integrating that pass needs a published ref. One review
+finding remains open: the browser feed can alert on creation greetings, progress
+posts or empty completions that push suppresses. Deployment is not yet ready.
 
 ## Deployment handoff
 
