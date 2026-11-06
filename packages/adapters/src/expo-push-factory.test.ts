@@ -166,3 +166,28 @@ it.each(["file:///tmp/server", "rakazo://thread"])(
     expect(() => createExpoPushProvider(prisma, tokens, { authUrl })).toThrow("Push server URL");
   },
 );
+
+it("keeps the configured native call transport in the shared composition", async () => {
+  const { prisma, tokens } = await fixture();
+  const voip = { send: vi.fn(async () => "sent" as const) };
+  const call = {
+    callId: "call",
+    botId: "bot",
+    botName: "Caller",
+    expiresAt: new Date(Date.now() + 60_000).toISOString(),
+  };
+  Object.assign(tokens, {
+    devices: async () => [
+      {
+        deviceId: "device",
+        userId: "family",
+        sessionId: "family-session",
+        revision: "revision",
+        platform: "ios",
+        voipToken: "synthetic-voip-token",
+      },
+    ],
+  });
+  await createExpoPushProvider(prisma, tokens, { voip }).incomingCall("family", call);
+  expect(voip.send).toHaveBeenCalledExactlyOnceWith("synthetic-voip-token", call);
+});

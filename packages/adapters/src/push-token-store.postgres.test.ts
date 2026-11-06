@@ -74,6 +74,28 @@ suite("database push registrations", () => {
     });
   });
 
+  it("keeps the native presentation capability across replicas and clears it on legacy registration", async () => {
+    await api.save(user("a"), token("a"), session("a"), "android_sender");
+    expect((await worker.load(user("a")))?.presentation).toBe("android_sender");
+    await api.save(user("a"), token("a"), session("a"));
+    expect((await worker.load(user("a")))?.presentation).toBeUndefined();
+  });
+
+  it("honors presentation changes made through the previous-release table", async () => {
+    await api.save(user("a"), token("a"), session("a"), "android_sender");
+    await runAsSystem("simulate an overlapping single-account registration", () =>
+      a.prisma.pushToken.update({ where: { userId: user("a") }, data: { presentation: null } }),
+    );
+    expect((await worker.load(user("a")))?.presentation).toBeUndefined();
+    await runAsSystem("simulate a sender-capable single-account registration", () =>
+      a.prisma.pushToken.update({
+        where: { userId: user("a") },
+        data: { presentation: "android_sender" },
+      }),
+    );
+    expect((await worker.load(user("a")))?.presentation).toBe("android_sender");
+  });
+
   it("retains every account when the same device registers concurrently", async () => {
     await Promise.all([
       api.save(user("a"), token("shared"), session("a")),

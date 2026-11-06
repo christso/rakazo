@@ -61,6 +61,7 @@ vi.mock("./live-notifications", () => ({
   getLiveNotificationSettings: state.notifications,
 }));
 vi.mock("./server-headers", () => ({
+  serverHeaders: () => ({}),
   fetchServer: (...args: Parameters<typeof fetch>) => fetch(...args),
 }));
 vi.mock("./i18n", () => ({ t: (text: string) => text }));

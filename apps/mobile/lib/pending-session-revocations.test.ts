@@ -16,7 +16,7 @@ vi.mock("expo-secure-store", () => ({
   }),
 }));
 vi.mock("./server-headers", () => ({
-  fetchServer: (...args: Parameters<typeof fetch>) => fetch(...args),
+  serverHeaders: () => ({}),
 }));
 
 const apiBase = "https://app.example.test";
@@ -46,20 +46,23 @@ it("retains failed remote sign-outs for a later bounded bearer-only retry", asyn
       headers: expect.objectContaining({ authorization: "Bearer family-token" }),
       signal: expect.any(AbortSignal),
     }),
-    apiBase,
   );
 });
 
-it("keeps each queued sign-out under its own key and drops an unreadable queue", async () => {
+it("deduplicates queued sign-outs and migrates legacy per-key tombstones", async () => {
   await queueSessionRevocation(apiBase, "family-token");
   await queueSessionRevocation(apiBase, "work-token");
   await queueSessionRevocation(apiBase, "work-token");
-  expect([...disk.keys()].filter((key) => key.startsWith("rakazo.revocation."))).toHaveLength(2);
+  expect(JSON.parse(disk.get("rakazo.pending_sign_out")!)).toHaveLength(2);
   expect(await pendingSessionTokens(apiBase)).toEqual(new Set(["family-token", "work-token"]));
-  const workKey = [...disk.keys()].find((key) => disk.get(key) === "work-token")!;
-  disk.delete(workKey);
-  expect(await pendingSessionTokens(apiBase)).toEqual(new Set(["family-token"]));
-  disk.set("rakazo.revocations", "{not json");
+  disk.set("rakazo.revocations", JSON.stringify([{ id: "legacy-login", apiBase }]));
+  disk.set("rakazo.revocation.legacy-login", "legacy-token");
+  expect(await pendingSessionTokens(apiBase)).toEqual(
+    new Set(["family-token", "work-token", "legacy-token"]),
+  );
+  expect(disk.has("rakazo.revocations")).toBe(false);
+  expect(disk.has("rakazo.revocation.legacy-login")).toBe(false);
+  disk.set("rakazo.pending_sign_out", "{not json");
   expect(await pendingSessionTokens(apiBase)).toEqual(new Set());
   await queueSessionRevocation(apiBase, "family-token");
   expect(await pendingSessionTokens(apiBase)).toEqual(new Set(["family-token"]));
@@ -77,7 +80,8 @@ it("retries only the configured server and keeps HTTP failures queued", async ()
   expect(await pendingSessionTokens("https://other.example.test")).toEqual(new Set(["work-token"]));
   vi.mocked(fetch).mockResolvedValueOnce(Response.json({}, { status: 401 }));
   await retryPendingSessionRevocations(apiBase);
-  expect(await pendingSessionTokens(apiBase)).toEqual(new Set(["family-token"]));
+  expect(await pendingSessionTokens(apiBase)).toEqual(new Set());
+  await queueSessionRevocation(apiBase, "family-token");
   vi.mocked(fetch).mockResolvedValueOnce(Response.json({ success: true }));
   await retryPendingSessionRevocations(apiBase);
   expect(await pendingSessionTokens(apiBase)).toEqual(new Set());

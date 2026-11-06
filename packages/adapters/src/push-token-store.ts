@@ -6,14 +6,40 @@ import { EncryptedSecretStore } from "./secrets.js";
 export interface PushRecord {
   token: string;
   sessionId?: string;
+  presentation?: "android_sender";
 }
+
+export type CallPushRegistration = {
+  deviceId: string;
+  platform: "ios" | "android";
+  expoToken?: string;
+  voipToken?: string;
+};
+export type CallPushDevice = CallPushRegistration & {
+  userId: string;
+  sessionId: string;
+  revision: string;
+};
 
 /** A login registers its device independently of other accounts and devices. */
 export interface PushTokenStore {
+  saveDevice?(userId: string, registration: CallPushRegistration, sessionId: string): Promise<void>;
+  devices?(userId: string): Promise<CallPushDevice[]>;
+  removeDevice?(
+    userId: string,
+    deviceId: string,
+    revision: string,
+    transport?: "voip" | "expo",
+  ): Promise<void>;
   load(userId: string): Promise<PushRecord | undefined>;
   list(userId: string): Promise<PushRecord[]>;
-  save(userId: string, token: string, sessionId: string): Promise<void>;
-  /** Legacy files cannot replace an account or device already registered. */
+  save(
+    userId: string,
+    token: string,
+    sessionId: string,
+    presentation?: "android_sender",
+  ): Promise<void>;
+  /** Import only when neither the account nor the device is registered already. */
   importLegacy(userId: string, token: string, sessionId: string): Promise<boolean>;
   remove(userId: string, tokenDigest?: string): Promise<void>;
   endSession(userId: string, sessionId: string, nextSessionId?: string): Promise<void>;
@@ -33,6 +59,143 @@ export class PrismaPushTokenStore implements PushTokenStore {
     encryptionKey: string,
   ) {
     this.encryption = new EncryptedSecretStore(encryptionKey);
+  }
+
+  async saveDevice(
+    userId: string,
+    registration: CallPushRegistration,
+    sessionId: string,
+  ): Promise<void> {
+    const id = credentialDigest(registration.deviceId);
+    await runAsSystem("register a call notification device", () =>
+      withTransactionRetry(() =>
+        this.prisma.$transaction(async (tx) => {
+          const locks = [`push-user:${userId}`, `push-device:${id}`];
+          if (registration.expoToken)
+            locks.push(`push-expo:${credentialDigest(registration.expoToken)}`);
+          if (registration.voipToken)
+            locks.push(`push-voip:${credentialDigest(registration.voipToken)}`);
+          for (const lock of locks.sort())
+            await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${lock}, 0))::text`;
+          const sessions = await tx.$queryRaw<
+            Array<{ id: string }>
+          >`SELECT id FROM "session" WHERE id = ${sessionId} AND "userId" = ${userId} AND "expiresAt" > CURRENT_TIMESTAMP FOR UPDATE`;
+          if (!sessions.length) throw new PushSessionEndedError();
+          const existing = await tx.callPushDevice.findUnique({ where: { id } });
+          const previous =
+            existing?.userId === userId
+              ? (JSON.parse(
+                  await this.encryption.load(existing.ciphertext, `call-push:${id}`),
+                ) as CallPushRegistration)
+              : undefined;
+          const merged = { ...previous, ...registration };
+          const sealed = await this.encryption.put(
+            JSON.stringify(merged),
+            {
+              operationId: "push.register",
+              traceId: "push.register",
+              spaceId: "",
+              userId,
+              signal: new AbortController().signal,
+            },
+            { recordId: `call-push:${id}` },
+          );
+          const expoTokenDigest = merged.expoToken ? credentialDigest(merged.expoToken) : null;
+          const voipTokenDigest = merged.voipToken ? credentialDigest(merged.voipToken) : null;
+          // One physical push token has one owner, even after reinstall or account handover.
+          const duplicates = [
+            ...(expoTokenDigest ? [{ expoTokenDigest }] : []),
+            ...(voipTokenDigest ? [{ voipTokenDigest }] : []),
+          ];
+          if (duplicates.length)
+            await tx.callPushDevice.deleteMany({ where: { id: { not: id }, OR: duplicates } });
+          const data = {
+            userId,
+            sessionId,
+            ciphertext: sealed.ciphertext,
+            expoTokenDigest,
+            voipTokenDigest,
+          };
+          await tx.callPushDevice.upsert({ where: { id }, create: { id, ...data }, update: data });
+        }),
+      ),
+    );
+  }
+
+  async devices(userId: string): Promise<CallPushDevice[]> {
+    return runAsSystem("load the call owner's devices", async () => {
+      const rows = await this.prisma.callPushDevice.findMany({ where: { userId } });
+      return Promise.all(
+        rows.map(async (row) => ({
+          ...(JSON.parse(
+            await this.encryption.load(row.ciphertext, `call-push:${row.id}`),
+          ) as CallPushRegistration),
+          userId,
+          sessionId: row.sessionId,
+          revision: row.ciphertext,
+        })),
+      );
+    });
+  }
+
+  async removeDevice(
+    userId: string,
+    deviceId: string,
+    revision: string,
+    transport?: "voip" | "expo",
+  ): Promise<void> {
+    const id = credentialDigest(deviceId);
+    const failed = JSON.parse(
+      await this.encryption.load(revision, `call-push:${id}`),
+    ) as CallPushRegistration;
+    await runAsSystem("remove an invalid call notification token", () =>
+      withTransactionRetry(() =>
+        this.prisma.$transaction(async (tx) => {
+          // Serialized with registration: concurrent invalidations each apply to the latest row.
+          await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`push-device:${id}`}, 0))::text`;
+          const row = await tx.callPushDevice.findUnique({ where: { id } });
+          if (row?.userId !== userId) return;
+          const registration =
+            row.ciphertext === revision
+              ? { ...failed }
+              : (JSON.parse(
+                  await this.encryption.load(row.ciphertext, `call-push:${id}`),
+                ) as CallPushRegistration);
+          // Only the token that actually failed goes; a newer one registered meanwhile stays.
+          if (transport !== "expo" && registration.voipToken === failed.voipToken)
+            delete registration.voipToken;
+          if (transport !== "voip" && registration.expoToken === failed.expoToken)
+            delete registration.expoToken;
+          if (!registration.voipToken && !registration.expoToken) {
+            await tx.callPushDevice.deleteMany({ where: { id, userId } });
+            return;
+          }
+          const sealed = await this.encryption.put(
+            JSON.stringify(registration),
+            {
+              operationId: "push.invalidate",
+              traceId: "push.invalidate",
+              spaceId: "",
+              userId,
+              signal: new AbortController().signal,
+            },
+            { recordId: `call-push:${id}` },
+          );
+          await tx.callPushDevice.updateMany({
+            where: { id, userId },
+            data: {
+              ciphertext: sealed.ciphertext,
+              voipTokenDigest: registration.voipToken
+                ? credentialDigest(registration.voipToken)
+                : null,
+              expoTokenDigest: registration.expoToken
+                ? credentialDigest(registration.expoToken)
+                : null,
+            },
+          });
+        }),
+      ),
+    );
   }
 
   async load(userId: string): Promise<PushRecord | undefined> {
@@ -56,13 +219,21 @@ export class PrismaPushTokenStore implements PushTokenStore {
         rows.map(async (row) => ({
           token: await this.encryption.load(row.ciphertext, `push-token:${userId}`),
           sessionId: row.sessionId,
+          ...(row.presentation === "android_sender"
+            ? { presentation: "android_sender" as const }
+            : {}),
         })),
       );
     });
   }
 
-  async save(userId: string, token: string, sessionId: string): Promise<void> {
-    await this.register(userId, token, sessionId, "register");
+  async save(
+    userId: string,
+    token: string,
+    sessionId: string,
+    presentation?: "android_sender",
+  ): Promise<void> {
+    await this.register(userId, token, sessionId, "register", presentation);
   }
 
   /** The icon counts all valid accounts on this device, rather than the last sender. */
@@ -104,6 +275,7 @@ export class PrismaPushTokenStore implements PushTokenStore {
     token: string,
     sessionId: string,
     mode: "register" | "import",
+    presentation?: "android_sender",
   ): Promise<boolean> {
     const value = token.trim();
     if (!value) throw new Error("Push token is empty");
@@ -139,7 +311,11 @@ export class PrismaPushTokenStore implements PushTokenStore {
           SELECT id FROM "session" WHERE id = ${sessionId} AND "userId" = ${userId}
           AND "expiresAt" > CURRENT_TIMESTAMP FOR UPDATE`;
           if (!sessions.length) throw new PushSessionEndedError();
-          const data = { ciphertext: sealed.ciphertext, tokenDigest };
+          const data = {
+            ciphertext: sealed.ciphertext,
+            tokenDigest,
+            presentation: presentation ?? null,
+          };
           await tx.pushRegistration.upsert({
             where: { userId_sessionId: { userId, sessionId } },
             create: { userId, sessionId, ...data },
@@ -203,8 +379,12 @@ export class PrismaPushTokenStore implements PushTokenStore {
                 update: {},
               });
             }
+            await tx.callPushDevice.updateMany({ where, data: { sessionId: next.id } });
             await tx.pushToken.updateMany({ where, data: { sessionId: next.id } });
-          } else await tx.pushToken.deleteMany({ where });
+          } else {
+            await tx.callPushDevice.deleteMany({ where });
+            await tx.pushToken.deleteMany({ where });
+          }
           await tx.pushRegistration.deleteMany({ where });
         }),
       ),
