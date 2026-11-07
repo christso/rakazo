@@ -2239,6 +2239,10 @@ msgstr "Could not create space"
 msgid "Could not create the bot"
 msgstr "Could not create the bot"
 
+#: src/pages/shell/use-routine-editor.ts
+msgid "Could not create the webhook key"
+msgstr "Could not create the webhook key"
+
 #: src/pages/Onboarding.tsx
 msgid "Could not create your bot"
 msgstr "Could not create your bot"
@@ -4998,6 +5002,10 @@ msgstr "Only enter a code {codeHost} sent you."
 #: src/pages/routine-editor/trigger-cards.tsx
 msgid "Only me"
 msgstr "Only me"
+
+#: src/pages/shell/use-routine-editor.ts
+msgid "Only the bot's creator can set its webhook key."
+msgstr "Only the bot's creator can set its webhook key."
 
 #: src/components/pages/SharePopover.tsx
 msgid "Only you"

@@ -2239,6 +2239,10 @@ msgstr "לא ניתן ליצור את המרחב"
 msgid "Could not create the bot"
 msgstr "לא ניתן ליצור את הבוט"
 
+#: src/pages/shell/use-routine-editor.ts
+msgid "Could not create the webhook key"
+msgstr ""
+
 #: src/pages/Onboarding.tsx
 msgid "Could not create your bot"
 msgstr "לא ניתן ליצור את הבוט"
@@ -4998,6 +5002,10 @@ msgstr "יש להזין רק קוד ש-{codeHost} שלח לך."
 #: src/pages/routine-editor/trigger-cards.tsx
 msgid "Only me"
 msgstr "רק אני"
+
+#: src/pages/shell/use-routine-editor.ts
+msgid "Only the bot's creator can set its webhook key."
+msgstr ""
 
 #: src/components/pages/SharePopover.tsx
 msgid "Only you"

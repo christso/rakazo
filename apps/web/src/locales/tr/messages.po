@@ -2239,6 +2239,10 @@ msgstr "Alan oluşturulamadı"
 msgid "Could not create the bot"
 msgstr "Bot oluşturulamadı"
 
+#: src/pages/shell/use-routine-editor.ts
+msgid "Could not create the webhook key"
+msgstr ""
+
 #: src/pages/Onboarding.tsx
 msgid "Could not create your bot"
 msgstr "Botun oluşturulamadı"
@@ -4998,6 +5002,10 @@ msgstr "Yalnızca {codeHost} tarafından gönderilen kodu gir."
 #: src/pages/routine-editor/trigger-cards.tsx
 msgid "Only me"
 msgstr "Yalnızca ben"
+
+#: src/pages/shell/use-routine-editor.ts
+msgid "Only the bot's creator can set its webhook key."
+msgstr ""
 
 #: src/components/pages/SharePopover.tsx
 msgid "Only you"
