@@ -7848,3 +7848,18 @@ msgstr "Klucz dostawcy głosu został odrzucony."
 #: src/components/vault/VaultItemEditor.tsx
 msgid "ZIP or postal code"
 msgstr "Kod pocztowy"
+
+msgid "Add account"
+msgstr "Dodaj konto"
+
+msgid "Discard unsaved attachments and pending messages?"
+msgstr "Odrzucić niezapisane załączniki i oczekujące wiadomości?"
+
+msgid "Log out all accounts"
+msgstr "Wyloguj ze wszystkich kont"
+
+msgid "Log out all accounts?"
+msgstr "Wylogować ze wszystkich kont?"
+
+msgid "Switch accounts"
+msgstr "Przełącz konta"

@@ -180,6 +180,7 @@ export * from "./routine-watch.js";
 export {
   completionNotificationBody,
   completionNotificationPreview,
+  notifyMemberMessage,
   runEventNotifies,
 } from "./run-notifications.js";
 export * from "./run-runtime.js";

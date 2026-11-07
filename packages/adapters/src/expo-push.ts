@@ -410,22 +410,20 @@ export class ExpoPushProvider implements NotificationProvider {
         const failure =
           expoUnauthorizedError(body, status, this.accessToken) ??
           expoPushErrorMessage(body, status);
-        if (failure) {
-          getLogger().error(failure);
-          throw new Error(failure);
-        }
+        if (failure) throw new Error(failure);
         if (ticket?.id) await this.scheduleReceiptCheck(context.userId, token, ticket.id);
         return "delivered" as const;
       }),
     );
-    for (const [index, result] of results.entries()) {
-      if (result.status === "rejected")
-        getLogger().error("expo push device delivery failed", {
-          deviceDigest: credentialDigest(tokens[index]!),
-        });
-    }
-    if (results.some((result) => result.status === "fulfilled" && result.value === "delivered"))
+    if (results.some((result) => result.status === "fulfilled" && result.value === "delivered")) {
+      for (const [index, result] of results.entries()) {
+        if (result.status === "rejected")
+          getLogger().error("expo push device delivery failed", {
+            deviceDigest: credentialDigest(tokens[index]!),
+          });
+      }
       return "delivered";
+    }
     const failed = results.find((result) => result.status === "rejected");
     if (failed?.status === "rejected") throw failed.reason;
     return "undeliverable";

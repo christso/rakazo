@@ -90,7 +90,10 @@ suite("saved account sessions and notifications (PostgreSQL)", () => {
             },
           });
           await db.prisma.thread.create({
-            data: { id: threadId, botId, userId, spaceId, unread: true },
+            data: { id: threadId, botId, userId, spaceId },
+          });
+          await db.prisma.threadRead.create({
+            data: { threadId, userId, spaceId, unread: true },
           });
           await db.prisma.event.create({
             data: {
@@ -207,6 +210,137 @@ suite("saved account sessions and notifications (PostgreSQL)", () => {
     expect(notifications.some((item) => item.id === `background-${stamp}`)).toBe(false);
   });
 
+  it("notifies shared-space members while keeping attention with the run's user", async () => {
+    const spaceId = `space-${ids.family}`;
+    const organizationId = `org-${ids.family}`;
+    const botId = `bot-${ids.family}-0`;
+    const threadId = `thread-${ids.family}-0`;
+    const memberId = `guest-${stamp}`;
+    await runAsSystem("seed shared account notification fixtures", async () => {
+      await db.prisma.member.create({
+        data: {
+          id: memberId,
+          organizationId,
+          userId: ids.work,
+          role: "guest",
+          createdAt: new Date(),
+        },
+      });
+      await db.prisma.spaceMember.upsert({
+        where: { spaceId_userId: { spaceId, userId: ids.work } },
+        update: { role: "member" },
+        create: {
+          id: memberId,
+          organizationId,
+          spaceId,
+          userId: ids.work,
+          role: "member",
+          createdAt: new Date(),
+        },
+      });
+      for (const [index, userId, trigger, type, payload] of [
+        [
+          0,
+          ids.family,
+          "user",
+          "thread.message.created",
+          { role: "bot", blocks: [{ kind: "text", text: "Shared reply" }] },
+        ],
+        [1, ids.work, "user", "run.failed", { error: "Guest needs attention" }],
+        [2, ids.family, "user", "run.failed", { error: "Owner needs attention" }],
+        [
+          3,
+          ids.family,
+          "bot_message",
+          "thread.message.created",
+          { role: "bot", blocks: [{ kind: "text", text: "Private peer reply" }] },
+        ],
+        [
+          4,
+          ids.family,
+          "bot_message",
+          "thread.message.created",
+          {
+            role: "user",
+            author: { id: ids.family, name: "Family" },
+            blocks: [{ kind: "text", text: "Shared message" }],
+          },
+        ],
+      ] as const) {
+        const data = { userId, spaceId, botId, threadId };
+        const task = await db.prisma.task.create({
+          data: { ...data, prompt: "Fixture", status: "completed" },
+        });
+        const run = await db.prisma.run.create({
+          data: {
+            ...data,
+            taskId: task.id,
+            trigger,
+            status: type === "run.failed" ? "failed" : "completed",
+          },
+        });
+        await db.prisma.event.create({
+          data: {
+            id: `shared-${stamp}-${index}`,
+            spaceId,
+            botId,
+            threadId,
+            runId: run.id,
+            seq: index + 10,
+            type,
+            payload,
+          },
+        });
+      }
+    });
+    try {
+      const body = (await (
+        await request("/api/accounts", { headers: { cookie: cookie() } })
+      ).json()) as AccountSessions;
+      const notices = (userId: string) =>
+        body.accounts.find((account) => account.userId === userId)!.notifications;
+      const work = notices(ids.work);
+      expect(work).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ id: `shared-${stamp}-0`, body: "Shared reply" }),
+          expect.objectContaining({ id: `shared-${stamp}-1`, kind: "failure" }),
+          expect.objectContaining({ id: `shared-${stamp}-4`, body: "Family: Shared message" }),
+        ]),
+      );
+      expect(
+        work.some(
+          (notice) => notice.id === `shared-${stamp}-2` || notice.id === `shared-${stamp}-3`,
+        ),
+      ).toBe(false);
+      const family = notices(ids.family);
+      expect(
+        family.some(
+          (notice) => notice.id === `shared-${stamp}-1` || notice.id === `shared-${stamp}-4`,
+        ),
+      ).toBe(false);
+      expect(family).toEqual(
+        expect.arrayContaining([expect.objectContaining({ id: `shared-${stamp}-2` })]),
+      );
+      await runAsSystem("remove shared fixture membership", () =>
+        db.prisma.spaceMember.delete({ where: { spaceId_userId: { spaceId, userId: ids.work } } }),
+      );
+      const after = (await (
+        await request("/api/accounts", { headers: { cookie: cookie() } })
+      ).json()) as AccountSessions;
+      expect(
+        after.accounts
+          .find((account) => account.userId === ids.work)!
+          .notifications.some((notice) => notice.spaceId === spaceId),
+      ).toBe(false);
+    } finally {
+      await runAsSystem("remove shared account notification fixtures", async () => {
+        await db.prisma.event.deleteMany({ where: { id: { startsWith: `shared-${stamp}-` } } });
+        await db.prisma.spaceMember.deleteMany({ where: { spaceId, userId: ids.work } });
+        await db.prisma.member.delete({ where: { id: memberId } });
+      });
+    }
+  });
+
   it("excludes a saved account's private notifications when live sign-in policy rejects its session", async () => {
     await runAsSystem("require verification for the fixture account", () =>
       db.prisma.user.update({ where: { id: ids.family }, data: { emailVerified: false } }),
@@ -259,6 +393,16 @@ suite("saved account sessions and notifications (PostgreSQL)", () => {
     const spaceId = `space-${userId}`;
     const botId = `bot-${userId}-0`;
     const threadId = `thread-${userId}-0`;
+    const runId = await runAsSystem("seed attention run", async () => {
+      const data = { userId, spaceId, botId, threadId };
+      const task = await db.prisma.task.create({
+        data: { ...data, prompt: "Fixture", status: "failed" },
+      });
+      const run = await db.prisma.run.create({
+        data: { ...data, taskId: task.id, trigger: "user", status: "failed" },
+      });
+      return run.id;
+    });
     const older = new Date(Date.now() - 60_000);
     const events = [
       ...Array.from({ length: 110 }, (_, index) => ({
@@ -273,6 +417,7 @@ suite("saved account sessions and notifications (PostgreSQL)", () => {
       })),
       ...["run.failed", "run.waiting_input", "computer.takeover.requested"].map((type, index) => ({
         id: `attention-${stamp}-${index}`,
+        runId,
         spaceId,
         botId,
         threadId,

@@ -274,14 +274,18 @@ suite("database push registrations", () => {
               createdAt: new Date(),
             },
           });
-          await a.prisma.bot.create({
+          const bot = await a.prisma.bot.create({
             data: {
               spaceId: space.id,
               userId: user(id),
               name: "Fixture",
               color: "blue",
-              thread: { create: { spaceId: space.id, userId: user(id), unread: true } },
+              thread: { create: { spaceId: space.id, userId: user(id) } },
             },
+            include: { thread: true },
+          });
+          await a.prisma.threadRead.create({
+            data: { threadId: bot.thread!.id, spaceId: space.id, userId: user(id), unread: true },
           });
         }
       });

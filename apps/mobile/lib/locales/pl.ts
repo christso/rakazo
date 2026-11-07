@@ -1,4 +1,11 @@
 export const PL_MESSAGES: Record<string, string> = {
+  "Add account": "Dodaj konto",
+  "Could not sign out of every account": "Nie udało się wylogować ze wszystkich kont",
+  "Sign in to open this account": "Zaloguj się, aby otworzyć to konto",
+  "Sign in to open this notification": "Zaloguj się, aby otworzyć to powiadomienie",
+  "Sign out all": "Wyloguj ze wszystkich kont",
+  "Sign out all accounts?": "Wylogować ze wszystkich kont?",
+  "Switch accounts": "Przełącz konta",
   "No matches": "Brak wyników",
   "Always ask": "Zawsze pytaj",
   "Search tools": "Szukaj narzędzi",

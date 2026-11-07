@@ -325,7 +325,9 @@ describe("expo push", () => {
     await expect(loadPushToken(tokens, "user-1")).resolves.toBe("ExponentPushToken[test]");
   });
 
-  it("throws when Expo rejects the request", async () => {
+  it("throws when Expo rejects the request, leaving the report to the caller", async () => {
+    const sink = createTestSink();
+    installLogger(createLogger({ service: "test", sinks: [sink] }));
     const tokens = new MemoryPushTokenStore();
     await tokens.save("user-1", "ExponentPushToken[test]");
     vi.stubGlobal(
@@ -339,6 +341,7 @@ describe("expo push", () => {
         notifyContext,
       ),
     ).rejects.toThrow("boom");
+    expect(sink.events).toEqual([]);
   });
 
   it("rejects and cancels a declared oversized response", async () => {

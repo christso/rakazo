@@ -11,6 +11,7 @@ import type {
   SavedAccountSummary,
 } from "@rakazo/contracts";
 import { GROUP_MEMBER_MIN } from "@rakazo/contracts";
+import { displayName, memberMessageAlerts } from "@rakazo/core";
 import type { PrismaClient } from "@rakazo/db";
 import { countUnreadInboxChats, runAsSystem } from "@rakazo/db";
 import type { Hono } from "hono";
@@ -30,7 +31,6 @@ export function mountAccountIdentityGuard(
   });
 }
 
-/** Reads only owned inbox chats in Spaces where this account still has membership. */
 async function accountActivity(prisma: PrismaClient, userId: string) {
   return runAsSystem("read saved account notification summaries", async () => {
     const unread = await countUnreadInboxChats(prisma, { userId });
@@ -48,7 +48,7 @@ async function accountActivity(prisma: PrismaClient, userId: string) {
       const events = await prisma.event.findMany({
         where: {
           spaceId: { in: spaceIds },
-          thread: { userId, externalConversationId: null },
+          thread: { externalConversationId: null },
           type: {
             in: [
               "thread.message.created",
@@ -72,12 +72,11 @@ async function accountActivity(prisma: PrismaClient, userId: string) {
         include: {
           thread: {
             select: {
-              bot: { select: { name: true, userId: true, archivedAt: true, notifyOnFinish: true } },
+              bot: { select: { name: true, archivedAt: true, notifyOnFinish: true } },
               group: {
                 select: {
                   id: true,
                   name: true,
-                  userId: true,
                   archivedAt: true,
                   members: { where: { bot: { archivedAt: null } }, select: { id: true } },
                 },
@@ -89,16 +88,22 @@ async function accountActivity(prisma: PrismaClient, userId: string) {
       if (!events.length) break;
       const runIds = [...new Set(events.flatMap((event) => (event.runId ? [event.runId] : [])))];
       const runs = await prisma.run.findMany({
-        where: { id: { in: runIds }, userId, spaceId: { in: spaceIds } },
-        select: { id: true, trigger: true, status: true, routine: { select: { notify: true } } },
+        where: { id: { in: runIds }, spaceId: { in: spaceIds } },
+        select: {
+          id: true,
+          userId: true,
+          trigger: true,
+          status: true,
+          routine: { select: { notify: true } },
+        },
       });
       const byRun = new Map(runs.map((run) => [run.id, run]));
       for (const event of events) {
         const { bot, group } = event.thread;
         if (
           group
-            ? group.userId !== userId || group.archivedAt || group.members.length < GROUP_MEMBER_MIN
-            : !bot || bot.userId !== userId || bot.archivedAt
+            ? group.archivedAt || group.members.length < GROUP_MEMBER_MIN
+            : !bot || bot.archivedAt
         )
           continue;
         const run = event.runId ? byRun.get(event.runId) : undefined;
@@ -107,8 +112,30 @@ async function accountActivity(prisma: PrismaClient, userId: string) {
             ? event.payload
             : {};
         const message = event.type === "thread.message.created";
-        if (message && payload.role !== "bot") continue;
-        if (message && (run?.status === "waiting_input" || run?.status === "waiting_takeover"))
+        const memberMessage = message && payload.role === "user";
+        const author =
+          payload.author && typeof payload.author === "object" && !Array.isArray(payload.author)
+            ? payload.author
+            : undefined;
+        if (memberMessage) {
+          if (
+            !author ||
+            typeof author.id !== "string" ||
+            author.id === userId ||
+            !memberMessageAlerts(payload)
+          )
+            continue;
+        } else if (message && payload.role !== "bot") continue;
+        if (
+          (!message || (!memberMessage && run?.trigger === "bot_message")) &&
+          run?.userId !== userId
+        )
+          continue;
+        if (
+          message &&
+          !memberMessage &&
+          (run?.status === "waiting_input" || run?.status === "waiting_takeover")
+        )
           continue;
         const kind = message
           ? "completion"
@@ -120,7 +147,7 @@ async function accountActivity(prisma: PrismaClient, userId: string) {
         if (
           !runEventNotifies({
             kind,
-            trigger: run?.trigger ?? null,
+            trigger: memberMessage ? null : (run?.trigger ?? null),
             routine: run?.routine ?? null,
             groupId: group?.id ?? null,
             notifyOnFinish: bot?.notifyOnFinish ?? false,
@@ -146,7 +173,13 @@ async function accountActivity(prisma: PrismaClient, userId: string) {
           id: event.id,
           kind,
           title: group?.name ?? bot?.name ?? "",
-          body: completionNotificationPreview(message ? text : text || attention),
+          body: completionNotificationPreview(
+            memberMessage
+              ? `${displayName(typeof author?.name === "string" ? author.name : "", "Someone")}: ${text}`
+              : message
+                ? text
+                : text || attention,
+          ),
           botId: event.botId,
           threadId: event.threadId,
           spaceId: event.spaceId,
