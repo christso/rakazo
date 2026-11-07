@@ -2,12 +2,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("./ai-consent", () => ({ promptAiConsent: vi.fn() }));
 vi.mock("./live-notifications.js", () => ({
-  resumeLiveNotifications: vi.fn(async () => undefined),
+  resumeLiveNotifications: vi.fn(async () => true),
   stopLiveNotifications: vi.fn(async () => undefined),
 }));
 vi.mock("./network-cache.js", () => ({ clearNetworkCache: vi.fn() }));
 vi.mock("react-native", () => ({ Platform: { OS: "ios" } }));
 vi.mock("expo-constants", () => ({ default: { easConfig: { projectId: "fake-project" } } }));
+vi.mock("expo-modules-core", () => ({ requireOptionalNativeModule: vi.fn(() => null) }));
 
 // Expo runs every module's async functions on one serial native queue, so a call
 // that waits there holds up SecureStore too.
@@ -42,9 +43,13 @@ vi.mock("expo-notifications", () => ({
   getExpoPushTokenAsync: vi.fn(async () => ({ data: "ExponentPushToken[fake]" })),
 }));
 
+import { requireOptionalNativeModule } from "expo-modules-core";
 import * as Notifications from "expo-notifications";
 import { Platform } from "react-native";
-import { currentApiBase, rpc, selectInitialSpace, signOut } from "./api";
+import { currentApiBase, rpc } from "./api";
+import { signOut } from "./api-auth";
+import { selectInitialSpace } from "./api-server";
+import { resumeLiveNotifications, stopLiveNotifications } from "./live-notifications.js";
 import {
   pendingSessionTokens,
   queueSessionRevocation,
@@ -52,6 +57,7 @@ import {
 } from "./pending-session-revocations";
 import { registerPushToken } from "./push";
 import { rememberSavedAccount } from "./saved-accounts";
+import * as session from "./session";
 import { restoreSessionToken } from "./session";
 
 function deferred<T>() {
@@ -77,10 +83,11 @@ const fetch = vi.fn(async (url: string, _init?: RequestInit) => {
 let permission: ReturnType<typeof deferred<{ granted: boolean }>>;
 
 beforeEach(async () => {
+  vi.restoreAllMocks();
+  vi.clearAllMocks();
   native.reset();
+  vi.mocked(requireOptionalNativeModule).mockReturnValue(null);
   vi.stubGlobal("fetch", fetch);
-  fetch.mockClear();
-  vi.mocked(Notifications.requestPermissionsAsync).mockClear();
   permission = deferred();
   // iOS answers both from the system's notification settings, which can take minutes
   // after a restart. Reading them waits on the native queue; the request does not.
@@ -211,7 +218,7 @@ it.each([false, true])(
         }
         if (url.endsWith("/notifications/unregisterPush")) {
           unregisters.push(credential);
-          if (cleanupOffline && unregisters.length > 1) throw new Error("offline cleanup");
+          if (cleanupOffline) throw new Error("offline cleanup");
           bindings.delete(credential);
         }
         if (url.endsWith("/api/auth/sign-out")) {
@@ -226,14 +233,14 @@ it.each([false, true])(
     const registering = registerPushToken();
     await started.promise;
     await signOut();
-    expect(bindings.has("family-token")).toBe(false);
+    expect(native.store.has("rakazo.session_token")).toBe(false);
     await restoreSessionToken("work-token");
     late.resolve();
     await registering;
     expect(bindings).toEqual(
       new Set(cleanupOffline ? ["family-token", "work-token"] : ["work-token"]),
     );
-    expect(unregisters).toEqual(["family-token", "family-token"]);
+    expect(unregisters).toEqual(["family-token"]);
     expect(await pendingSessionTokens(apiBase)).toEqual(new Set(["family-token"]));
     offline = false;
     await retryPendingSessionRevocations(apiBase);
@@ -241,3 +248,112 @@ it.each([false, true])(
     expect(await pendingSessionTokens(apiBase)).toEqual(new Set());
   },
 );
+it("syncs the native session before the server can push", async () => {
+  Platform.OS = "android";
+  vi.mocked(Notifications.getPermissionsAsync).mockResolvedValue({ granted: true } as never);
+  const resumed = deferred<boolean>();
+  vi.mocked(resumeLiveNotifications).mockReturnValueOnce(resumed.promise);
+
+  const registration = registerPushToken();
+  try {
+    await vi.waitFor(() =>
+      expect(resumeLiveNotifications).toHaveBeenCalledExactlyOnceWith(
+        "http://127.0.0.1:3100",
+        "fake-session",
+        expect.any(String),
+      ),
+    );
+    await expect(settled(registration)).resolves.toBe("still waiting");
+    expect(fetch).not.toHaveBeenCalled();
+  } finally {
+    resumed.resolve(true);
+    await registration;
+  }
+  expect(fetch).toHaveBeenCalledWith(
+    expect.stringMatching(/notifications\/registerPush$/),
+    expect.anything(),
+  );
+});
+
+it("does not restore a signed-out session while push registration loads its token", async () => {
+  Platform.OS = "android";
+  vi.mocked(Notifications.getPermissionsAsync).mockResolvedValue({ granted: true } as never);
+  const loaded = deferred<void>();
+  const release = deferred<void>();
+  const loadToken = session.loadSessionToken;
+  vi.spyOn(session, "loadSessionToken").mockImplementationOnce(async () => {
+    const token = await loadToken();
+    loaded.resolve();
+    await release.promise;
+    return token;
+  });
+
+  const registration = registerPushToken();
+  try {
+    await loaded.promise;
+    await signOut();
+    expect(stopLiveNotifications).toHaveBeenCalledWith(true);
+    expect(native.store.has("rakazo.session_token")).toBe(false);
+  } finally {
+    release.resolve();
+    await registration;
+  }
+
+  expect(resumeLiveNotifications).not.toHaveBeenCalled();
+  expect(fetch).not.toHaveBeenCalledWith(
+    expect.stringMatching(/notifications\/registerPush$/),
+    expect.anything(),
+  );
+});
+
+it("does not register the push token when the native session sync fails", async () => {
+  Platform.OS = "android";
+  vi.mocked(Notifications.getPermissionsAsync).mockResolvedValue({ granted: true } as never);
+  vi.mocked(resumeLiveNotifications).mockRejectedValueOnce(new Error("native sync failed"));
+
+  await registerPushToken();
+
+  // Registering now would have Android drop every push as signed-out; the next
+  // registration attempt retries the session sync first.
+  expect(fetch).not.toHaveBeenCalledWith(
+    expect.stringMatching(/notifications\/registerPush$/),
+    expect.anything(),
+  );
+});
+
+it("does not register push while a sign-in has not saved its token yet", async () => {
+  Platform.OS = "android";
+  vi.mocked(Notifications.getPermissionsAsync).mockResolvedValue({ granted: true } as never);
+  vi.spyOn(session, "loadSessionToken").mockResolvedValueOnce("");
+
+  await registerPushToken();
+
+  expect(resumeLiveNotifications).not.toHaveBeenCalled();
+  expect(fetch).not.toHaveBeenCalledWith(
+    expect.stringMatching(/notifications\/registerPush$/),
+    expect.anything(),
+  );
+});
+
+it("registers native sender delivery only when the installed Android module supports it", async () => {
+  Platform.OS = "android";
+  vi.mocked(Notifications.getPermissionsAsync).mockResolvedValue({ granted: true } as never);
+  vi.mocked(requireOptionalNativeModule).mockReturnValue({ supportsSenderAvatars: true });
+  await registerPushToken();
+  const call = fetch.mock.calls.find(([url]) => url.endsWith("/rpc/notifications/registerPush"));
+  const options = (call as unknown as [string, RequestInit])[1];
+  expect(JSON.parse(String(options.body)).json).toMatchObject({ presentation: "android_sender" });
+});
+
+it("registers plain delivery when the native module does not keep the session", async () => {
+  Platform.OS = "android";
+  vi.mocked(Notifications.getPermissionsAsync).mockResolvedValue({ granted: true } as never);
+  vi.mocked(requireOptionalNativeModule).mockReturnValue({ supportsSenderAvatars: true });
+  // A public http server: native notifications skip it and store no session.
+  vi.mocked(resumeLiveNotifications).mockResolvedValueOnce(false);
+  await registerPushToken();
+  const call = fetch.mock.calls.find(([url]) => url.endsWith("/rpc/notifications/registerPush"));
+  const options = (call as unknown as [string, RequestInit])[1];
+  // Sender delivery would drop every push as signed out; plain pushes are still shown.
+  expect(JSON.parse(String(options.body)).json).not.toHaveProperty("presentation");
+});

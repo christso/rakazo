@@ -38,6 +38,7 @@ All of these are optional:
 ```env
 SIGNUPS_ENABLED=true
 SIGNUP_ALLOWLIST=you@example.com,@company.com
+SCIM_BEARER_TOKEN=        # lets your identity provider add and remove accounts; see self-host-accounts.md
 SANDBOX_PROVIDER=docker   # or none, e2b, novita, daytona, createos, boat. Keep fake only for pnpm test.
 AGENT_RUNTIME=pi          # Keep scripted only for pnpm test.
 WAKEUP_DRIVER=graphile
@@ -45,6 +46,7 @@ SANDBOX_IDLE_MS=600000    # pause or stop after 10 minutes idle; 0 disables idle
 # Set 0 when self-hosting with Docker, where an idle computer costs nothing, to keep long-running apps and sessions up.
 # E2B, CreateOS and Boat still apply their own timeouts.
 COMPUTER_MAX_ACTIVE_MS=7200000 # uptime cap for providers that bill while running; minimum 60000; 0 disables
+COMPUTER_MAX_ACTIVE_UNBILLED_MS=0 # uptime cap for providers that do not bill while running (Docker, Kubernetes, Incus); minimum 60000; 0 (default) disables; needs SANDBOX_IDLE_MS on
 SANDBOX_COMMAND_TIMEOUT_MS=300000 # stop a shell command after 5 minutes
 MAX_TOOL_CALLS_PER_TURN=  # optional Pi turn tool-call fuse; unset/0 = unlimited
 RAKAZO_MESSAGE_USER_MAX_CHARS=500 # message_user length cap; narration stays at 500
@@ -61,6 +63,24 @@ screen lasts before control expires.
 
 `MODEL_STREAM_MAX_RETRIES` (0 to 5, default `1`) retries a model stream that fails partway; more
 retries let long turns survive brief provider failures.
+
+Model timeouts are configurable in milliseconds. Invalid or out-of-range values retain their
+defaults. Longer timeouts can help when several bots share a local inference server that queues
+requests. Provider SDKs and HTTP transports may impose independent timeout limits, so these
+settings do not guarantee that every provider supports arbitrarily long waits.
+
+- `MODEL_STREAM_TIMEOUT_MS` (default `120000`, range `1000`–`2147483647`) is the time budget
+  for retrying the same model. It also controls the wait for response headers when using the
+  OpenAI Chat Completions, Responses or Codex API, Anthropic Messages, Mistral or Azure OpenAI.
+  Other APIs, such as Google, Vertex AI, Bedrock and some routed models, use their own client
+  timeouts.
+- `MODEL_STREAM_IDLE_TIMEOUT_MS` (default `180000`, range `0`–`2147483647`) bounds how long
+  a started response may remain silent. Set it to `0` to disable Rakazo's inactivity watchdog.
+  Explicit request cancellation remains available. Disabling this protection can leave stalled
+  requests waiting indefinitely if neither the provider nor the caller terminates them.
+- `MODEL_CONNECT_TIMEOUT_MS` (default `30000`, range `1000`–`300000`) bounds connecting to an
+  OpenAI-compatible model or speech connection added in the app. `RAKAZO_LOCAL_MODELS` servers
+  and built-in providers retain Node's own connection timeout.
 
 ## Feature switches
 

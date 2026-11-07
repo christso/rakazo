@@ -1,8 +1,6 @@
-import { runContinueJob } from "@rakazo/adapter-kit";
 import { BotSecretName, botSecretSubmissionSchema } from "@rakazo/contracts";
 import { createStreamingRedactor, displayName } from "@rakazo/core";
-import { runCodeKind, runLoginKind, runSecretKind } from "@rakazo/db";
-import { getLogger } from "@rakazo/logging";
+import { runCodeKind, runLoginKind, runSecretKind, spaceIsShared } from "@rakazo/db";
 import {
   completeExternalEffect,
   replaceCompletedExternalEffectResult,
@@ -13,6 +11,7 @@ import {
 import {
   allowPrivateHttpSecretOrigins,
   botSecretToolView,
+  canReplaceLoginSite,
   findBotSecret,
   findCommandVariableConflict,
   findRunLogin,
@@ -30,7 +29,7 @@ import {
 } from "./bot-secrets.js";
 import { addRunSecrets, pauseForSecret, persistTurnCheckpoint } from "./run-context.js";
 import { recordEffect } from "./run-effects.js";
-import { renewRunLease } from "./run-lifecycle.js";
+import { enqueueSteeringContinuation, renewRunLease } from "./run-lifecycle.js";
 import { notifyRun, secretAskNotification } from "./run-notifications.js";
 import {
   commitConsumedRunSecret,
@@ -45,7 +44,7 @@ import type { ToolHandlers } from "./run-tool-gate.js";
 export const secretTools: ToolHandlers = {
   async list_secrets(ctx) {
     const { deps, run } = ctx;
-    return listBotSecrets(deps.prisma, run);
+    return listBotSecrets(deps.prisma, deps.secretStore, run);
   },
   async forget_secret(ctx, call) {
     const { deps, run } = ctx;
@@ -113,12 +112,30 @@ export const secretTools: ToolHandlers = {
     const loginFields =
       destination?.auth.type === "login" ? requestedLoginFields(args.fields) : undefined;
     if (loginFields?.error) return call.finish({ error: loginFields.error });
+    // A saved login whose site was wrong is replaced only from a card answered for this site.
+    let replaces: { id: string; origin: string } | undefined;
     if (destination) {
-      const existing = await findBotSecret(deps.prisma, run, destination.name);
+      const saved = await findBotSecret(deps.prisma, run, destination.name);
+      const existing = saved?.destination;
+      // A login the person chose not to save stays with this run; the bot is told so it doesn't
+      // say it was saved. Field labels only, never values.
+      const runLogin =
+        destination.auth.type === "login"
+          ? await findRunLogin(deps.prisma, deps.secretStore, run, runId, destination.name)
+          : undefined;
+      const held = runLogin?.origin === destination.origin ? runLogin : undefined;
       if (existing && !sameSecretDestination(existing, destination)) {
-        return call.finish({
-          error: "Remove the existing credential before changing its destination.",
-        });
+        if (!canReplaceLoginSite(existing, destination)) {
+          return call.finish({
+            error: "Remove the existing credential before changing its destination.",
+          });
+        }
+        if (args.replace !== true && !held) {
+          return call.finish({
+            error: `A login named ${existing.name} is saved for ${existing.origin}. For a different site or account, use another name; ask again with replace true only if ${existing.origin} was the wrong site for this same account, which replaces the saved login.`,
+          });
+        }
+        if (saved) replaces = { id: saved.id, origin: existing.origin };
       }
       const conflict = await findCommandVariableConflict(deps.prisma, run, destination);
       if (conflict) {
@@ -126,22 +143,15 @@ export const secretTools: ToolHandlers = {
           error: `Invalid credential destination — name: ${conflict} is already exported as the same variable. Choose another name.`,
         });
       }
-      // A login the person chose not to save stays with this run; the bot is told so it doesn't
-      // say it was saved. Field labels only, never values.
-      const runLogin =
-        destination.auth.type === "login"
-          ? await findRunLogin(deps.prisma, deps.secretStore, run, runId, destination.name)
+      const known = held
+        ? {
+            saved: false,
+            ...destination,
+            fields: held.fields.map(({ label, hidden }) => ({ label, hidden })),
+          }
+        : existing && sameSecretDestination(existing, destination)
+          ? { saved: true, ...botSecretToolView(existing) }
           : undefined;
-      const known =
-        runLogin && runLogin.origin === destination.origin
-          ? {
-              saved: false,
-              ...destination,
-              fields: runLogin.fields.map(({ label, hidden }) => ({ label, hidden })),
-            }
-          : existing
-            ? { saved: true, ...botSecretToolView(existing) }
-            : undefined;
       const submitted = botSecretSubmissionSchema({
         allowPrivateHttpOrigin: allowPrivateHttpSecretOrigins(),
       }).safeParse(applied?.effect.result).data;
@@ -349,7 +359,11 @@ export const secretTools: ToolHandlers = {
           input: "secret",
           ...(destination ? { credential: destination } : {}),
           ...(codeOrigin ? { oneTimeCode: { origin: codeOrigin } } : {}),
+          ...(replaces ? { replaces } : {}),
           ...(loginFields?.labels ? { loginFields: loginFields.labels } : {}),
+          ...(loginFields && (await spaceIsShared(deps.prisma, run.spaceId))
+            ? { sharedBrowser: true as const }
+            : {}),
           purpose: codeOrigin
             ? "otp"
             : normalizeSecretAskPurpose(args.purpose ? String(args.purpose) : undefined),
@@ -360,11 +374,7 @@ export const secretTools: ToolHandlers = {
     if (!paused) {
       throw new Error("Could not pause this run for protected input; try sending again.");
     }
-    if (paused.continuationRunId) {
-      await deps.jobs
-        .enqueue(runContinueJob(paused.continuationRunId))
-        .catch((error) => getLogger().error("steering continuation enqueue", error));
-    }
+    await enqueueSteeringContinuation(deps, paused.continuationRunId);
     await notifyRun(deps, run, {
       kind: "help",
       ...secretAskNotification(displayName(bot.name, "Bot"), askText, ctx.secrets),

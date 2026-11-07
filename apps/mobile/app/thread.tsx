@@ -4,7 +4,7 @@ import { useEffect, useState, useSyncExternalStore } from "react";
 import { ActivityIndicator, Alert, StyleSheet, Text, View } from "react-native";
 import { NativeActionButton } from "../components/native-action-button";
 import { Thread } from "../components/thread/thread-screen";
-import { currentApiBase, selectedSpaceId, selectSpace } from "../lib/api";
+import { currentApiBase, selectedSpaceId } from "../lib/api";
 import { mobileTokens } from "../lib/appearance";
 import { normalizeApiBase } from "../lib/endpoint";
 import { t, useI18n } from "../lib/i18n";
@@ -17,6 +17,7 @@ import {
   threadSpaceRequest,
   threadSpaceSwitchResult,
 } from "../lib/notification-open";
+import { selectSpaceAcrossOrganizations } from "../lib/organizations";
 import {
   currentReadySessionGeneration,
   currentSessionGeneration,
@@ -114,7 +115,7 @@ export default function ThreadRoute() {
     let cancelled = false;
     setSwitchFailed(false);
     const requestedSpaceId = next.spaceId;
-    void selectSpace(requestedSpaceId).then((switched) => {
+    void selectSpaceAcrossOrganizations(requestedSpaceId).then((switched) => {
       if (cancelled) return;
       // selectSpace commits the id before it resolves; a failed write rolls it back.
       if (threadSpaceSwitchResult(requestedSpaceId, switched, selectedSpaceId()) === "ready") {

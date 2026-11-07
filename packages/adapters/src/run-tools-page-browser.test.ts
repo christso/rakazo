@@ -1,12 +1,30 @@
 import type { AdapterContext, ComputerRef, PageBrowserCommand } from "@rakazo/adapter-kit";
+import { createStreamingRedactor } from "@rakazo/core";
 import { describe, expect, it, vi } from "vitest";
-import { encodeRunCode } from "./bot-secrets.js";
+import { encodeRunCode, storeBotSecret } from "./bot-secrets.js";
+import { fakeDatabase } from "./bot-secrets.test-support.js";
 import { ComputerBrowserProvider } from "./computer-browser.js";
 import { resolveBotWorkspacePath } from "./computer-support.js";
 import { FakeBrowserProvider } from "./fake-browser.js";
+import type * as PurchaseServiceModule from "./purchase-service.js";
 import { computerTools, pageBrowserTool } from "./run-tools-computer.js";
 import { EncryptedSecretStore } from "./secrets.js";
 import { DESKTOP_HELD_FOR_TAKEOVER_MESSAGE } from "./takeover-resume.js";
+
+vi.mock("./purchase-service.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof PurchaseServiceModule>()),
+  resolvePurchaseCardFill: async () => ({
+    text: "4242424242424242",
+    origin: "https://shop.example.test",
+    redactions: [],
+  }),
+  resolvePurchasePayTokenFill: async () => ({
+    text: "tok",
+    origin: "https://pay.example.test:8443",
+    merchantAccountId: "acct_1",
+    redactions: [],
+  }),
+}));
 
 const secret = 'zq"xv\\mk';
 const url = "https://example.test/echo";
@@ -219,6 +237,155 @@ describe("screen tools keep off the screen while a takeover holds it or teaching
 
   it.each(["open_path", "launch_app"])("%s acts when the screen is free", async (name) => {
     expect((await runScreenTool(name, false, false)).act).toHaveBeenCalledOnce();
+  });
+});
+
+describe("a run remembers the sites it typed an approved wallet purchase into", () => {
+  it.each([
+    [{ kind: "fill_card", ref: "e1", purchase: "p1", field: "number" }, "shop.example.test"],
+    [{ kind: "fill_pay_token", purchase: "p1" }, "pay.example.test:8443"],
+  ])("%j", async (action, host) => {
+    const walletHosts = new Set<string>();
+    const browser = new FakeBrowserProvider({
+      pages: { [url]: { title: "Pay", html: "<input aria-label='Card' />" } },
+    });
+    await browser.navigate(computer, { url }, context);
+    const ctx = {
+      deps: { prisma: { taughtSkill: { findFirst: async () => null } }, paymentWallet: {} },
+      run: { spaceId: "space", botId: "b1" },
+      bot: { id: "b1" },
+      context,
+      computer: {
+        heldForTakeover: false,
+        mode: "private",
+        checkpoint: { markDirty: () => {} },
+        get: async () => computer,
+      },
+      tools: { disabled: new Set<string>() },
+      providers: { browser },
+      secrets: [],
+      state: { walletHosts, screen: { unchangedVisualStreak: { count: 0 } } },
+    };
+    const call = {
+      name: "browser_act",
+      args: { actions: [action] },
+      finish: async (r: unknown) => r,
+    };
+    await pageBrowserTool(ctx as never, call as never);
+    expect([...walletHosts]).toEqual([host]);
+    // A call that presses an approved purchase spends it: the card it types leaves no pass behind.
+    walletHosts.clear();
+    const approved = { steps: [], site: host, label: "Pay", amount: "$5" };
+    await pageBrowserTool(
+      ctx as never,
+      { ...call, args: { actions: [action], purchaseApproval: approved } } as never,
+    );
+    expect([...walletHosts]).toEqual([]);
+  });
+});
+
+describe("browser_act types a saved card only where the user approved it", () => {
+  /** `approval` names a card and site; it is bound to the card as saved unless it says otherwise. */
+  async function fillSavedCard(approval?: Record<string, unknown>) {
+    const db = fakeDatabase();
+    const secretStore = new EncryptedSecretStore("test-only-encryption-key");
+    const scope = { userId: "u", spaceId: "space" };
+    await storeBotSecret({
+      prisma: db.prisma,
+      secretStore,
+      scope,
+      destination: { name: "visa", origin: "", auth: { type: "card" } },
+      plaintext: JSON.stringify({ number: "4242424242424242", expMonth: 8, expYear: 2030 }),
+    });
+    const walletHosts = new Set<string>();
+    const secrets: string[] = [];
+    const browser = new FakeBrowserProvider({
+      pages: { [url]: { title: "Pay", html: "<input aria-label='Card number' />" } },
+    });
+    await browser.navigate(computer, { url }, context);
+    const ctx = {
+      deps: { prisma: { ...db.prisma, taughtSkill: { findFirst: async () => null } }, secretStore },
+      run: { ...scope, id: "run-1", botId: "b1" },
+      bot: { id: "b1" },
+      context,
+      computer: {
+        heldForTakeover: false,
+        mode: "private",
+        checkpoint: { markDirty: () => {} },
+        get: async () => computer,
+      },
+      tools: { disabled: new Set<string>() },
+      providers: { browser },
+      secrets,
+      state: {
+        walletHosts,
+        screen: { unchangedVisualStreak: { count: 0 } },
+        reply: { pendingProgress: "", redactor: createStreamingRedactor([]) },
+      },
+    };
+    const action = {
+      kind: "fill_card",
+      ref: "e1",
+      card: "visa",
+      site: "https://example.test/checkout",
+      field: "number",
+    };
+    const result = await pageBrowserTool(
+      ctx as never,
+      {
+        name: "browser_act",
+        args: {
+          actions: [action],
+          ...(approval
+            ? {
+                cardApproval: {
+                  savedAt: db.rows()[0]!.updatedAt!.toISOString(),
+                  ...approval,
+                },
+              }
+            : {}),
+        },
+        finish: async (r: unknown) => r,
+      } as never,
+    );
+    return { seen: JSON.stringify(result), walletHosts, secrets };
+  }
+
+  it("refuses without the user's approval of this card on this site", async () => {
+    for (const approval of [
+      undefined,
+      { card: "visa", site: "https://other.example.test", title: "Visa ·· 4242" },
+      { card: "amex", site: "https://example.test", title: "Amex ·· 0005" },
+    ]) {
+      const { seen, walletHosts, secrets } = await fillSavedCard(approval);
+      expect(seen).toContain("not approved");
+      expect(walletHosts.size).toBe(0);
+      expect(secrets).toEqual([]);
+    }
+  });
+
+  it("types it once approved and hides the number, leaving the pay click to ask", async () => {
+    const { seen, walletHosts, secrets } = await fillSavedCard({
+      card: "visa",
+      site: "https://example.test",
+      title: "Visa ·· 4242",
+    });
+    expect(
+      (
+        await fillSavedCard({
+          card: "visa",
+          site: "https://example.test",
+          title: "Visa ·· 4242",
+          savedAt: "2026-01-01T00:00:00.000Z",
+        })
+      ).seen,
+    ).toContain("changed after the user approved");
+    expect(seen).not.toContain("not approved");
+    expect(seen).not.toContain("could not");
+    expect(seen).not.toContain("4242424242424242");
+    expect(secrets).toContain("4242424242424242");
+    // Approving the card named no amount, so placing the order still asks.
+    expect(walletHosts.size).toBe(0);
   });
 });
 

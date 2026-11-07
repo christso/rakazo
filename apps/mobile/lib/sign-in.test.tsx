@@ -13,18 +13,19 @@ import {
   selectNotificationAccount,
   selectSavedAccount,
 } from "./account-sessions";
+import { rpc } from "./api";
 import {
-  loadSessionToken,
   passwordResetCapabilities,
-  rpc,
   sendSignInCode,
   signIn,
   signInWithCode,
   signUp,
-} from "./api";
+} from "./api-auth";
+import type * as Endpoint from "./endpoint";
 import type { NativeActionButtonProps } from "./native-controls";
 import { promptNotificationSignIn } from "./open-notification";
 import { passkeysAvailable, signInWithPasskey } from "./passkey";
+import { loadSessionToken } from "./session";
 import { continueWithSso } from "./sso";
 
 const route = vi.hoisted(() => ({
@@ -43,7 +44,6 @@ vi.mock("./account-sessions", () => ({
   loadAccountSummaries: vi.fn(async () => []),
   selectSavedAccount: vi.fn(async () => true),
 }));
-vi.mock("./session", () => ({ currentSessionGeneration: () => 0 }));
 vi.mock("./open-notification", () => ({ promptNotificationSignIn: vi.fn() }));
 vi.mock("../components/settings-group", () => ({
   SettingsGroup: ({ children }: { children: ReactNode }) => <div>{children}</div>,
@@ -168,14 +168,24 @@ vi.mock("./i18n", () => {
     text.replace(/\{(\w+)\}/g, (_, key: string) => values?.[key] ?? key);
   return { useI18n: () => ({ t }) };
 });
+vi.mock("./api-server", () => ({}));
+vi.mock("./api-live", () => ({}));
 vi.mock("./api", () => ({
   currentApiBase: () => server.base,
+  rpc: vi.fn(),
+}));
+vi.mock("./endpoint", async (importOriginal) => ({
+  ...(await importOriginal<typeof Endpoint>()),
   displayApiHost: () => "example.invalid",
   usesCustomApiBase: () => false,
+}));
+vi.mock("./session", () => ({
   loadSessionToken: vi.fn().mockResolvedValue(null),
+  currentSessionGeneration: () => 0,
+}));
+vi.mock("./api-auth", () => ({
   passwordResetCapabilities: vi.fn(),
   requestPasswordReset: vi.fn(),
-  rpc: vi.fn(),
   sendSignInCode: vi.fn(),
   signIn: vi.fn(),
   signInWithCode: vi.fn(),

@@ -74,6 +74,13 @@ suite("database push registrations", () => {
     });
   });
 
+  it("keeps the native presentation capability across replicas and clears it on legacy registration", async () => {
+    await api.save(user("a"), token("a"), session("a"), "android_sender");
+    expect((await worker.load(user("a")))?.presentation).toBe("android_sender");
+    await api.save(user("a"), token("a"), session("a"));
+    expect((await worker.load(user("a")))?.presentation).toBeUndefined();
+  });
+
   it("retains every account when the same device registers concurrently", async () => {
     await Promise.all([
       api.save(user("a"), token("shared"), session("a")),

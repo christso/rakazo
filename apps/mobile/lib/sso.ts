@@ -1,14 +1,11 @@
-import {
-  authHeaders,
-  clearSpace,
-  currentApiBase,
-  fetchMobileJson,
-  rememberAuthenticatedAccount,
-} from "./api";
+import { authHeaders, currentApiBase, fetchMobileJson } from "./api";
+import { rememberAuthenticatedAccount } from "./api-auth";
+import { clearSpace } from "./api-server";
 import { t } from "./i18n";
 import {
   currentSessionGeneration,
   replaceSessionTokenIfCurrent,
+  rotateSessionTokenIfCurrent,
   tokenFromAuthResponse,
 } from "./session";
 import { authErrorText, authResponseErrorText, sessionSaveErrorText } from "./user-error";
@@ -32,6 +29,9 @@ export async function continueWithSso(
     const headers = action === "sign-in" ? {} : await authHeaders();
     requireCurrentSession();
     const previous = action === "reauthenticate" ? await sessionUser(apiBase, headers) : undefined;
+    // The token the server replaces is the one these requests carry; a second read could differ.
+    const previousToken = headers.authorization?.slice("Bearer ".length) ?? "";
+    if (action === "reauthenticate" && !previousToken) throw new Error(t("Could not continue"));
     requireCurrentSession();
     const { response, body, invalidJson } = await fetchMobileJson<{ url?: string; code?: string }>(
       `${apiBase}/api/auth/${action === "link" ? "link-social" : "sign-in/social"}`,
@@ -99,6 +99,9 @@ export async function continueWithSso(
         throw new Error(t("Could not save your sign-in on this device. Try again."));
       if (action === "sign-in")
         await rememberAuthenticatedAccount(apiBase, token, user, generation);
+      // The same account keeps its unsent messages and their cache, like a password change.
+      if (action === "reauthenticate")
+        return await rotateSessionTokenIfCurrent(generation, previousToken, token);
       return await replaceSessionTokenIfCurrent(generation, token);
     } catch (error) {
       throw new Error(sessionSaveErrorText(error));

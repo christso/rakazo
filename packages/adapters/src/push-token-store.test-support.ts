@@ -9,9 +9,13 @@ export class MemoryPushTokenStore implements PushTokenStore {
   async list(userId: string) {
     return [...(this.rows.get(userId)?.values() ?? [])];
   }
-  async save(userId: string, token: string, sessionId = "") {
+  async save(userId: string, token: string, sessionId = "", presentation?: "android_sender") {
     const rows = this.rows.get(userId) ?? new Map<string, PushRecord>();
-    rows.set(sessionId, { token, ...(sessionId ? { sessionId } : {}) });
+    rows.set(sessionId, {
+      token,
+      ...(sessionId ? { sessionId } : {}),
+      ...(presentation ? { presentation } : {}),
+    });
     this.rows.set(userId, rows);
   }
   async importLegacy(userId: string, token: string, sessionId: string) {

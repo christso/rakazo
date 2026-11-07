@@ -41,11 +41,14 @@ vi.mock("../components/native-action-button", () => ({
 vi.mock("../components/thread/thread-screen", () => ({
   Thread: ({ userId }: { userId: string }) => createElement("main", null, `thread:${userId}`),
 }));
+vi.mock("./api-server", () => ({}));
+vi.mock("./api-auth", () => ({}));
+vi.mock("./api-live", () => ({}));
 vi.mock("./api", () => ({
   currentApiBase: () => "https://app.example.test",
   selectedSpaceId: () => state.selected,
-  selectSpace: state.selectSpace,
 }));
+vi.mock("./organizations", () => ({ selectSpaceAcrossOrganizations: state.selectSpace }));
 vi.mock("./i18n", () => {
   const t = (text: string) => text;
   return { t, useI18n: () => ({ t }) };

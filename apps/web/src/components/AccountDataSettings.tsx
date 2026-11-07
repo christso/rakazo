@@ -118,7 +118,7 @@ export function AccountDataSettings({
         }
       >
         {error ? (
-          <p role="alert" className="mt-2 text-[12.5px] text-destructive">
+          <p role="alert" className="mt-2 text-body-sm text-destructive">
             {error}
           </p>
         ) : null}

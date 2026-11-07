@@ -13,6 +13,7 @@ vi.mock("expo-router", () => ({
 vi.mock("./account-sessions", () => ({
   selectNotificationAccount: vi.fn(),
 }));
+vi.mock("./session", () => ({ loadSessionToken: vi.fn() }));
 vi.mock("./api", () => ({ currentApiBase: () => "https://api.example.test" }));
 vi.mock("./i18n", () => ({ t: (text: string) => text }));
 vi.mock("react-native", () => ({ Alert: { alert: vi.fn() } }));

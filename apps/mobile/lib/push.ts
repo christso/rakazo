@@ -1,12 +1,17 @@
+import { newClientId } from "@rakazo/core";
 import Constants from "expo-constants";
+import { requireOptionalNativeModule } from "expo-modules-core";
 import * as Notifications from "expo-notifications";
+import * as SecureStore from "expo-secure-store";
 import { Platform } from "react-native";
-import { currentApiBase, loadSessionToken, rpc } from "./api";
+import { currentApiBase, rpc, selectedSpaceId } from "./api";
+import { resumeLiveNotifications } from "./live-notifications";
 import {
   pendingSessionTokens,
   retryPendingSessionRevocations,
 } from "./pending-session-revocations";
 import { loadSavedAccounts } from "./saved-accounts";
+import { currentSessionGeneration, loadSessionToken } from "./session";
 
 async function notificationsAllowed() {
   // On iOS getPermissionsAsync holds Expo's shared native queue until the system answers,
@@ -29,7 +34,9 @@ export async function registerPushToken() {
     if (!token) return;
     const accounts = await loadSavedAccounts(apiBase);
     const pending = await pendingSessionTokens(apiBase);
+    const generation = currentSessionGeneration();
     const selectedToken = apiBase === currentApiBase() ? await loadSessionToken() : "";
+    if (generation !== currentSessionGeneration() || apiBase !== currentApiBase()) return;
     const activeToken = pending.has(selectedToken) ? "" : selectedToken;
     const stillSignedIn = async (sessionToken: string) => {
       const saved = await loadSavedAccounts(apiBase);
@@ -47,8 +54,29 @@ export async function registerPushToken() {
         },
       };
       if (!(await stillSignedIn(sessionToken))) return;
+      let nativeSession = false;
+      if (sessionToken === activeToken) {
+        nativeSession = await resumeLiveNotifications(
+          apiBase,
+          sessionToken,
+          selectedSpaceId() ?? "",
+        );
+        if (!(await stillSignedIn(sessionToken))) return;
+      }
       try {
-        await rpc("notifications/registerPush", { token }, { requestContext });
+        await rpc(
+          "notifications/registerPush",
+          {
+            token,
+            ...(Platform.OS === "android" &&
+            nativeSession &&
+            requireOptionalNativeModule<{ supportsSenderAvatars?: boolean }>("RakazoNotifications")
+              ?.supportsSenderAvatars
+              ? { presentation: "android_sender" as const }
+              : {}),
+          },
+          { requestContext },
+        );
       } finally {
         // A register response can arrive after sign-out's unregister. Remove only
         // this login's late association, retaining its queued session revocation.
@@ -65,6 +93,8 @@ export async function registerPushToken() {
       registering.push(register(activeToken).catch(() => undefined));
     }
     await Promise.all(registering);
+    if (generation === currentSessionGeneration() && apiBase === currentApiBase())
+      await registerCallPushToken({ expoToken: token });
   } catch {
     // Expo Go without an EAS project id and Android builds without a Firebase config
     // cannot mint an Expo push token.
@@ -73,4 +103,48 @@ export async function registerPushToken() {
 
 export async function unregisterPushToken() {
   await rpc("notifications/unregisterPush").catch(() => undefined);
+}
+
+let callTokens: { expoToken?: string; voipToken?: string } = {};
+let tokenGeneration = -1;
+let registeredKey: string | undefined;
+let deviceIdPromise: Promise<string> | undefined;
+async function installationId() {
+  deviceIdPromise ??= (async () => {
+    const stored = await SecureStore.getItemAsync("rakazo.call-device");
+    if (stored) return stored;
+    const id = newClientId();
+    await SecureStore.setItemAsync("rakazo.call-device", id);
+    return id;
+  })();
+  const pending = deviceIdPromise;
+  try {
+    return await pending;
+  } catch (error) {
+    if (deviceIdPromise === pending) deviceIdPromise = undefined;
+    throw error;
+  }
+}
+/** Builds without native call handling keep the account's ordinary push for incoming calls. */
+const nativeCalls = Boolean(
+  requireOptionalNativeModule<{ incomingState?: unknown }>("RakazoNotifications")?.incomingState,
+);
+
+export async function registerCallPushToken(tokens: { expoToken?: string; voipToken?: string }) {
+  if (!nativeCalls) return;
+  const generation = currentSessionGeneration();
+  if (generation !== tokenGeneration) {
+    callTokens = {};
+    registeredKey = undefined;
+    tokenGeneration = generation;
+  }
+  const registration = { ...callTokens, ...tokens };
+  const key = JSON.stringify(registration);
+  if (key === registeredKey) return;
+  callTokens = registration;
+  const deviceId = await installationId();
+  if (generation !== currentSessionGeneration()) return;
+  if (Platform.OS !== "ios" && Platform.OS !== "android") return;
+  await rpc("notifications/registerCallPush", { deviceId, platform: Platform.OS, ...registration });
+  if (generation === currentSessionGeneration()) registeredKey = key;
 }

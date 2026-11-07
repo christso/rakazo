@@ -1,5 +1,7 @@
 import { readBoundedJsonResponse } from "@rakazo/core";
-import { clearSpace, currentApiBase, loadSessionToken, signOut } from "./api";
+import { currentApiBase } from "./api";
+import { signOut } from "./api-auth";
+import { clearSpace } from "./api-server";
 import { appBadgeGeneration, syncAppBadge } from "./app-badge";
 import { t } from "./i18n";
 import { getLiveNotificationSettings, stopLiveNotifications } from "./live-notifications";
@@ -18,7 +20,7 @@ import {
   savedTokens,
 } from "./saved-accounts";
 import { fetchServer } from "./server-headers";
-import { currentSessionGeneration, saveSessionToken } from "./session";
+import { currentSessionGeneration, loadSessionToken, saveSessionToken } from "./session";
 
 export type AccountSummary = { userId: string; email: string; unread: number };
 const unreadCounts = new Map<string, number>();

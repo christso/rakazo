@@ -51,6 +51,8 @@ vi.mock("./api", () => ({
   clearSpace: async () => true,
   signOut: state.signOut,
 }));
+vi.mock("./api-auth", () => ({ signOut: state.signOut }));
+vi.mock("./api-server", () => ({ clearSpace: async () => true }));
 vi.mock("./session", () => ({
   currentSessionGeneration: () => state.generation,
   loadSessionToken: async () => state.token,

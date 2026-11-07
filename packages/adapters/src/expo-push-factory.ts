@@ -8,7 +8,7 @@ import type { PrismaPushTokenStore, PushTokenStore } from "./push-token-store.js
 export function createExpoPushProvider(
   prisma: Pick<PrismaClient, "user" | "session">,
   tokens: PushTokenStore & Pick<PrismaPushTokenStore, "deviceForToken">,
-  options: Pick<ExpoPushOptions, "jobs" | "accessToken"> & {
+  options: Pick<ExpoPushOptions, "jobs" | "accessToken" | "voip"> & {
     authUrl?: string;
     webOrigin?: string;
   },
@@ -29,6 +29,7 @@ export function createExpoPushProvider(
             ?.email ?? userId,
       ),
     deviceForToken: (token) => tokens.deviceForToken(token),
+    voip: options.voip,
     jobs: options.jobs,
     accessToken: options.accessToken,
   });
