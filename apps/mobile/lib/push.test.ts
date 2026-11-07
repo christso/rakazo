@@ -345,6 +345,51 @@ it("registers native sender delivery only when the installed Android module supp
   expect(JSON.parse(String(options.body)).json).toMatchObject({ presentation: "android_sender" });
 });
 
+it.each([
+  { accountScoped: false, signedOutSecond: false, sender: false },
+  { accountScoped: true, signedOutSecond: false, sender: true },
+  { accountScoped: false, signedOutSecond: true, sender: true },
+])(
+  "keeps multi-account sender delivery compatible with installed Android builds ($accountScoped, $signedOutSecond)",
+  async ({ accountScoped, signedOutSecond, sender }) => {
+    Platform.OS = "android";
+    vi.mocked(Notifications.getPermissionsAsync).mockResolvedValue({ granted: true } as never);
+    // Older released binaries already advertise avatars, but cannot route or clear
+    // sender notifications by owner. Only the new capability makes that safe.
+    vi.mocked(requireOptionalNativeModule).mockReturnValue({
+      supportsSenderAvatars: true,
+      ...(accountScoped ? { supportsAccountScopedSenderNotifications: true } : {}),
+    });
+    for (const userId of ["family", "work"])
+      await rememberSavedAccount(currentApiBase(), {
+        userId,
+        token: `${userId}-token`,
+        email: `${userId}@example.test`,
+      });
+    await restoreSessionToken("family-token");
+    if (signedOutSecond) await queueSessionRevocation(currentApiBase(), "work-token");
+
+    await registerPushToken();
+
+    const registrations = fetch.mock.calls
+      .filter(([url]) => url.endsWith("/rpc/notifications/registerPush"))
+      .map(([, init]) => ({
+        credential: new Headers(init?.headers).get("authorization"),
+        payload: JSON.parse(String(init?.body)).json,
+      }));
+    const active = registrations.find(({ credential }) => credential === "Bearer family-token");
+    expect(active).toBeDefined();
+    if (sender) expect(active?.payload).toHaveProperty("presentation", "android_sender");
+    else expect(active?.payload).not.toHaveProperty("presentation");
+    const other = registrations.find(({ credential }) => credential === "Bearer work-token");
+    if (signedOutSecond) expect(other).toBeUndefined();
+    else {
+      expect(other).toBeDefined();
+      expect(other?.payload).not.toHaveProperty("presentation");
+    }
+  },
+);
+
 it("registers plain delivery when the native module does not keep the session", async () => {
   Platform.OS = "android";
   vi.mocked(Notifications.getPermissionsAsync).mockResolvedValue({ granted: true } as never);

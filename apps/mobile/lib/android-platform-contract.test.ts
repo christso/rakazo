@@ -7,6 +7,26 @@ import { normalizeApiBase } from "./endpoint.js";
 const mobileRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 describe("Android mobile platform contract", () => {
+  it("retains the sender push owner across Android routing and sign-out cleanup", () => {
+    const nativeRoot = resolve(
+      mobileRoot,
+      "modules/rakazo-notifications/android/src/main/java/com/rakazo/notifications",
+    );
+    const sender = readFileSync(resolve(nativeRoot, "SenderPush.kt"), "utf8");
+    const service = readFileSync(resolve(nativeRoot, "RakazoNotificationService.kt"), "utf8");
+    const module = readFileSync(resolve(nativeRoot, "RakazoNotificationsModule.kt"), "utf8");
+    // These are wire keys shared with Expo payloads, the JS response handler and
+    // native sign-out cleanup. A native-only rename silently loses the owner.
+    for (const key of ["userId", "apiBase"]) {
+      expect(sender).toMatch(new RegExp(`\\.optString\\("${key}"\\)`));
+      expect(sender).toMatch(new RegExp(`putString\\("rakazo\\.${key}",\\s*[^)]+\\)`));
+      expect(sender).toMatch(new RegExp(`&${key}=\\$\\{Uri\\.encode\\([^)]+\\)\\}`));
+      expect(service).toContain(`extras.getString("rakazo.${key}")`);
+    }
+    expect(sender).toMatch(/putString\("rakazo\.spaceId",\s*[^)]+\)/);
+    expect(module).toContain('"supportsAccountScopedSenderNotifications" to true');
+  });
+
   it("shares its notification endpoint cases with the app's server URL check", () => {
     const cases: [string, boolean][] = JSON.parse(
       readFileSync(

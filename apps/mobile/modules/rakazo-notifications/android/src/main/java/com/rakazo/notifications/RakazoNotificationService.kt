@@ -468,7 +468,8 @@ class RakazoNotificationService : Service() {
       }
       if (threadId != null) {
         context.getSystemService(NotificationManager::class.java).cancel("${NotificationStorage(context).endpoint}:${NotificationStorage(context).userId}:$threadId".hashCode())
-        context.getSystemService(NotificationManager::class.java).cancel(SenderPush.notificationId(threadId))
+        val storage = NotificationStorage(context)
+        context.getSystemService(NotificationManager::class.java).cancel(SenderPush.notificationId(storage.endpoint, storage.userId, threadId))
       }
       start(context, resetToken = false, action = ACTION_THREAD_CHANGED)
     }

@@ -115,8 +115,14 @@ export default function ThreadRoute() {
     let cancelled = false;
     setSwitchFailed(false);
     const requestedSpaceId = next.spaceId;
-    void selectSpaceAcrossOrganizations(requestedSpaceId).then((switched) => {
-      if (cancelled) return;
+    const requestGeneration = currentOwner.generation;
+    const requestServer = currentApiBase();
+    const stillCurrent = () =>
+      !cancelled &&
+      requestGeneration === currentSessionGeneration() &&
+      requestServer === currentApiBase();
+    void selectSpaceAcrossOrganizations(requestedSpaceId, stillCurrent).then((switched) => {
+      if (!stillCurrent()) return;
       // selectSpace commits the id before it resolves; a failed write rolls it back.
       if (threadSpaceSwitchResult(requestedSpaceId, switched, selectedSpaceId()) === "ready") {
         setActiveSpaceId(requestedSpaceId);

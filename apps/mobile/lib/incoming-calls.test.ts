@@ -3,8 +3,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const fake = vi.hoisted(() => ({
   generation: 1,
   locked: false,
+  sessionToken: "fake-session",
   onAppState: undefined as undefined | ((state: string) => void),
   onEvent: undefined as undefined | ((event: unknown) => void),
+  onResponse: undefined as undefined | ((response: unknown) => void),
   lastResponse: null as unknown,
   actions: [] as Record<string, string>[],
   native: {
@@ -17,6 +19,7 @@ const fake = vi.hoisted(() => ({
     reportIncomingCall: vi.fn(async () => {}),
   },
   rpc: vi.fn(),
+  selectNotificationAccount: vi.fn(),
   startCall: vi.fn(),
   call: null as unknown,
 }));
@@ -24,7 +27,10 @@ vi.mock("expo-modules-core", () => ({ requireOptionalNativeModule: () => fake.na
 vi.mock("expo-notifications", () => ({
   setNotificationCategoryAsync: async () => {},
   getLastNotificationResponse: () => fake.lastResponse,
-  addNotificationResponseReceivedListener: () => ({ remove() {} }),
+  addNotificationResponseReceivedListener: (callback: (response: unknown) => void) => {
+    fake.onResponse = callback;
+    return { remove() {} };
+  },
   addNotificationReceivedListener: () => ({ remove() {} }),
 }));
 vi.mock("react-native", () => ({
@@ -44,7 +50,7 @@ vi.mock("./api", () => ({
     apiBase: "https://example.invalid",
     headers: {
       "x-rakazo-space-id": spaceId,
-      ...(fake.locked ? {} : { authorization: "Bearer fake-session" }),
+      ...(fake.locked ? {} : { authorization: `Bearer ${fake.sessionToken}` }),
     },
     sessionGeneration: fake.generation,
   }),
@@ -58,6 +64,9 @@ vi.mock("./api-live", () => ({
     );
   },
 }));
+vi.mock("./account-sessions", () => ({
+  selectNotificationAccount: fake.selectNotificationAccount,
+}));
 vi.mock("./call-session", () => ({
   endCall: vi.fn(),
   hangUp: vi.fn(),
@@ -69,7 +78,7 @@ vi.mock("./i18n", () => ({ t: (value: string) => value }));
 vi.mock("./push", () => ({ registerCallPushToken: vi.fn() }));
 vi.mock("./server-headers", () => ({ serverHeaders: () => ({}) }));
 vi.mock("./session", () => ({
-  loadSessionToken: async () => "fake-session",
+  loadSessionToken: async () => fake.sessionToken,
 
   currentSessionGeneration: () => fake.generation,
   registerSessionDiskCache: vi.fn(),
@@ -108,11 +117,14 @@ beforeEach(() => {
   vi.useFakeTimers();
   fake.generation = 1;
   fake.locked = false;
+  fake.sessionToken = "fake-session";
   fake.onAppState = undefined;
   fake.onEvent = undefined;
+  fake.onResponse = undefined;
   fake.lastResponse = null;
   fake.call = null;
   vi.clearAllMocks();
+  fake.selectNotificationAccount.mockResolvedValue("selected");
   fake.native.incomingState.mockResolvedValue({ token: "", actions: [] });
   fake.rpc.mockImplementation(async (path: string) => {
     if (path === "spaces/list") return { current: { bots: [bot] }, spaces: [] };
@@ -463,6 +475,133 @@ describe("mobile incoming calls", () => {
     // on the active organization's roster.
     fake.onEvent?.([{ ...orgBot, incomingCall: { ...block(), callId: "call-1" } }]);
     await vi.waitFor(() => expect(fake.rpc).toHaveBeenCalledWith(...orgAnswerRpc("call-1")));
+  });
+  it("selects a notification's account and server before using a cached caller", async () => {
+    stop = startIncomingCalls();
+    await tick();
+    const selected = deferred<"selected">();
+    fake.selectNotificationAccount.mockImplementation(async () => {
+      await selected.promise;
+      fake.sessionToken = "owner-session";
+      return "selected";
+    });
+    fake.lastResponse = {
+      actionIdentifier: "answer",
+      notification: {
+        request: {
+          content: {
+            data: {
+              ...block(),
+              kind: "incoming_call",
+              botId: bot.id,
+              userId: "owner-a",
+              apiBase: "https://example.invalid",
+            },
+          },
+        },
+      },
+    };
+    fake.onResponse?.(fake.lastResponse);
+    await tick();
+    expect(fake.selectNotificationAccount).toHaveBeenCalledWith(
+      "owner-a",
+      "https://example.invalid",
+      expect.any(Function),
+    );
+    expect(fake.rpc.mock.calls.filter((call) => call[0] === "threads/answerCall")).toHaveLength(0);
+    selected.resolve("selected");
+    await tick();
+    expect(fake.rpc).toHaveBeenCalledWith(
+      "threads/answerCall",
+      { botId: bot.id, callId: "call-1" },
+      {
+        requestContext: expect.objectContaining({
+          headers: expect.objectContaining({ authorization: "Bearer owner-session" }),
+        }),
+      },
+    );
+  });
+  it.each(["signed-out", "other-server"])(
+    "does not answer an attributed notification when account selection returns %s",
+    async (result) => {
+      fake.selectNotificationAccount.mockResolvedValue(result);
+      fake.lastResponse = {
+        actionIdentifier: "answer",
+        notification: {
+          request: {
+            content: {
+              data: {
+                ...block(),
+                kind: "incoming_call",
+                botId: bot.id,
+                userId: "owner-a",
+                apiBase: "https://example.invalid",
+              },
+            },
+          },
+        },
+      };
+      stop = startIncomingCalls();
+      await tick();
+      expect(fake.selectNotificationAccount).toHaveBeenCalledWith(
+        "owner-a",
+        "https://example.invalid",
+        expect.any(Function),
+      );
+      expect(fake.rpc.mock.calls.filter((call) => call[0] === "threads/answerCall")).toHaveLength(
+        0,
+      );
+      expect(fake.startCall).not.toHaveBeenCalled();
+    },
+  );
+  it("replays an attributed answer once in the new feed after selecting its saved account", async () => {
+    stop = startIncomingCalls();
+    await tick();
+    const staleEvent = fake.onEvent!;
+    fake.selectNotificationAccount.mockImplementationOnce(async () => {
+      fake.generation++;
+      fake.sessionToken = "owner-session";
+      stopIncomingCalls();
+      return "selected";
+    });
+    fake.lastResponse = {
+      actionIdentifier: "answer",
+      notification: {
+        request: {
+          content: {
+            data: {
+              ...block(),
+              kind: "incoming_call",
+              botId: orgBot.id,
+              userId: "owner-a",
+              apiBase: "https://example.invalid",
+            },
+          },
+        },
+      },
+    };
+    fake.onResponse?.(fake.lastResponse);
+    await tick();
+    expect(fake.selectNotificationAccount).toHaveBeenCalledOnce();
+    expect(fake.rpc.mock.calls.filter((call) => call[0] === "threads/answerCall")).toHaveLength(0);
+    stop = startIncomingCalls();
+    await tick();
+    staleEvent([{ ...orgBot, incomingCall: block() }]);
+    await tick();
+    expect(fake.rpc.mock.calls.filter((call) => call[0] === "threads/answerCall")).toHaveLength(0);
+    fake.onEvent?.([{ ...orgBot, incomingCall: block() }]);
+    await vi.waitFor(() => expect(fake.startCall).toHaveBeenCalledOnce());
+    fake.onResponse?.(fake.lastResponse);
+    await vi.advanceTimersByTimeAsync(5100);
+    expect(fake.rpc.mock.calls.filter((call) => call[0] === "threads/answerCall")).toHaveLength(1);
+    expect(fake.startCall).toHaveBeenCalledWith(
+      expect.objectContaining({
+        session: 2,
+        requestContext: expect.objectContaining({
+          headers: expect.objectContaining({ authorization: "Bearer owner-session" }),
+        }),
+      }),
+    );
   });
   it("abandons a cold-start notification answer when its session stops before the stream reports", async () => {
     fake.lastResponse = {

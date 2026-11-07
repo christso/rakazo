@@ -101,7 +101,7 @@ it("switches to the requested space before showing the thread", async () => {
     return true;
   });
   await render();
-  expect(state.selectSpace).toHaveBeenCalledWith("space-2");
+  expect(state.selected).toBe("space-2");
   expect(container.textContent).toBe("thread:user-1");
 });
 
@@ -154,7 +154,7 @@ it("waits for notification ownership before switching spaces or showing recovery
   expect(state.selectSpace).not.toHaveBeenCalled();
   await act(async () => verify({ apiBase: "https://app.example.test", userId: "user-1" }));
   expect(container.textContent).toBe("thread:user-1");
-  expect(state.selectSpace).toHaveBeenCalledWith("space-2");
+  expect(state.selected).toBe("space-2");
 });
 
 it("does not use the previous session's owner while a new session is being verified", async () => {

@@ -38,6 +38,18 @@ export async function registerPushToken() {
     const selectedToken = apiBase === currentApiBase() ? await loadSessionToken() : "";
     if (generation !== currentSessionGeneration() || apiBase !== currentApiBase()) return;
     const activeToken = pending.has(selectedToken) ? "" : selectedToken;
+    const liveTokens = new Set(accounts.map((account) => account.token));
+    if (activeToken) liveTokens.add(activeToken);
+    const senderModule =
+      Platform.OS === "android"
+        ? requireOptionalNativeModule<{
+            supportsSenderAvatars?: boolean;
+            supportsAccountScopedSenderNotifications?: boolean;
+          }>("RakazoNotifications")
+        : null;
+    const supportsSender =
+      senderModule?.supportsSenderAvatars &&
+      (liveTokens.size <= 1 || senderModule.supportsAccountScopedSenderNotifications);
     const stillSignedIn = async (sessionToken: string) => {
       const saved = await loadSavedAccounts(apiBase);
       const owned =
@@ -68,10 +80,7 @@ export async function registerPushToken() {
           "notifications/registerPush",
           {
             token,
-            ...(Platform.OS === "android" &&
-            nativeSession &&
-            requireOptionalNativeModule<{ supportsSenderAvatars?: boolean }>("RakazoNotifications")
-              ?.supportsSenderAvatars
+            ...(Platform.OS === "android" && nativeSession && supportsSender
               ? { presentation: "android_sender" as const }
               : {}),
           },

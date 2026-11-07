@@ -56,7 +56,12 @@ export function expoPushData(
 }
 
 /** Android devices with native call support render data-only pushes themselves. */
-function incomingCallPayload(token: string, call: IncomingCallPush, dataOnly = false) {
+function incomingCallPayload(
+  token: string,
+  call: IncomingCallPush,
+  owner: { userId: string; apiBase?: string },
+  dataOnly = false,
+) {
   const expiration = Math.floor(Date.parse(call.expiresAt) / 1000);
   const botName = call.botName.slice(0, MAX_PUSH_TITLE_CHARS);
   return {
@@ -70,6 +75,8 @@ function incomingCallPayload(token: string, call: IncomingCallPush, dataOnly = f
       botId: call.botId,
       botName,
       expiresAt: call.expiresAt,
+      userId: owner.userId,
+      ...(owner.apiBase ? { apiBase: owner.apiBase } : {}),
     },
     ...(dataOnly
       ? {}
@@ -213,6 +220,7 @@ export class ExpoPushProvider implements NotificationProvider {
 
   async incomingCall(userId: string, call: IncomingCallPush): Promise<void> {
     const devices = (await this.tokens.devices?.(userId)) ?? [];
+    const nativeTokens = new Set<string>();
     await Promise.allSettled(
       devices.map(async (device) => {
         if (device.userId !== userId || !(Date.parse(call.expiresAt) > Date.now())) return;
@@ -231,6 +239,7 @@ export class ExpoPushProvider implements NotificationProvider {
           )
         )
           return;
+        if (device.expoToken) nativeTokens.add(device.expoToken);
         let invalidVoip = false;
         let invalidExpo = false;
         try {
@@ -259,11 +268,15 @@ export class ExpoPushProvider implements NotificationProvider {
         }
       }),
     );
-    // Old native builds registered only the account's Expo token.
-    if (devices.length === 0 && !call.ended) {
-      const token = (await this.deliverableTokens(userId))[0];
-      if (token && (await this.sendCallPush(userId, token, call)) === "invalid")
-        await this.tokens.remove(userId, credentialDigest(token));
+    if (!call.ended) {
+      await Promise.allSettled(
+        (await this.deliverableTokens(userId))
+          .filter((token) => !nativeTokens.has(token))
+          .map(async (token) => {
+            if ((await this.sendCallPush(userId, token, call)) === "invalid")
+              await this.tokens.remove(userId, credentialDigest(token));
+          }),
+      );
     }
   }
 
@@ -274,7 +287,12 @@ export class ExpoPushProvider implements NotificationProvider {
     call: IncomingCallPush,
     dataOnly = false,
   ): Promise<"sent" | "invalid" | "failed"> {
-    const payload = incomingCallPayload(token, call, dataOnly);
+    const payload = incomingCallPayload(
+      token,
+      call,
+      { userId, apiBase: this.options.apiBase },
+      dataOnly,
+    );
     if (payload.ttl <= 0) return "failed";
     try {
       const { status, body } = await this.postWithBackoff(
