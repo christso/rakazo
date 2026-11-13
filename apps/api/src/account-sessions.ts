@@ -31,6 +31,24 @@ export function mountAccountIdentityGuard(
   });
 }
 
+/** Share the guard's initial lookup once. Long-lived streams must authenticate again. */
+export function mountAccountSessionGuard(app: Hono, auth: Auth) {
+  const loadRequestSession = (request: Request) =>
+    runAsSystem("authenticate request", () => auth.api.getSession({ headers: request.headers }));
+  const requestSessions = new WeakMap<Request, ReturnType<typeof loadRequestSession>>();
+  const authenticatedSession = (request: Request) => {
+    const session = requestSessions.get(request);
+    requestSessions.delete(request);
+    return session ?? loadRequestSession(request);
+  };
+  mountAccountIdentityGuard(app, async (request) => {
+    const session = loadRequestSession(request);
+    requestSessions.set(request, session);
+    return (await session)?.user.id ?? null;
+  });
+  return authenticatedSession;
+}
+
 async function accountActivity(prisma: PrismaClient, userId: string) {
   return runAsSystem("read saved account notification summaries", async () => {
     const unread = await countUnreadInboxChats(prisma, { userId });

@@ -1,10 +1,10 @@
+import { useLingui } from "@lingui/react/macro";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import { ActivityIndicator, Alert, StyleSheet, View } from "react-native";
 import { selectNotificationAccount } from "../lib/account-sessions";
 import { currentApiBase } from "../lib/api";
 import { mobileTokens } from "../lib/appearance";
-import { useI18n } from "../lib/i18n";
 import { useMobileTokens, useThemedStyles } from "../lib/native";
 import { notificationOpenTargetFromLink } from "../lib/notification-open";
 import { promptNotificationSignIn } from "../lib/open-notification";
@@ -13,7 +13,7 @@ import { promptNotificationSignIn } from "../lib/open-notification";
 export default function NotificationOpen() {
   const { target } = useLocalSearchParams<{ target?: string }>();
   const router = useRouter();
-  const { t } = useI18n();
+  const { t } = useLingui();
   const tokens = useMobileTokens();
   const styles = useThemedStyles(createStyles);
   const [attempt, setAttempt] = useState(0);
@@ -42,9 +42,9 @@ export default function NotificationOpen() {
       })
       .catch(() => {
         if (!active) return;
-        Alert.alert(t("Could not continue"), undefined, [
-          { text: t("Cancel"), style: "cancel", onPress: () => router.replace("/") },
-          { text: t("Try again"), onPress: () => setAttempt((previous) => previous + 1) },
+        Alert.alert(t`Could not continue`, undefined, [
+          { text: t`Cancel`, style: "cancel", onPress: () => router.replace("/") },
+          { text: t`Try again`, onPress: () => setAttempt((previous) => previous + 1) },
         ]);
       });
     return () => {
@@ -53,7 +53,7 @@ export default function NotificationOpen() {
   }, [router, target, attempt, t]);
   return (
     <View style={styles.screen}>
-      <ActivityIndicator accessibilityLabel={t("Loading…")} color={tokens.mutedForeground} />
+      <ActivityIndicator accessibilityLabel={t`Loading…`} color={tokens.mutedForeground} />
     </View>
   );
 }

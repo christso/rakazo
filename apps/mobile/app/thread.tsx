@@ -1,3 +1,5 @@
+import { t } from "@lingui/core/macro";
+import { useLingui } from "@lingui/react/macro";
 import { isRetryableError } from "@rakazo/core";
 import { useIsFocused, useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useState, useSyncExternalStore } from "react";
@@ -7,7 +9,7 @@ import { Thread } from "../components/thread/thread-screen";
 import { currentApiBase, selectedSpaceId } from "../lib/api";
 import { mobileTokens } from "../lib/appearance";
 import { normalizeApiBase } from "../lib/endpoint";
-import { t, useI18n } from "../lib/i18n";
+
 import { integrationsCacheScope } from "../lib/integrations-cache";
 import { useMobileTokens, useThemedStyles } from "../lib/native";
 import {
@@ -55,7 +57,7 @@ export default function ThreadRoute() {
             });
         })
         .catch((error) => {
-          if (!cancelled && !notified) Alert.alert(t("Could not continue"), errorText(error));
+          if (!cancelled && !notified) Alert.alert(t`Could not continue`, errorText(error));
           notified = true;
           if (!cancelled && isRetryableError(error)) timer = setTimeout(verify, 5_000);
         });
@@ -67,7 +69,7 @@ export default function ThreadRoute() {
   }, [generation, ready]);
   const tokens = useMobileTokens();
   const styles = useThemedStyles(createStyles);
-  const { t } = useI18n();
+  const { t } = useLingui();
   const router = useRouter();
   const focused = useIsFocused();
   const params = useLocalSearchParams<{
@@ -138,9 +140,9 @@ export default function ThreadRoute() {
   if (wrongAccount)
     return (
       <View style={styles.screen}>
-        <Text style={styles.feedbackMessage}>{t("Sign in to open this notification")}</Text>
+        <Text style={styles.feedbackMessage}>{t`Sign in to open this notification`}</Text>
         <NativeActionButton
-          label={t("Sign in")}
+          label={t`Sign in`}
           onPress={() => {
             const route = notificationOpenTarget(params);
             router.replace(
@@ -156,7 +158,7 @@ export default function ThreadRoute() {
       </View>
     );
   if (!currentOwner)
-    return <ActivityIndicator accessibilityLabel={t("Loading…")} color={tokens.foreground} />;
+    return <ActivityIndicator accessibilityLabel={t`Loading…`} color={tokens.foreground} />;
   if (request.action === "show" && !focusSync.switchFailed)
     return (
       <View style={styles.thread}>
@@ -169,9 +171,9 @@ export default function ThreadRoute() {
         <ActivityIndicator color={tokens.foreground} />
       ) : (
         <View style={styles.feedback}>
-          <Text style={styles.feedbackMessage}>{t("Could not switch spaces")}</Text>
+          <Text style={styles.feedbackMessage}>{t`Could not switch spaces`}</Text>
           <NativeActionButton
-            label={t("Return to inbox")}
+            label={t`Return to inbox`}
             prominence="secondary"
             onPress={() => router.replace("/")}
           />

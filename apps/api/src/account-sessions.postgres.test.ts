@@ -7,7 +7,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { mountAccountIdentityGuard, mountAccountSessions } from "./account-sessions.js";
 
 const suite =
-  process.env.VERIFY_DATABASE && process.env.DATABASE_URL ? describe.sequential : describe.skip;
+  process.env.VERIFY_DATABASE && process.env.DATABASE_URL ? describe : describe.skip;
 suite("saved account sessions and notifications (PostgreSQL)", () => {
   const stamp = randomUUID();
   const ids = { family: `family-${stamp}`, work: `work-${stamp}` };

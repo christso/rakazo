@@ -94,7 +94,9 @@ it.each([
     vi.stubGlobal("fetch", fetch);
     const jobs = {
       enqueue: vi.fn(async () => undefined),
+      enqueueIn: vi.fn(async () => undefined),
       cancel: vi.fn(async () => undefined),
+      cancelIn: vi.fn(async () => undefined),
       close: vi.fn(async () => undefined),
     };
     const provider = createExpoPushProvider(prisma, tokens, {

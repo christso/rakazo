@@ -1,9 +1,9 @@
+import { t } from "@lingui/core/macro";
 import { readBoundedJsonResponse } from "@rakazo/core";
 import { currentApiBase } from "./api";
 import { signOut } from "./api-auth";
 import { clearSpace } from "./api-server";
 import { appBadgeGeneration, syncAppBadge } from "./app-badge";
-import { t } from "./i18n";
 import { getLiveNotificationSettings, stopLiveNotifications } from "./live-notifications";
 import {
   completeSessionRevocation,
@@ -67,7 +67,7 @@ async function accountJson(apiBase: string, token: string, path: string, method 
 async function verifiedAccount(apiBase: string, token: string): Promise<SavedAccount | null> {
   const { response, body } = await accountJson(apiBase, token, "/api/auth/get-session");
   if (response.status === 401 || (response.ok && body === null)) return null;
-  if (!response.ok) throw new Error(t("Could not continue"));
+  if (!response.ok) throw new Error(t`Could not continue`);
   const user = (body as { user?: { id?: unknown; email?: unknown } } | null)?.user;
   if (typeof user?.id !== "string" || typeof user.email !== "string") return null;
   return { userId: user.id, token, email: user.email };
@@ -156,7 +156,7 @@ export async function selectSavedAccount(
   const active = await loadSessionToken();
   if (!current()) return false;
   if (active === account.token) return true;
-  if (!(await clearSpace())) throw new Error(t("Could not clear the local session"));
+  if (!(await clearSpace())) throw new Error(t`Could not clear the local session`);
   if (!current()) return false;
   await stopLiveNotifications(false).catch(() => undefined);
   if (!current()) return false;
@@ -213,6 +213,6 @@ export async function signOutAllAccounts(): Promise<void> {
     }),
   );
   if (activeToken) await signOut([activeToken], apiBase);
-  if (localFailed) throw new Error(t("Could not clear the local session"));
-  if (failed) throw new Error(t("Could not sign out of every account"));
+  if (localFailed) throw new Error(t`Could not clear the local session`);
+  if (failed) throw new Error(t`Could not sign out of every account`);
 }

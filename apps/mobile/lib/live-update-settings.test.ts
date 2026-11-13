@@ -10,6 +10,7 @@ vi.mock("expo-modules-core", () => ({
   requireOptionalNativeModule: () => null,
 }));
 vi.mock("expo-notifications", () => ({ setNotificationHandler: vi.fn() }));
+vi.mock("expo-secure-store", () => ({}));
 vi.mock("react-native", () => ({ Platform: platform }));
 
 describe("Live update settings row", () => {

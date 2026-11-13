@@ -163,11 +163,6 @@ vi.mock("./native", () => ({
   useMobileTokens: () => tokensForAppearance("light"),
   useThemedStyles: (create: () => unknown) => create(),
 }));
-vi.mock("./i18n", () => {
-  const t = (text: string, values?: Record<string, string>) =>
-    text.replace(/\{(\w+)\}/g, (_, key: string) => values?.[key] ?? key);
-  return { useI18n: () => ({ t }) };
-});
 vi.mock("./api-server", () => ({}));
 vi.mock("./api-live", () => ({}));
 vi.mock("./api", () => ({

@@ -128,6 +128,26 @@ describe("messaging another bot", () => {
     expect(harness.enqueue).not.toHaveBeenCalled();
   });
 
+  it("does not deliver when multiple bots have the same exact name", async () => {
+    const harness = deps({
+      bots: [
+        { id: "bot-first", name: "Reviewer", thread: { id: "thread-first" } },
+        { id: "bot-second", name: "Reviewer", thread: { id: "thread-second" } },
+      ],
+    });
+    const sent = await messageBot(harness.deps, run, sender, {
+      confirm_name: "Reviewer",
+      message: "review this",
+    });
+
+    expect(sent).toMatchObject({ ok: false });
+    expect(harness.tx.message.create).not.toHaveBeenCalled();
+    expect(harness.tx.task.create).not.toHaveBeenCalled();
+    expect(harness.tx.run.create).not.toHaveBeenCalled();
+    expect(harness.enqueue).not.toHaveBeenCalled();
+    expect(harness.notify).not.toHaveBeenCalled();
+  });
+
   it("delivers into the target's own chat without marking either thread unread", async () => {
     const harness = deps();
     const sent = await messageBot(harness.deps, run, sender, {
@@ -257,13 +277,17 @@ describe("messaging another bot", () => {
     expect(sent).toEqual({ ok: false, error: "message is required" });
   });
 
-  it("rejects an oversized message instead of silently truncating it", async () => {
+  it("rejects an oversized message and points to files instead of splitting it", async () => {
     const harness = deps();
     const sent = await messageBot(harness.deps, run, sender, {
       bot_id: "bot-target",
       message: "x".repeat(8_001),
     });
-    expect(sent).toEqual({ ok: false, error: "message exceeds the 8000 character limit" });
+    expect(sent).toEqual({
+      ok: false,
+      error:
+        "message exceeds the 8000 character limit. Nothing was sent. Save long content to a file and send it with files instead of splitting it across messages.",
+    });
     expect(harness.tx.run.create).not.toHaveBeenCalled();
   });
 

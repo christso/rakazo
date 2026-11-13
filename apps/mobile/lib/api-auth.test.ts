@@ -1,4 +1,5 @@
 vi.mock("./ai-consent", () => ({ promptAiConsent: vi.fn() }));
+vi.mock("react-native", () => ({ Platform: { OS: "ios" } }));
 
 import * as SecureStore from "expo-secure-store";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -244,6 +245,7 @@ describe("mobile API sign-in and account", () => {
           "content-type": "application/json",
           origin: "rakazo://",
           "accept-language": "en",
+          "x-rakazo-signup-surface": "ios",
         },
         body: JSON.stringify({ email: "ada@example.com", password: "correct horse" }),
       }),
@@ -285,6 +287,7 @@ describe("mobile API sign-in and account", () => {
           "content-type": "application/json",
           origin: "rakazo://",
           "accept-language": "en",
+          "x-rakazo-signup-surface": "ios",
         },
         body: JSON.stringify({
           email: "new@example.com",
@@ -554,6 +557,7 @@ describe("mobile API sign-in and account", () => {
           "content-type": "application/json",
           origin: "rakazo://",
           "accept-language": "en",
+          "x-rakazo-signup-surface": "ios",
         },
         body: JSON.stringify({ email: "ada@example.test", type: "sign-in" }),
       }),
@@ -567,6 +571,7 @@ describe("mobile API sign-in and account", () => {
           "content-type": "application/json",
           origin: "rakazo://",
           "accept-language": "en",
+          "x-rakazo-signup-surface": "ios",
         },
         body: JSON.stringify({ email: "ada@example.test", otp: "123456", name: "Ada" }),
       }),

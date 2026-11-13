@@ -11,13 +11,14 @@ import {
   activeThreadRuns,
   answerableAskMessageIds,
   channelMessageSender,
+  chatSnoozed,
   chatUserBubbleColors,
+  chatWoke,
   dismissableAskMessageIds,
   foldPeerReplies,
   groupBotsForSidebar,
   isActive,
   isRunWorking,
-  memberName,
   newClientId,
   otherAuthor,
   workingRoutineName,
@@ -60,6 +61,7 @@ import { lastChatKey, lastChatOf, queryClient, spaceQueries, spaceSeedKey } from
 import type { Panel } from "../lib/right-panel-state";
 import { rightPanelStorageKey } from "../lib/right-panel-state";
 import { createSpaceRpc, selectedSpaceId } from "../lib/rpc";
+import { SpaceRpcProvider } from "../lib/space-rpc";
 import { markShellReady, useSpaceEpoch } from "../lib/space-switch";
 import { toolActivityPreference } from "../lib/tool-activity-preference";
 import { useDesktopBadge } from "../lib/use-desktop-badge";
@@ -67,6 +69,7 @@ import { errorText } from "../lib/user-error";
 import { HostComputerPrompt } from "./HostComputerPrompt";
 import { RoutineList } from "./RoutineList";
 import { ArchivedChats } from "./shell/archived-chats";
+import type { ChatMenuState, ChatMenuTarget } from "./shell/chat-context-menu";
 import { ChatContextMenu } from "./shell/chat-context-menu";
 import { ChatFindBar } from "./shell/chat-find-bar";
 import { ChatHeader } from "./shell/chat-header";
@@ -84,10 +87,13 @@ import { focusSidebarSearch, ShellSidebar } from "./shell/shell-sidebar";
 import { ShellSidePanel } from "./shell/side-panel";
 import { BotsSidebarLayout } from "./shell/sidebar-layout";
 import { SidebarRoster } from "./shell/sidebar-roster";
+import { SnoozedChats } from "./shell/snoozed-chats";
 import { countUnreadChats, sidebarGroupsForSpaces } from "./shell/space-sidebar";
 import { Transcript } from "./shell/transcript";
+import { resolveTranscriptMemberName as groupTranscriptMemberName } from "./shell/transcript-member-name";
 import { useBrowserNotifications } from "./shell/use-browser-notifications";
 import { useChatRead } from "./shell/use-chat-read";
+import { useChatSnooze } from "./shell/use-chat-snooze";
 import { useComposerActions } from "./shell/use-composer-actions";
 import { useComposerMentions } from "./shell/use-composer-mentions";
 import { useComputerControls, useComputerState } from "./shell/use-computer";
@@ -101,6 +107,7 @@ import { useRoutineEditor } from "./shell/use-routine-editor";
 import { useShellNavigation } from "./shell/use-shell-navigation";
 import { useSidebarExpansion } from "./shell/use-sidebar-expansion";
 import { useSidebarSearch } from "./shell/use-sidebar-search";
+import { useSnoozeClock } from "./shell/use-snooze-clock";
 import { useSpaceActions } from "./shell/use-space-actions";
 import { useRosterDrop, useSpaceBootstrap, useSpaceRoster } from "./shell/use-space-roster";
 import { useOpenSpaceChat } from "./shell/use-space-switch";
@@ -153,6 +160,7 @@ function SpaceShell() {
   const {
     groups,
     setGroups,
+    groupsRef,
     bots,
     setBots,
     botsRef,
@@ -167,6 +175,19 @@ function SpaceShell() {
     setBootstrapMe,
     refreshBots,
   } = roster;
+  const snoozeNow = useSnoozeClock([
+    ...bots,
+    ...groups,
+    ...spaces.flatMap((space) => [...space.bots, ...space.groups]),
+  ]);
+  const snooze = useChatSnooze({
+    rpc,
+    openSpaceId: bootstrapMe?.spaceId,
+    setBots,
+    setGroups,
+    setSpaces,
+    refreshBots,
+  });
   const { collapsedSidebarSections, toggleSidebarSection } = useSidebarExpansion(userId);
   const [botsSidebarCollapsed, setBotsSidebarCollapsed] = useState(false);
   useEffect(() => {
@@ -234,7 +255,7 @@ function SpaceShell() {
   const isMobileSidebar = useIsMobile();
   const pages = usePagesForChat();
   const miniSidebar = botsSidebarCollapsed && !isMobileSidebar;
-  const [botMenu, setBotMenu] = useState<{ kind: "bot" | "group"; id: string } | null>(null);
+  const [botMenu, setBotMenu] = useState<ChatMenuTarget | null>(null);
   const closeBotMenu = useCallback(() => setBotMenu(null), []);
   const currentSpaceId = selectedSpaceId() ?? bootstrapMe?.spaceId ?? null;
   // null: settings follow the space the app is showing.
@@ -264,7 +285,10 @@ function SpaceShell() {
   const active =
     inGroup || routeChat?.groupId
       ? undefined
-      : (bots.find((b) => b.id === (botId ?? routeChat?.botId)) ?? bots[0]);
+      : (bots.find((b) => b.id === (botId ?? routeChat?.botId)) ??
+        // With no chat named, open one that's in the list, not a snoozed one.
+        bots.find((b) => !chatSnoozed(b, snoozeNow)) ??
+        bots[0]);
   const selectBot = useCallback(
     (id: string) => {
       setMobileSidebarOpen(false);
@@ -296,8 +320,12 @@ function SpaceShell() {
   };
   useReportedUiLocale(rpc, bootstrapMe?.locale);
   const cycleBots = useMemo(
-    () => groupBotsForSidebar(bots, botSections).flatMap((group) => group.bots),
-    [bots, botSections],
+    () =>
+      groupBotsForSidebar(
+        bots.filter((bot) => !chatSnoozed(bot, snoozeNow)),
+        botSections,
+      ).flatMap((group) => group.bots),
+    [bots, botSections, snoozeNow],
   );
   const dialogs = useShellDialogs();
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
@@ -402,7 +430,7 @@ function SpaceShell() {
     return true;
   }
   const openSpaceChatRef = useRef<(spaceId: string, path: string) => void>(() => {});
-  useSpaceBootstrap({
+  const rosterSignals = useSpaceBootstrap({
     rpc,
     roster,
     thread,
@@ -430,6 +458,8 @@ function SpaceShell() {
         navigate(alert.groupId ? `/app/g/${alert.groupId}` : `/app/${alert.botId}`);
       },
       meId: userId,
+      groupsRef,
+      roster: rosterSignals,
     },
   );
   const { speakingMessageId, speakMessage, callHoldsSpeaker } = useReadAloud({
@@ -439,6 +469,17 @@ function SpaceShell() {
     activeBotId,
   });
   const read = useChatRead({ rpc, active, groupId, activeGroup, setBots, setGroups });
+  // A chat that wakes while it is open is already seen: read it, which ends the snooze.
+  const openChatWoke = active
+    ? chatWoke(active, snoozeNow)
+    : activeGroup
+      ? chatWoke(activeGroup, snoozeNow)
+      : false;
+  useEffect(() => {
+    if (!openChatWoke) return;
+    if (groupId) read.markGroupReadOnReply(groupId);
+    else if (active) read.markBotReadIfVisible(active.id);
+  }, [openChatWoke]);
   const {
     refreshThread,
     refreshGroupThread,
@@ -489,14 +530,19 @@ function SpaceShell() {
     messageProviders: messagingProviders,
   });
   // Until this visit's read lands, a bot shows the routines and skills it had last time.
+  const cachedRoutines =
+    inGroup || !active || thread.routinesBotId === active.id
+      ? undefined
+      : queryClient.getQueryData(queries.routines.list.queryKey({ input: { botId: active.id } }));
   const activeRoutines =
     inGroup || !active
       ? []
       : thread.routinesBotId === active.id
         ? thread.routines
-        : (queryClient.getQueryData(
-            queries.routines.list.queryKey({ input: { botId: active.id } }),
-          ) ?? []);
+        : (cachedRoutines ?? []);
+  // A bot opened for the first time has no routines to show yet, which is not the same as none.
+  const routinesLoaded =
+    !active || inGroup || thread.routinesBotId === active.id || cachedRoutines !== undefined;
   const activeTaughtSkills = !active
     ? []
     : thread.taughtSkillsBotId === active.id
@@ -530,16 +576,18 @@ function SpaceShell() {
   );
   const sidebarGroups = useMemo(
     () =>
-      sidebarGroupsForSpaces(sidebarSpaces, miniSidebar ? "" : search.query, {
-        pinned: t`Pinned`,
-        unassigned: t`Unassigned`,
-      }),
-    [sidebarSpaces, search.query, miniSidebar, t],
+      sidebarGroupsForSpaces(
+        sidebarSpaces,
+        miniSidebar ? "" : search.query,
+        { pinned: t`Pinned`, unassigned: t`Unassigned` },
+        snoozeNow,
+      ),
+    [sidebarSpaces, search.query, miniSidebar, t, snoozeNow],
   );
   // The Dock badge ignores the roster search box: a filter must not hide unread chats.
   const unreadChatCount = useMemo(
-    () => countUnreadChats(sidebarGroupsForSpaces(sidebarSpaces, "")),
-    [sidebarSpaces],
+    () => countUnreadChats(sidebarGroupsForSpaces(sidebarSpaces, "", undefined, snoozeNow)),
+    [sidebarSpaces, snoozeNow],
   );
   useDesktopBadge(userId ? unreadChatCount : 0, "roster");
   const openSpaceChat = useOpenSpaceChat({
@@ -598,8 +646,14 @@ function SpaceShell() {
     };
   });
   const resolveTranscriptMemberName = useCallback(
-    (botId: string | undefined) => memberName(transcriptMembers, botId),
-    [transcriptMembers],
+    (botId: string | undefined) =>
+      groupTranscriptMemberName({
+        botId,
+        members: transcriptMembers,
+        bots,
+        archivedBots,
+      }),
+    [archivedBots, bots, transcriptMembers],
   );
   const { composerMentionTargets, footerLogos, setFooterLogos } = useComposerMentions({
     rpc,
@@ -867,11 +921,22 @@ function SpaceShell() {
         onClose={closeBotMenu}
         refreshBots={refreshBots}
         read={read}
+        snooze={snooze}
         dialogs={dialogs}
         openChatSettings={openChatSettings}
         navigate={navigate}
       />
     ) : null;
+  const chatMenu: ChatMenuState = {
+    menu: botMenu,
+    setMenu: setBotMenu,
+    content: botMenuContent,
+    // Search can list a chat the roster doesn't hold; it has no menu to show.
+    has: (target) =>
+      target.kind === "bot"
+        ? bots.some((bot) => bot.id === target.id)
+        : groups.some((group) => group.id === target.id),
+  };
   const shell = (
     <BotsSidebarLayout
       userId={userId}
@@ -911,6 +976,7 @@ function SpaceShell() {
         navigate={navigate}
         setNewSpaceOpen={dialogs.setNewSpaceOpen}
         setCreateBotOpen={dialogs.setCreateBotOpen}
+        chatMenu={chatMenu}
         roster={
           <SidebarRoster
             mini={miniSidebar}
@@ -937,23 +1003,37 @@ function SpaceShell() {
             displayedRunError={composer.displayedRunError}
             draggedBotId={rosterDrop.draggedBotId}
             setDraggedBotId={rosterDrop.setDraggedBotId}
-            botMenu={botMenu}
-            setBotMenu={setBotMenu}
+            chatMenu={chatMenu}
             reorderRosterBot={roster.reorderRosterBot}
             activeSnapshot={activeSnapshot}
-            botMenuContent={botMenuContent}
           />
         }
         archived={
-          <ArchivedChats
-            archivedBots={archivedBots}
-            archivedGroups={archivedGroups}
-            showSpaceSearch={search.showSpaceSearch}
-            rpc={rpc}
-            refreshBots={refreshBots}
-            setDeleteTarget={dialogs.setDeleteTarget}
-            setDeleteGroupTarget={dialogs.setDeleteGroupTarget}
-          />
+          <>
+            <SnoozedChats
+              snoozed={sidebarSpaces.flatMap((space) => [
+                ...space.bots
+                  .filter((chat) => chatSnoozed(chat, snoozeNow))
+                  .map((chat) => ({ kind: "bot" as const, chat })),
+                ...space.groups
+                  .filter((chat) => chatSnoozed(chat, snoozeNow))
+                  .map((chat) => ({ kind: "group" as const, chat })),
+              ])}
+              showSpaceSearch={search.showSpaceSearch}
+              now={snoozeNow}
+              snooze={snooze}
+              openSpaceChat={openSpaceChat}
+            />
+            <ArchivedChats
+              archivedBots={archivedBots}
+              archivedGroups={archivedGroups}
+              showSpaceSearch={search.showSpaceSearch}
+              rpc={rpc}
+              refreshBots={refreshBots}
+              setDeleteTarget={dialogs.setDeleteTarget}
+              setDeleteGroupTarget={dialogs.setDeleteGroupTarget}
+            />
+          </>
         }
         footerLogos={footerLogos}
         user={session.data?.user}
@@ -1068,6 +1148,7 @@ function SpaceShell() {
               callHoldsSpeaker={callHoldsSpeaker}
               onSpeak={speakMessage}
               onOpenComputer={computerControls.onOpenComputer}
+              onReleaseComputer={computerControls.onReleaseComputer}
               onOpenImportSetup={openImportSetup}
               rpc={rpc}
             />
@@ -1107,6 +1188,7 @@ function SpaceShell() {
                 } else openSettings("models");
               }}
               onOpenConnections={() => openSettings("models")}
+              onOpenBilling={() => openSettings("billing")}
               runError={composer.displayedRunError}
               runErrorId={composer.displayedRunErrorId}
               onRunErrorPresented={composer.handleRunErrorPresented}
@@ -1170,7 +1252,6 @@ function SpaceShell() {
         discardChatAttachments={composer.discardThreadAttachments}
         computer={computer}
         computerOpen={computerOpen}
-        booting={booting}
         computerPanel={
           active ? (
             <ComputerPanel
@@ -1223,6 +1304,7 @@ function SpaceShell() {
         routinesPanel={
           <RoutineList
             routines={activeRoutines}
+            loaded={routinesLoaded}
             runningRoutineId={
               snapshot?.run && isActive(snapshot.run.status)
                 ? (snapshot.run.routineId ?? undefined)
@@ -1340,9 +1422,6 @@ function SpaceShell() {
           onTakeControl={() => void openComputer(computerBot.id, true)}
           onStart={() => void openComputer(computerBot.id)}
           onRefreshTeaching={refreshActiveTeaching}
-          onRefreshComputer={async () => {
-            await computerControls.refreshComputerFor(computerBot.id);
-          }}
           onClose={() => setComputerOpen(false)}
         />
       ) : null}
@@ -1350,9 +1429,13 @@ function SpaceShell() {
   );
 
   // Empty chrome until the first bot list lands would flash "Select a bot" before the chat.
-  return initialBotsLoaded || initialLoadFailed ? (
-    <PagesProvider value={pages}>{shell}</PagesProvider>
-  ) : (
-    <PageLoading />
+  return (
+    <SpaceRpcProvider spaceId={shellSpaceId}>
+      {initialBotsLoaded || initialLoadFailed ? (
+        <PagesProvider value={pages}>{shell}</PagesProvider>
+      ) : (
+        <PageLoading />
+      )}
+    </SpaceRpcProvider>
   );
 }

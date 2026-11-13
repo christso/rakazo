@@ -1,10 +1,10 @@
+import { t } from "@lingui/core/macro";
 import * as Notifications from "expo-notifications";
 import { router } from "expo-router";
 import { useEffect } from "react";
 import { Alert } from "react-native";
 import { selectNotificationAccount } from "./account-sessions";
 import { currentApiBase } from "./api";
-import { t } from "./i18n";
 import {
   notificationResponseRoute,
   notificationTargetLink,
@@ -38,10 +38,10 @@ function clearNotificationResponseIfCurrent(response: Notifications.Notification
 
 /** The notification's login is not on this device; signing in to it opens the notification. */
 export function promptNotificationSignIn(target: string): void {
-  Alert.alert(t("Sign in to open this notification"), undefined, [
-    { text: t("Cancel"), style: "cancel" },
+  Alert.alert(t`Sign in to open this notification`, undefined, [
+    { text: t`Cancel`, style: "cancel" },
     {
-      text: t("Sign in"),
+      text: t`Sign in`,
       onPress: () => {
         closeSettingsSheet();
         router.replace({

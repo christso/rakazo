@@ -1,17 +1,10 @@
 import { Trans, useLingui } from "@lingui/react/macro";
 import type { NavLink, SavedAccountSummary } from "@rakazo/contracts";
 import { ANDROID_APP_STORE_URL, IOS_APP_STORE_URL } from "@rakazo/contracts";
-import { accountDisplay } from "@rakazo/core";
 import {
   AppMarkStack,
-  Badge,
   Button,
   buttonVariants,
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
   Popover,
   PopoverContent,
   PopoverTrigger,
@@ -21,6 +14,7 @@ import {
   Check,
   Download,
   FolderOpen,
+  Gauge,
   Link2,
   LogOut,
   Plug,
@@ -30,13 +24,13 @@ import {
   SquareKanban,
   UserPlus,
   UsersRound,
-  X,
 } from "lucide-react";
 import { useLayoutEffect, useRef, useState } from "react";
 import type { Organization } from "../lib/organizations";
 import { AccountAvatar } from "./AccountAvatar";
 import { useSidebarUpdate } from "./DesktopUpdates";
 import { IconTooltip } from "./IconTooltip";
+import { SavedAccountSwitcher } from "./SavedAccountSwitcher";
 
 type Props = {
   mini?: boolean;
@@ -54,6 +48,9 @@ type Props = {
   onLink?: (link: NavLink) => void;
   onArtifacts: () => void;
   onSettings: () => void;
+  /** How much of the member's allowance is used; the Usage row shows only with one. */
+  usage?: string | null;
+  onUsage?: () => void;
   onInvite?: () => void;
   onLogOut: () => void;
   signingOut: boolean;
@@ -89,6 +86,8 @@ export function SidebarFooter({
   onLink,
   onArtifacts,
   onSettings,
+  usage,
+  onUsage,
   onInvite,
   onLogOut,
   signingOut,
@@ -206,6 +205,19 @@ export function SidebarFooter({
                 <Trans>Connect apps</Trans>
               </Button>
             ) : null}
+            {usage ? (
+              <Button
+                variant="ghost"
+                className="h-9 w-full justify-start gap-2.5 font-normal"
+                onClick={onUsage}
+              >
+                <Gauge className="text-muted-foreground" strokeWidth={1.75} />
+                <Trans>Usage</Trans>
+                <span className="ms-auto text-body-sm tabular-nums text-muted-foreground">
+                  {usage}
+                </span>
+              </Button>
+            ) : null}
             <Button
               variant="ghost"
               className="h-9 w-full justify-start gap-2.5 font-normal"
@@ -312,82 +324,16 @@ export function SidebarFooter({
           </PopoverContent>
         ) : null}
       </Popover>
-      <Dialog open={switcherOpen} onOpenChange={setSwitcherOpen}>
-        <DialogContent
-          finalFocus={menuTriggerRef}
-          showCloseButton={false}
-          className="max-h-[calc(100dvh-2rem)] overflow-y-auto"
-        >
-          <DialogHeader>
-            <DialogTitle>
-              <Trans>Switch accounts</Trans>
-            </DialogTitle>
-          </DialogHeader>
-          <DialogClose
-            aria-label={t`Close`}
-            render={
-              <Button variant="ghost" className="absolute top-4.5 right-4.5" size="icon-sm" />
-            }
-          >
-            <X aria-hidden="true" />
-          </DialogClose>
-          <div className="min-w-0">
-            {accounts.map((account) => {
-              const display = accountDisplay(account, account.email);
-              const selected = account.userId === activeUserId;
-              return (
-                <Button
-                  key={account.userId}
-                  variant="ghost"
-                  className="h-auto w-full justify-start gap-2.5 py-2 font-normal disabled:opacity-100"
-                  aria-current={selected ? "true" : undefined}
-                  disabled={signingOut || selected}
-                  onClick={() => {
-                    setSwitcherOpen(false);
-                    onSwitchAccount?.(account.userId);
-                  }}
-                >
-                  <AccountAvatar
-                    image={display.image}
-                    initials={display.initial}
-                    className="size-6 text-[11px]"
-                  />
-                  <span className="min-w-0 flex-1 text-start">
-                    <span className="block truncate">{display.label}</span>
-                    {display.label !== account.email ? (
-                      <span className="block truncate text-xs text-muted-foreground">
-                        {account.email}
-                      </span>
-                    ) : null}
-                  </span>
-                  <span className="grid size-4 shrink-0 place-items-center">
-                    {selected ? <Check aria-hidden="true" size={16} /> : null}
-                  </span>
-                  {account.unread > 0 ? (
-                    <Badge variant="secondary" className="tabular-nums">
-                      {account.unread}
-                    </Badge>
-                  ) : null}
-                </Button>
-              );
-            })}
-            {onAddAccount ? (
-              <Button
-                variant="ghost"
-                className="h-9 w-full justify-start gap-2.5 font-normal"
-                disabled={signingOut}
-                onClick={() => {
-                  setSwitcherOpen(false);
-                  onAddAccount();
-                }}
-              >
-                <UserPlus className="text-muted-foreground" strokeWidth={1.75} />
-                <Trans>Add account</Trans>
-              </Button>
-            ) : null}
-          </div>
-        </DialogContent>
-      </Dialog>
+      <SavedAccountSwitcher
+        open={switcherOpen}
+        onOpenChange={setSwitcherOpen}
+        triggerRef={menuTriggerRef}
+        accounts={accounts}
+        activeUserId={activeUserId}
+        signingOut={signingOut}
+        onSwitchAccount={onSwitchAccount}
+        onAddAccount={onAddAccount}
+      />
       {!mini ? (
         <Button
           variant="outline"
