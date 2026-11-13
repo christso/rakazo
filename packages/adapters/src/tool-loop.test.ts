@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import type { ComputerResources } from "./computer-resources.js";
+import { withComputerResources } from "./computer-resources.js";
 import { observationToolResult } from "./computer-tools.js";
 import {
   advanceOverLimitActionCalls,
@@ -306,6 +308,40 @@ describe("advanceToolCallLoopGuard", () => {
     expect(failure("boom")).not.toBe(failure("bang"));
     expect(toolResultFingerprint({ error: "boom" })).toMatch(/^failed:/);
     expect(answer("boom")).not.toMatch(/^failed:/);
+  });
+
+  it("keeps repeated failures detectable when fresh resource annotations change", () => {
+    const sample = (index: number): ComputerResources => ({
+      sampledAt: `2026-11-13T00:00:${String(index).padStart(2, "0")}.000Z`,
+      sampleMs: 200,
+      scope: "cgroup-v2",
+      memoryUsedBytes: 900 + index,
+      memoryLimitBytes: 1000,
+      memoryPercent: 91,
+      memoryPressure: true,
+      cpuPercent: index,
+      cpuLimitCores: 1,
+    });
+    const failureResult = { error: "Page timed out" };
+    const failures = (index: number) =>
+      toolResultFingerprint(withComputerResources(failureResult, sample(index)));
+    expect(failures(1)).toBe(failures(2));
+    expect(identicalStopsAt(failures)).toBeDefined();
+    const page = (text: string, index: number) =>
+      withComputerResources(
+        {
+          kind: "agent_tool_result",
+          content: [{ type: "text", text }],
+          details: { url: "https://example.test" },
+        },
+        sample(index),
+      );
+    expect(toolResultFingerprint(page("unchanged page", 1))).toBe(
+      toolResultFingerprint(page("unchanged page", 2)),
+    );
+    expect(toolResultFingerprint(page("changed page", 2))).not.toBe(
+      toolResultFingerprint(page("unchanged page", 2)),
+    );
   });
 
   it("fingerprints screen results by frame, not capture time", () => {

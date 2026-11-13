@@ -23,6 +23,7 @@ import {
   redactBrowserResult,
 } from "./browser-tools.js";
 import { BACKGROUND_WORK_LAUNCH } from "./computer-idle.js";
+import { measureComputerResources } from "./computer-resources.js";
 import {
   displayBotWorkspacePath,
   resolveBotUploadPath,
@@ -458,6 +459,11 @@ export async function pageBrowserTool(ctx: RunContext, call: ToolCall) {
 
 /** Tools that drive the bot's computer: screen, page browser and shell. */
 export const computerTools: ToolHandlers = {
+  async computer_resources(ctx, call) {
+    const computer = await ctx.computer.get("tool", call.name);
+    const resources = await measureComputerResources(ctx.deps.sandbox, computer, ctx.context);
+    return resources ? { available: true, computerResources: resources } : { available: false };
+  },
   async computer_observe(ctx, call) {
     const { deps, context } = ctx;
     const { name } = call;

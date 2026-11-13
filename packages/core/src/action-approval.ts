@@ -3,6 +3,7 @@ import { BUILTIN_TOOL_NAMES } from "@rakazo/contracts";
 import { humanizeToolName } from "./events.js";
 
 const APPROVAL_EXEMPT_TOOLS = new Set([
+  "computer_resources",
   "computer_observe",
   "computer_act",
   "browser_navigate",
@@ -37,6 +38,7 @@ const APPROVAL_EXEMPT_TOOLS = new Set([
  * run. Anything else, new tools included, is gated there (see outsideRunToolRequiresApproval).
  */
 const OUTSIDE_RUN_SAFE_BUILTIN_TOOLS = new Set([
+  "computer_resources",
   "ask_user",
   "attach_file",
   "browser_snapshot",

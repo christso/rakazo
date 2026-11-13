@@ -273,6 +273,13 @@ export const builtinAgentTools: ConnectorTool[] = [
     readOnly: false,
   },
   {
+    name: "computer_resources",
+    description:
+      "Read fresh CPU usage and memory working set against this computer's limits, with a timestamp and pressure warning. Use when the computer is slow, after releasing unused resources, or to check current usage. Available on Linux computers with readable cgroups; unavailable measurements are not zero usage.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    readOnly: true,
+  },
+  {
     name: "computer_observe",
     description:
       "Capture the current screen of this bot's computer. Returns frame metadata and an image. Observe before coordinate-based actions and whenever another actor may have changed the desktop.",
