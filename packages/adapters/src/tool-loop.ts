@@ -90,8 +90,20 @@ export type LoopGuardStreak = ToolCallStreak & {
  */
 export function toolResultFingerprint(result: unknown, error?: unknown): string {
   const record = result && typeof result === "object" ? (result as Record<string, unknown>) : {};
+  const { computerResources: _resources, ...stableRecord } = record;
+  const details = record.details as { frameId?: unknown; computerResources?: unknown } | undefined;
+  const content = Array.isArray(record.content) ? record.content : undefined;
+  const last = content?.at(-1);
+  const resourceText = details?.computerResources
+    ? JSON.stringify({ computerResources: details.computerResources })
+    : undefined;
+  // Fresh diagnostic readings do not mean the action made progress.
+  const stableContent =
+    content && resourceText && last?.type === "text" && last.text === resourceText
+      ? content.slice(0, -1)
+      : record.content;
   // Screen results compare by frame: their text carries the capture time.
-  const frameId = (record.details as { frameId?: unknown } | undefined)?.frameId;
+  const frameId = details?.frameId;
   const seen =
     error !== undefined
       ? error instanceof Error
@@ -100,8 +112,10 @@ export function toolResultFingerprint(result: unknown, error?: unknown): string 
       : typeof frameId === "string"
         ? frameId
         : "content" in record
-          ? record.content
-          : result;
+          ? stableContent
+          : "computerResources" in record
+            ? stableRecord
+            : result;
   const failed = error !== undefined || toolResultError(result) !== undefined;
   return `${failed ? FAILED_RESULT : ""}${createHash("sha256")
     .update(JSON.stringify(seen) ?? "")
