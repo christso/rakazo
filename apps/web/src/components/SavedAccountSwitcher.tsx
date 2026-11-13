@@ -73,12 +73,12 @@ export function SavedAccountSwitcher({
                 <AccountAvatar
                   image={display.image}
                   initials={display.initial}
-                  className="size-6 text-[11px]"
+                  className="size-6 text-caption"
                 />
                 <span className="min-w-0 flex-1 text-start">
                   <span className="block truncate">{display.label}</span>
                   {display.label !== account.email ? (
-                    <span className="block truncate text-xs text-muted-foreground">
+                    <span className="block truncate text-label text-muted-foreground">
                       {account.email}
                     </span>
                   ) : null}

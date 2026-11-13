@@ -83,14 +83,14 @@ test("choose your own key or monthly credits, then add a one-time top-up", async
   await expect(page.getByRole("menuitem", { name: "Log out" })).toBeVisible();
   await captureScreenshot(page, testInfo, "billing-account-menu");
   // A log out the server rejects reports the log-out failure, not a billing error.
-  await page.route("**/api/auth/sign-out", (route) => route.fulfill({ status: 500, body: "" }), {
+  await page.route("**/api/accounts/remove", (route) => route.fulfill({ status: 500, body: "" }), {
     times: 1,
   });
   await page.getByRole("menuitem", { name: "Log out" }).click();
   await expect(
     page.getByRole("alert").filter({ hasText: "Could not log out. Try again." }),
   ).toBeVisible();
-  await page.unroute("**/api/auth/sign-out");
+  await page.unroute("**/api/accounts/remove");
   // The failed log out reloaded the page; reopen the menu to reach deletion.
   await page.getByRole("button", { name: "Account", exact: true }).click();
   await page.getByRole("menuitem", { name: "Delete account" }).click();
