@@ -1,0 +1,14 @@
+{
+  "multi-account-switcher.png": {
+    "bytes": 47732,
+    "sha256": "ae743cb65dd7d3045a75f6a8a7fc8360b845bb957cf63218e6f6c36d04f5a478"
+  },
+  "multi-account-switcher-phone.png": {
+    "bytes": 27018,
+    "sha256": "0ba2f60eca498285bfff6a77ef316ef2b77bb8b8ef9e06bbf223790a1afe99f7"
+  },
+  "README.md": {
+    "bytes": 762,
+    "sha256": "43ff07638965f7dc2c09be6024cfe9093f0ac0f6aae7d9b92fc6bf5995464331"
+  }
+}
