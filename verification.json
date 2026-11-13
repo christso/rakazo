@@ -1,0 +1,50 @@
+{
+  "focusedFinal": {
+    "files": 6,
+    "testsPassed": 212,
+    "failed": 0
+  },
+  "typechecks": {
+    "core": "passed",
+    "contracts": "passed",
+    "adapters": "passed",
+    "api": "passed"
+  },
+  "lint": {
+    "scope": "repository",
+    "result": "passed with warnings and informational diagnostics"
+  },
+  "fullSuite": {
+    "revisionState": "intermediate; regression fixes were developed while this run was active",
+    "filesPassed": 1469,
+    "filesFailed": 11,
+    "filesSkipped": 168,
+    "testsPassed": 25008,
+    "testsFailed": 18,
+    "testsSkipped": 1155
+  },
+  "failedSuitesFinalRecheck": {
+    "files": 11,
+    "testsPassed": 372,
+    "testsFailed": 9,
+    "filesFailed": 5,
+    "environment": "normal 022 test umask and pnpm available",
+    "remainingFailures": [
+      "apps/web/src/type-scale.test.ts",
+      "packages/adapters/src/sandbox-shell-environment.test.ts",
+      "packages/testkit/src/backup-scripts.test.ts",
+      "packages/testkit/src/ios-screenshot-catalog.test.ts",
+      "packages/core/src/node/desktop-runtime.test.ts"
+    ],
+    "qualification": "Remaining failures are in unchanged files. A clean baseline reproduction of those failures was not performed."
+  },
+  "review": {
+    "status": "complete",
+    "actionableFindingsRemaining": 0,
+    "verifiedCorrections": [
+      "inherited cgroup-v1 memory and CPU ceilings",
+      "canonical controller mount aliases",
+      "resource timestamps do not mask repeated tool errors"
+    ]
+  }
+}

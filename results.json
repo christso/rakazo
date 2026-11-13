@@ -1,0 +1,89 @@
+{
+  "baselineRevision": "13c687758424bd775de504a68b01bcf012f2df8e",
+  "scope": "cgroup-v2",
+  "limits": {
+    "memoryBytes": 1073741824,
+    "cpuCores": 1,
+    "swapAllowed": false
+  },
+  "workload": {
+    "allocationBytes": 838860800,
+    "cpuBusyLoop": true,
+    "automaticExitSeconds": 240
+  },
+  "before": {
+    "automaticResourceReadingReceived": false,
+    "workingSetPercentInitial": 88.886,
+    "workingSetPercentFinal": 88.863,
+    "oomKills": 0,
+    "cleanupTriggered": false
+  },
+  "after": {
+    "automaticResourceReadingReceived": true,
+    "automaticReading": {
+      "sampledAt": "2026-11-13T07:45:38.041553Z",
+      "sampleMs": 200.17,
+      "scope": "cgroup-v2",
+      "memoryUsedBytes": 956162048,
+      "memoryLimitBytes": 1073741824,
+      "cpuPercent": 90.4,
+      "cpuLimitCores": 1,
+      "memoryPercent": 90,
+      "memoryPressure": true,
+      "guidance": "Memory is nearly full. Close temporary tabs and stop background processes you created and no longer need, then check computer_resources again. Preserve other people's tabs and work. If usage stays high, tell the user before starting more work."
+    },
+    "explicitResourceToolReading": {
+      "sampledAt": "2026-11-13T07:45:39.363852Z",
+      "sampleMs": 200.16,
+      "scope": "cgroup-v2",
+      "memoryUsedBytes": 109727744,
+      "memoryLimitBytes": 1073741824,
+      "cpuPercent": 40.9,
+      "cpuLimitCores": 1,
+      "memoryPercent": 11,
+      "memoryPressure": false
+    },
+    "workingSetPercentInitial": 88.955,
+    "workingSetPercentFinal": 10.186,
+    "oomKills": 0,
+    "fixtureOwnedWorkloadStopped": true,
+    "fixturePageStillAvailable": true,
+    "independentTailCpuPercent": 10.991,
+    "independentTailCpuWindowSeconds": 2.113
+  },
+  "coverageLimit": "Model HTTP/SSE, Pi runtime, native tool handlers and OS load are real. Model decisions come from a deterministic synthetic policy emulator; live LLM reasoning and prevention of browser stalls are not tested.",
+  "testedBuildSha256": {
+    "apps/api/dist/index.js": "017cda8f1ea9030f0c45f342bb63d1ccc5bb13edebe7de6957906b1c5cf804d3",
+    "apps/worker/dist/index.js": "92e53a37543cfc174141a23090502f9410085fedc27e87e5a839df3bb58c9595",
+    "packages/adapters/src/computer-resources.ts": "7e75537a13a242cac1ec896b261f8a29fbf6c5f736b8856936867cf93f9a5eaa",
+    "packages/adapters/src/tool-loop.ts": "1027a735009199535573be52b362012360a52790bd977766d72132e87b854ffc"
+  },
+  "testedSourceSha256": {
+    "packages/adapters/src/builtin-tools.ts": "1d306de2f08f2f8a56145aa27ab7a8709011bb8a2dd60b8e4f2ebeced688a815",
+    "packages/adapters/src/computer-resources.test.ts": "eb550ff47a96be0c384db90fbe72f3039d0e6a89aff8a13654404ff0d85ec463",
+    "packages/adapters/src/computer-resources.ts": "7e75537a13a242cac1ec896b261f8a29fbf6c5f736b8856936867cf93f9a5eaa",
+    "packages/adapters/src/run-tool-selection.ts": "54e1bc636f52a6a85eac530b0776168326a70ba218e977e06a9edbe7a6b0ac0e",
+    "packages/adapters/src/run-tools-computer.ts": "a07870710db6978f51a77b528681abf721eb05e01dab5ba5d3071cb4a389db64",
+    "packages/adapters/src/run-tools.test.ts": "33e0e921c17eb038c6fdce1434eb6a6d394fd95b0034c2d2310f33b118d3e977",
+    "packages/adapters/src/run-tools.ts": "e9dd5dd671f9c6b3ab7b055577529578db121840ca08f494287070dcf4111d11",
+    "packages/adapters/src/tool-loop.test.ts": "a80607181cdb3eef66a5484b964589394f6062badd31bfe3a43fcbe126ea8c53",
+    "packages/adapters/src/tool-loop.ts": "1027a735009199535573be52b362012360a52790bd977766d72132e87b854ffc",
+    "packages/contracts/src/builtin-tools.ts": "d9644628a260045c412ab0e042346fcea5fc55509d023e66c55cbd3aa5ce81a3",
+    "packages/core/src/action-approval.ts": "b27d6a41310d5c105badcfaea4742e54b33e0a95cce90174a3344b2fbbe117e2"
+  },
+  "featureRevision": "da30aca6b75e540d6bccacde9f05b5aed994a604",
+  "recordedSourceSha256": {
+    "packages/adapters/src/builtin-tools.ts": "1d306de2f08f2f8a56145aa27ab7a8709011bb8a2dd60b8e4f2ebeced688a815",
+    "packages/adapters/src/computer-resources.test.ts": "0df8238d097773259feebb53b4aca3a0b9e713d27afeee37bf7bd70fa5323bda",
+    "packages/adapters/src/computer-resources.ts": "7e75537a13a242cac1ec896b261f8a29fbf6c5f736b8856936867cf93f9a5eaa",
+    "packages/adapters/src/run-tool-selection.ts": "54e1bc636f52a6a85eac530b0776168326a70ba218e977e06a9edbe7a6b0ac0e",
+    "packages/adapters/src/run-tools-computer.ts": "a07870710db6978f51a77b528681abf721eb05e01dab5ba5d3071cb4a389db64",
+    "packages/adapters/src/run-tools.test.ts": "33e0e921c17eb038c6fdce1434eb6a6d394fd95b0034c2d2310f33b118d3e977",
+    "packages/adapters/src/run-tools.ts": "e9dd5dd671f9c6b3ab7b055577529578db121840ca08f494287070dcf4111d11",
+    "packages/adapters/src/tool-loop.test.ts": "a80607181cdb3eef66a5484b964589394f6062badd31bfe3a43fcbe126ea8c53",
+    "packages/adapters/src/tool-loop.ts": "1027a735009199535573be52b362012360a52790bd977766d72132e87b854ffc",
+    "packages/contracts/src/builtin-tools.ts": "d9644628a260045c412ab0e042346fcea5fc55509d023e66c55cbd3aa5ce81a3",
+    "packages/core/src/action-approval.ts": "b27d6a41310d5c105badcfaea4742e54b33e0a95cce90174a3344b2fbbe117e2"
+  },
+  "sourceManifestNote": "Runtime source and bundle hashes match the capture. Final committed test hashes include a test-only import-order cleanup, verified by a subsequent focused test run."
+}

@@ -1,0 +1,407 @@
+[
+  {
+    "sampledAt": 1794555933.1641903,
+    "current": 1018302464,
+    "inactiveFile": 63156224,
+    "limit": 1073741824,
+    "cpu": {
+      "usage_usec": "352404532",
+      "user_usec": "346145857",
+      "system_usec": "6258674",
+      "nice_usec": "0",
+      "core_sched.force_idle_usec": "0",
+      "nr_periods": "4885",
+      "nr_throttled": "506",
+      "throttled_usec": "9997650",
+      "nr_bursts": "0",
+      "burst_usec": "0"
+    },
+    "events": {
+      "low": "0",
+      "high": "0",
+      "max": "0",
+      "oom": "0",
+      "oom_kill": "0",
+      "oom_group_kill": "0",
+      "sock_throttled": "0"
+    }
+  },
+  {
+    "sampledAt": 1794555934.3388243,
+    "current": 1018318848,
+    "inactiveFile": 63156224,
+    "limit": 1073741824,
+    "cpu": {
+      "usage_usec": "353557292",
+      "user_usec": "347282634",
+      "system_usec": "6274657",
+      "nice_usec": "0",
+      "core_sched.force_idle_usec": "0",
+      "nr_periods": "4897",
+      "nr_throttled": "509",
+      "throttled_usec": "10136480",
+      "nr_bursts": "0",
+      "burst_usec": "0"
+    },
+    "events": {
+      "low": "0",
+      "high": "0",
+      "max": "0",
+      "oom": "0",
+      "oom_kill": "0",
+      "oom_group_kill": "0",
+      "sock_throttled": "0"
+    }
+  },
+  {
+    "sampledAt": 1794555935.2731726,
+    "current": 1018470400,
+    "inactiveFile": 63156224,
+    "limit": 1073741824,
+    "cpu": {
+      "usage_usec": "354526930",
+      "user_usec": "348238292",
+      "system_usec": "6288637",
+      "nice_usec": "0",
+      "core_sched.force_idle_usec": "0",
+      "nr_periods": "4906",
+      "nr_throttled": "515",
+      "throttled_usec": "10172213",
+      "nr_bursts": "0",
+      "burst_usec": "0"
+    },
+    "events": {
+      "low": "0",
+      "high": "0",
+      "max": "0",
+      "oom": "0",
+      "oom_kill": "0",
+      "oom_group_kill": "0",
+      "sock_throttled": "0"
+    }
+  },
+  {
+    "sampledAt": 1794555936.3772423,
+    "current": 1018658816,
+    "inactiveFile": 63156224,
+    "limit": 1073741824,
+    "cpu": {
+      "usage_usec": "355606937",
+      "user_usec": "349303472",
+      "system_usec": "6303465",
+      "nice_usec": "0",
+      "core_sched.force_idle_usec": "0",
+      "nr_periods": "4917",
+      "nr_throttled": "518",
+      "throttled_usec": "10334602",
+      "nr_bursts": "0",
+      "burst_usec": "0"
+    },
+    "events": {
+      "low": "0",
+      "high": "0",
+      "max": "0",
+      "oom": "0",
+      "oom_kill": "0",
+      "oom_group_kill": "0",
+      "sock_throttled": "0"
+    }
+  },
+  {
+    "sampledAt": 1794555937.5341675,
+    "current": 1026138112,
+    "inactiveFile": 63156224,
+    "limit": 1073741824,
+    "cpu": {
+      "usage_usec": "356691613",
+      "user_usec": "350325580",
+      "system_usec": "6366033",
+      "nice_usec": "0",
+      "core_sched.force_idle_usec": "0",
+      "nr_periods": "4929",
+      "nr_throttled": "524",
+      "throttled_usec": "10966997",
+      "nr_bursts": "0",
+      "burst_usec": "0"
+    },
+    "events": {
+      "low": "0",
+      "high": "0",
+      "max": "0",
+      "oom": "0",
+      "oom_kill": "0",
+      "oom_group_kill": "0",
+      "sock_throttled": "0"
+    }
+  },
+  {
+    "sampledAt": 1794555938.449395,
+    "current": 766562304,
+    "inactiveFile": 63156224,
+    "limit": 1073741824,
+    "cpu": {
+      "usage_usec": "357630838",
+      "user_usec": "351166319",
+      "system_usec": "6464519",
+      "nice_usec": "0",
+      "core_sched.force_idle_usec": "0",
+      "nr_periods": "4938",
+      "nr_throttled": "531",
+      "throttled_usec": "11516408",
+      "nr_bursts": "0",
+      "burst_usec": "0"
+    },
+    "events": {
+      "low": "0",
+      "high": "0",
+      "max": "0",
+      "oom": "0",
+      "oom_kill": "0",
+      "oom_group_kill": "0",
+      "sock_throttled": "0"
+    }
+  },
+  {
+    "sampledAt": 1794555939.3278558,
+    "current": 178077696,
+    "inactiveFile": 63156224,
+    "limit": 1073741824,
+    "cpu": {
+      "usage_usec": "358015566",
+      "user_usec": "351415276",
+      "system_usec": "6600290",
+      "nice_usec": "0",
+      "core_sched.force_idle_usec": "0",
+      "nr_periods": "4947",
+      "nr_throttled": "532",
+      "throttled_usec": "11577411",
+      "nr_bursts": "0",
+      "burst_usec": "0"
+    },
+    "events": {
+      "low": "0",
+      "high": "0",
+      "max": "0",
+      "oom": "0",
+      "oom_kill": "0",
+      "oom_group_kill": "0",
+      "sock_throttled": "0"
+    }
+  },
+  {
+    "sampledAt": 1794555940.3087652,
+    "current": 171978752,
+    "inactiveFile": 63156224,
+    "limit": 1073741824,
+    "cpu": {
+      "usage_usec": "358100428",
+      "user_usec": "351478185",
+      "system_usec": "6622242",
+      "nice_usec": "0",
+      "core_sched.force_idle_usec": "0",
+      "nr_periods": "4952",
+      "nr_throttled": "532",
+      "throttled_usec": "11577411",
+      "nr_bursts": "0",
+      "burst_usec": "0"
+    },
+    "events": {
+      "low": "0",
+      "high": "0",
+      "max": "0",
+      "oom": "0",
+      "oom_kill": "0",
+      "oom_group_kill": "0",
+      "sock_throttled": "0"
+    }
+  },
+  {
+    "sampledAt": 1794555941.311607,
+    "current": 171651072,
+    "inactiveFile": 63156224,
+    "limit": 1073741824,
+    "cpu": {
+      "usage_usec": "358180504",
+      "user_usec": "351542224",
+      "system_usec": "6638280",
+      "nice_usec": "0",
+      "core_sched.force_idle_usec": "0",
+      "nr_periods": "4954",
+      "nr_throttled": "532",
+      "throttled_usec": "11577411",
+      "nr_bursts": "0",
+      "burst_usec": "0"
+    },
+    "events": {
+      "low": "0",
+      "high": "0",
+      "max": "0",
+      "oom": "0",
+      "oom_kill": "0",
+      "oom_group_kill": "0",
+      "sock_throttled": "0"
+    }
+  },
+  {
+    "sampledAt": 1794555942.3228798,
+    "current": 172236800,
+    "inactiveFile": 63156224,
+    "limit": 1073741824,
+    "cpu": {
+      "usage_usec": "358260126",
+      "user_usec": "351602839",
+      "system_usec": "6657287",
+      "nice_usec": "0",
+      "core_sched.force_idle_usec": "0",
+      "nr_periods": "4956",
+      "nr_throttled": "532",
+      "throttled_usec": "11577411",
+      "nr_bursts": "0",
+      "burst_usec": "0"
+    },
+    "events": {
+      "low": "0",
+      "high": "0",
+      "max": "0",
+      "oom": "0",
+      "oom_kill": "0",
+      "oom_group_kill": "0",
+      "sock_throttled": "0"
+    }
+  },
+  {
+    "sampledAt": 1794555943.2890158,
+    "current": 172367872,
+    "inactiveFile": 63156224,
+    "limit": 1073741824,
+    "cpu": {
+      "usage_usec": "358332707",
+      "user_usec": "351659447",
+      "system_usec": "6673260",
+      "nice_usec": "0",
+      "core_sched.force_idle_usec": "0",
+      "nr_periods": "4960",
+      "nr_throttled": "532",
+      "throttled_usec": "11577411",
+      "nr_bursts": "0",
+      "burst_usec": "0"
+    },
+    "events": {
+      "low": "0",
+      "high": "0",
+      "max": "0",
+      "oom": "0",
+      "oom_kill": "0",
+      "oom_group_kill": "0",
+      "sock_throttled": "0"
+    }
+  },
+  {
+    "sampledAt": 1794555944.3323262,
+    "current": 172130304,
+    "inactiveFile": 63156224,
+    "limit": 1073741824,
+    "cpu": {
+      "usage_usec": "358421269",
+      "user_usec": "351728022",
+      "system_usec": "6693246",
+      "nice_usec": "0",
+      "core_sched.force_idle_usec": "0",
+      "nr_periods": "4965",
+      "nr_throttled": "532",
+      "throttled_usec": "11577411",
+      "nr_bursts": "0",
+      "burst_usec": "0"
+    },
+    "events": {
+      "low": "0",
+      "high": "0",
+      "max": "0",
+      "oom": "0",
+      "oom_kill": "0",
+      "oom_group_kill": "0",
+      "sock_throttled": "0"
+    }
+  },
+  {
+    "sampledAt": 1794555945.3192968,
+    "current": 171831296,
+    "inactiveFile": 63156224,
+    "limit": 1073741824,
+    "cpu": {
+      "usage_usec": "358500825",
+      "user_usec": "351793603",
+      "system_usec": "6707222",
+      "nice_usec": "0",
+      "core_sched.force_idle_usec": "0",
+      "nr_periods": "4967",
+      "nr_throttled": "532",
+      "throttled_usec": "11577411",
+      "nr_bursts": "0",
+      "burst_usec": "0"
+    },
+    "events": {
+      "low": "0",
+      "high": "0",
+      "max": "0",
+      "oom": "0",
+      "oom_kill": "0",
+      "oom_group_kill": "0",
+      "sock_throttled": "0"
+    }
+  },
+  {
+    "sampledAt": 1794555946.309356,
+    "current": 172191744,
+    "inactiveFile": 63156224,
+    "limit": 1073741824,
+    "cpu": {
+      "usage_usec": "358575307",
+      "user_usec": "351856052",
+      "system_usec": "6719254",
+      "nice_usec": "0",
+      "core_sched.force_idle_usec": "0",
+      "nr_periods": "4969",
+      "nr_throttled": "532",
+      "throttled_usec": "11577411",
+      "nr_bursts": "0",
+      "burst_usec": "0"
+    },
+    "events": {
+      "low": "0",
+      "high": "0",
+      "max": "0",
+      "oom": "0",
+      "oom_kill": "0",
+      "oom_group_kill": "0",
+      "sock_throttled": "0"
+    }
+  },
+  {
+    "sampledAt": 1794555946.445696,
+    "current": 172523520,
+    "inactiveFile": 63156224,
+    "limit": 1073741824,
+    "cpu": {
+      "usage_usec": "358653542",
+      "user_usec": "351920318",
+      "system_usec": "6733224",
+      "nice_usec": "0",
+      "core_sched.force_idle_usec": "0",
+      "nr_periods": "4971",
+      "nr_throttled": "532",
+      "throttled_usec": "11577411",
+      "nr_bursts": "0",
+      "burst_usec": "0"
+    },
+    "events": {
+      "low": "0",
+      "high": "0",
+      "max": "0",
+      "oom": "0",
+      "oom_kill": "0",
+      "oom_group_kill": "0",
+      "sock_throttled": "0"
+    }
+  }
+]
