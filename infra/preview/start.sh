@@ -89,8 +89,16 @@ SQL
 }
 
 shutdown() {
-  kill $(jobs -pr) 2> /dev/null || true
-  wait || true
+  local pid
+  local -a children
+  mapfile -t children < <(jobs -pr)
+  if (( ${#children[@]} )); then
+    kill "${children[@]}" 2> /dev/null || true
+    # Explicit PIDs avoid Bash looping over stale jobs after an interrupted wait -n.
+    for pid in "${children[@]}"; do
+      wait "$pid" || true
+    done
+  fi
   stop_database
 }
 trap shutdown EXIT
