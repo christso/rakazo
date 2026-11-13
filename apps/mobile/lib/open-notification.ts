@@ -1,11 +1,19 @@
+import { t } from "@lingui/core/macro";
 import * as Notifications from "expo-notifications";
 import { router } from "expo-router";
 import { useEffect } from "react";
-import { notificationResponseRoute, threadRouteId } from "./notification-open";
-import { loadSessionToken } from "./session";
+import { Alert } from "react-native";
+import { selectNotificationAccount } from "./account-sessions";
+import { currentApiBase } from "./api";
+import {
+  notificationResponseRoute,
+  notificationTargetLink,
+  threadRouteId,
+} from "./notification-open";
 import { closeSettingsSheet } from "./settings-sheet";
 
 const openedResponses = new Set<string>();
+let openAttempt = 0;
 
 /** Expo's request identifier is the scheduled request. These pushes use the
  * thread id for that value, so a later delivery of the same thread shares it.
@@ -28,6 +36,23 @@ function clearNotificationResponseIfCurrent(response: Notifications.Notification
   if (last && key && key === occurrenceKey(last)) Notifications.clearLastNotificationResponse();
 }
 
+/** The notification's login is not on this device; signing in to it opens the notification. */
+export function promptNotificationSignIn(target: string): void {
+  Alert.alert(t`Sign in to open this notification`, undefined, [
+    { text: t`Cancel`, style: "cancel" },
+    {
+      text: t`Sign in`,
+      onPress: () => {
+        closeSettingsSheet();
+        router.replace({
+          pathname: "/sign-in",
+          params: { mode: "in", addAccount: "1", notificationTarget: target },
+        });
+      },
+    },
+  ]);
+}
+
 export async function openNotificationResponse(
   response: Notifications.NotificationResponse | null | undefined,
 ): Promise<boolean> {
@@ -39,17 +64,38 @@ export async function openNotificationResponse(
   // Claim before the session read so a cold-start hook and the tap listener
   // cannot both open the same response.
   openedResponses.add(key);
+  const attempt = ++openAttempt;
   try {
-    if (!(await loadSessionToken())) {
+    const account = await selectNotificationAccount(
+      target.params.userId,
+      target.params.apiBase,
+      () => attempt === openAttempt,
+    );
+    if (attempt !== openAttempt) {
+      openedResponses.delete(key);
+      return false;
+    }
+    if (account !== "selected") {
       // Expo keeps this tap as the last response. Leaving it there would open
       // the thread on a later cold start, after sign-in, with no new tap.
       // A newer delivery can become last while this session read is in flight.
       clearNotificationResponseIfCurrent(response);
       openedResponses.delete(key);
+      if (account === "signed-out") promptNotificationSignIn(notificationTargetLink(target));
       return false;
     }
     closeSettingsSheet();
-    router.push(target, { dangerouslySingular: threadRouteId });
+    router.dismissTo("/");
+    router.push(
+      {
+        ...target,
+        params: {
+          ...target.params,
+          ...(target.params.apiBase ? { apiBase: currentApiBase() } : {}),
+        },
+      },
+      { dangerouslySingular: threadRouteId },
+    );
     clearNotificationResponseIfCurrent(response);
     return true;
   } catch {

@@ -4,8 +4,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { credentialDigest } from "./credential-digest.js";
 import { PrismaPushTokenStore, PushSessionEndedError } from "./push-token-store.js";
 
-const suite =
-  process.env.VERIFY_DATABASE && process.env.DATABASE_URL ? describe.sequential : describe.skip;
+const suite = process.env.VERIFY_DATABASE && process.env.DATABASE_URL ? describe : describe.skip;
 suite("database push registrations", () => {
   let a: ReturnType<typeof createDb>;
   let b: ReturnType<typeof createDb>;
@@ -45,9 +44,10 @@ suite("database push registrations", () => {
     });
   });
   beforeEach(async () => {
-    await runAsSystem("clear fixture push registrations", () =>
-      a.prisma.pushToken.deleteMany({ where: { userId: { startsWith: prefix } } }),
-    );
+    await runAsSystem("clear fixture push registrations", async () => {
+      await a.prisma.pushToken.deleteMany({ where: { userId: { startsWith: prefix } } });
+      await a.prisma.pushRegistration.deleteMany({ where: { userId: { startsWith: prefix } } });
+    });
   });
   afterAll(async () => {
     if (!a) return;
@@ -61,12 +61,15 @@ suite("database push registrations", () => {
     await api.save(user("a"), token("a"), session("a"));
     expect(await worker.load(user("a"))).toEqual({ token: token("a"), sessionId: session("a") });
     const row = await runAsSystem("inspect fixture ciphertext", () =>
-      a.prisma.pushToken.findUniqueOrThrow({ where: { userId: user("a") } }),
+      a.prisma.pushRegistration.findUniqueOrThrow({
+        where: { userId_sessionId: { userId: user("a"), sessionId: session("a") } },
+      }),
     );
     expect(row.ciphertext).not.toContain(token("a"));
     expect(row.tokenDigest).toBe(credentialDigest(token("a")));
     await runAsTenant({ userId: user("b"), spaceId: "unused" }, async () => {
       expect(await a.prisma.pushToken.findMany()).toEqual([]);
+      expect(await a.prisma.pushRegistration.findMany()).toEqual([]);
     });
   });
 
@@ -77,7 +80,7 @@ suite("database push registrations", () => {
     expect((await worker.load(user("a")))?.presentation).toBeUndefined();
   });
 
-  it("serializes concurrent device handovers so only one account owns a token", async () => {
+  it("retains every account when the same device registers concurrently", async () => {
     await Promise.all([
       api.save(user("a"), token("shared"), session("a")),
       worker.save(user("b"), token("shared"), session("b")),
@@ -88,7 +91,81 @@ suite("database push registrations", () => {
       worker.load(user("b")),
       api.load(user("c")),
     ]);
-    expect(registrations.filter(Boolean)).toHaveLength(1);
+    expect(registrations.filter(Boolean)).toHaveLength(3);
+  });
+
+  it("preserves the previous release's single-account device without evicting another account", async () => {
+    await api.save(user("a"), token("shared"), session("a"));
+    await worker.save(user("b"), token("shared"), session("b"));
+    const legacy = await runAsSystem("read previous-release push registration", () =>
+      a.prisma.pushToken.findUnique({ where: { userId: user("a") } }),
+    );
+    expect(legacy?.tokenDigest).toBe(credentialDigest(token("shared")));
+    expect(legacy?.sessionId).toBe(session("a"));
+    expect((await worker.list(user("b")))[0]?.token).toBe(token("shared"));
+  });
+
+  it("honors an unregister handled by the previous API release", async () => {
+    await api.save(user("a"), token("phone"), session("a"));
+    await api.save(user("a"), token("tablet"), session("a2"));
+    await runAsSystem("unregister through the previous-release table", () =>
+      a.prisma.pushToken.deleteMany({ where: { userId: user("a") } }),
+    );
+    expect(await worker.list(user("a"))).toEqual([
+      { token: token("phone"), sessionId: session("a") },
+    ]);
+  });
+
+  it("keeps another signed-in account when an old API transfers the shared token", async () => {
+    await api.save(user("a"), token("shared"), session("a"));
+    await api.save(user("b"), token("shared"), session("b"));
+    await runAsSystem("transfer a device through the previous-release table", () =>
+      a.prisma.$transaction(async (tx) => {
+        const row = await tx.pushRegistration.findUniqueOrThrow({
+          where: { userId_sessionId: { userId: user("b"), sessionId: session("b") } },
+        });
+        await tx.pushToken.deleteMany({
+          where: { tokenDigest: row.tokenDigest, userId: { not: user("b") } },
+        });
+        await tx.pushToken.upsert({ where: { userId: user("b") }, create: row, update: row });
+      }),
+    );
+    expect((await worker.load(user("a")))?.token).toBe(token("shared"));
+    expect((await worker.load(user("b")))?.token).toBe(token("shared"));
+  });
+
+  it("honors an old API's token rotation followed by unregister", async () => {
+    await api.save(user("a"), token("phone"), session("a"));
+    await api.save(user("a"), token("rotated"), session("a2"));
+    await runAsSystem("rotate and unregister through the previous-release table", async () => {
+      const original = await a.prisma.pushRegistration.findUniqueOrThrow({
+        where: { userId_sessionId: { userId: user("a"), sessionId: session("a") } },
+      });
+      const rotated = await a.prisma.pushRegistration.findUniqueOrThrow({
+        where: { userId_sessionId: { userId: user("a"), sessionId: session("a2") } },
+      });
+      await a.prisma.pushToken.update({ where: { userId: user("a") }, data: original });
+      await a.prisma.pushRegistration.deleteMany({ where: { sessionId: session("a2") } });
+      await a.prisma.pushToken.update({
+        where: { userId: user("a") },
+        data: { ciphertext: rotated.ciphertext, tokenDigest: rotated.tokenDigest },
+      });
+    });
+    expect((await worker.load(user("a")))?.token).toBe(token("rotated"));
+    await runAsSystem("unregister rotated token through the previous-release table", () =>
+      a.prisma.pushToken.deleteMany({ where: { userId: user("a") } }),
+    );
+    expect(await worker.list(user("a"))).toEqual([]);
+  });
+
+  it("preserves a new shared-token registration when its stale legacy projection is deleted", async () => {
+    await api.save(user("a"), token("old"), session("a"));
+    await api.save(user("b"), token("shared"), session("b"));
+    await api.save(user("a"), token("shared"), session("a"));
+    expect(await worker.list(user("a"))).toEqual([
+      { token: token("shared"), sessionId: session("a") },
+    ]);
+    expect((await worker.load(user("b")))?.token).toBe(token("shared"));
   });
 
   it("keeps newer registrations when an old receipt or logout arrives", async () => {
@@ -101,14 +178,14 @@ suite("database push registrations", () => {
     expect(await worker.load(user("a"))).toBeUndefined();
   });
 
-  it("retargets only the replaced session and cannot reclaim a handed-over device", async () => {
+  it("retargets only the replaced session while another account retains the same device", async () => {
     await api.save(user("a"), token("shared"), session("a"));
     await worker.endSession(user("a"), session("a"), session("a2"));
     await api.endSession(user("a"), session("a"));
     expect((await worker.load(user("a")))?.sessionId).toBe(session("a2"));
     await worker.save(user("b"), token("shared"), session("b"));
     await api.endSession(user("a"), session("a2"), session("a"));
-    expect(await api.load(user("a"))).toBeUndefined();
+    expect((await api.load(user("a")))?.sessionId).toBe(session("a"));
     expect((await worker.load(user("b")))?.token).toBe(token("shared"));
   });
 
@@ -126,13 +203,102 @@ suite("database push registrations", () => {
     expect(imported.filter(Boolean)).toHaveLength(1);
   });
 
-  it("lets authenticated registration win a race with legacy import", async () => {
+  it("retains authenticated registration during a concurrent legacy import", async () => {
     await Promise.all([
       api.importLegacy(user("a"), token("racing"), session("a")),
       worker.save(user("b"), token("racing"), session("b")),
     ]);
-    expect(await api.load(user("a"))).toBeUndefined();
     expect((await worker.load(user("b")))?.token).toBe(token("racing"));
+  });
+
+  it("keeps multiple devices and removes only the signed-out login", async () => {
+    await api.save(user("a"), token("phone"), session("a"));
+    await api.save(user("a"), token("tablet"), session("a2"));
+    expect((await worker.list(user("a"))).map((row) => row.token).sort()).toEqual(
+      [token("phone"), token("tablet")].sort(),
+    );
+    await api.endSession(user("a"), session("a"));
+    expect(await worker.list(user("a"))).toEqual([
+      { token: token("tablet"), sessionId: session("a2") },
+    ]);
+  });
+
+  it("reads old-release registrations and removes their fallback on unregister", async () => {
+    await api.save(user("a"), token("legacy"), session("a"));
+    await runAsSystem("seed old-release push row", async () => {
+      const row = await a.prisma.pushRegistration.findFirstOrThrow({
+        where: { userId: user("a") },
+      });
+      await a.prisma.pushToken.upsert({ where: { userId: user("a") }, create: row, update: row });
+      await a.prisma.pushRegistration.deleteMany({ where: { userId: user("a") } });
+    });
+    expect((await worker.list(user("a")))[0]?.token).toBe(token("legacy"));
+    await api.endSession(user("a"), session("a"));
+    expect(await worker.list(user("a"))).toEqual([]);
+  });
+
+  it("aggregates the device badge across live accounts and ignores other devices", async () => {
+    const organizations: string[] = [];
+    try {
+      await runAsSystem("seed unread device badge fixtures", async () => {
+        for (const id of ["a", "b", "c"]) {
+          const organizationId = `${prefix}-badge-${id}`;
+          organizations.push(organizationId);
+          await a.prisma.organization.create({
+            data: {
+              id: organizationId,
+              name: "Fixture",
+              slug: organizationId,
+              createdAt: new Date(),
+            },
+          });
+          await a.prisma.member.create({
+            data: {
+              id: randomUUID(),
+              organizationId,
+              userId: user(id),
+              role: "member",
+              createdAt: new Date(),
+            },
+          });
+          const space = await a.prisma.space.create({
+            data: { id: randomUUID(), organizationId, name: "Fixture" },
+          });
+          await a.prisma.spaceMember.create({
+            data: {
+              id: randomUUID(),
+              organizationId,
+              spaceId: space.id,
+              userId: user(id),
+              createdAt: new Date(),
+            },
+          });
+          const bot = await a.prisma.bot.create({
+            data: {
+              spaceId: space.id,
+              userId: user(id),
+              name: "Fixture",
+              color: "blue",
+              thread: { create: { spaceId: space.id, userId: user(id) } },
+            },
+            include: { thread: true },
+          });
+          await a.prisma.threadRead.create({
+            data: { threadId: bot.thread!.id, spaceId: space.id, userId: user(id), unread: true },
+          });
+        }
+      });
+      await api.save(user("a"), token("shared"), session("a"));
+      await api.save(user("b"), token("shared"), session("b"));
+      await api.save(user("c"), token("other-device"), session("c"));
+      expect(await worker.deviceForToken(token("shared"))).toEqual({ badge: 2, accounts: 2 });
+      await api.endSession(user("b"), session("b"));
+      expect(await worker.deviceForToken(token("shared"))).toEqual({ badge: 1, accounts: 1 });
+    } finally {
+      await runAsSystem("remove unread device badge fixtures", () =>
+        a.prisma.organization.deleteMany({ where: { id: { in: organizations } } }),
+      );
+    }
   });
 
   it("rejects expired, missing and another account's sessions without stealing tokens", async () => {

@@ -6,6 +6,11 @@ import * as SecureStore from "expo-secure-store";
 import { Platform } from "react-native";
 import { currentApiBase, rpc, selectedSpaceId } from "./api";
 import { resumeLiveNotifications } from "./live-notifications";
+import {
+  pendingSessionTokens,
+  retryPendingSessionRevocations,
+} from "./pending-session-revocations";
+import { loadSavedAccounts } from "./saved-accounts";
 import { currentSessionGeneration, loadSessionToken } from "./session";
 
 async function notificationsAllowed() {
@@ -18,41 +23,87 @@ async function notificationsAllowed() {
 }
 
 export async function registerPushToken() {
+  const apiBase = currentApiBase();
+  // Revocation retries also run when permission is denied; they need no new push token.
+  await retryPendingSessionRevocations(apiBase).catch(() => undefined);
   if (!(await notificationsAllowed())) return;
   try {
     const projectId = Constants.easConfig?.projectId ?? Constants.expoConfig?.extra?.eas?.projectId;
     if (!projectId) return;
     const token = (await Notifications.getExpoPushTokenAsync({ projectId })).data;
     if (!token) return;
+    const accounts = await loadSavedAccounts(apiBase);
+    const pending = await pendingSessionTokens(apiBase);
     const generation = currentSessionGeneration();
-    const apiBase = currentApiBase();
-    const sessionToken = await loadSessionToken();
-    // A sign-in still saving its token registers again once the session lands.
-    if (!sessionToken) return;
+    const selectedToken = apiBase === currentApiBase() ? await loadSessionToken() : "";
     if (generation !== currentSessionGeneration() || apiBase !== currentApiBase()) return;
-    // The server can push the moment this registration lands, before any Space load
-    // resumes native notifications; sync the session first, so Android's signed-out
-    // drop rule sees this account instead of the blank of a fresh sign-in. A rejected
-    // resume means native never stored this session: registering would have Android
-    // drop every push, so leave the token unregistered for the next attempt to retry.
-    // A server native notifications skip (public http) keeps no native session, so it
-    // gets plain pushes, which the drop rule never sees.
-    let nativeSession: boolean;
-    try {
-      nativeSession = await resumeLiveNotifications(apiBase, sessionToken, selectedSpaceId() ?? "");
-    } catch {
-      return;
+    const activeToken = pending.has(selectedToken) ? "" : selectedToken;
+    const liveTokens = new Set(accounts.map((account) => account.token));
+    if (activeToken) liveTokens.add(activeToken);
+    const senderModule =
+      Platform.OS === "android"
+        ? requireOptionalNativeModule<{
+            supportsSenderAvatars?: boolean;
+            supportsAccountScopedSenderNotifications?: boolean;
+          }>("RakazoNotifications")
+        : null;
+    const supportsSender =
+      senderModule?.supportsSenderAvatars &&
+      (liveTokens.size <= 1 || senderModule.supportsAccountScopedSenderNotifications);
+    const stillSignedIn = async (sessionToken: string) => {
+      const saved = await loadSavedAccounts(apiBase);
+      const owned =
+        saved.some((account) => account.token === sessionToken) ||
+        (apiBase === currentApiBase() && (await loadSessionToken()) === sessionToken);
+      return owned && !(await pendingSessionTokens(apiBase)).has(sessionToken);
+    };
+    const register = async (sessionToken: string, userId?: string) => {
+      const requestContext = {
+        apiBase,
+        headers: {
+          authorization: `Bearer ${sessionToken}`,
+          ...(userId ? { "x-rakazo-user-id": userId } : {}),
+        },
+      };
+      if (!(await stillSignedIn(sessionToken))) return;
+      let nativeSession = false;
+      if (sessionToken === activeToken) {
+        nativeSession = await resumeLiveNotifications(
+          apiBase,
+          sessionToken,
+          selectedSpaceId() ?? "",
+        );
+        if (!(await stillSignedIn(sessionToken))) return;
+      }
+      try {
+        await rpc(
+          "notifications/registerPush",
+          {
+            token,
+            ...(Platform.OS === "android" && nativeSession && supportsSender
+              ? { presentation: "android_sender" as const }
+              : {}),
+          },
+          { requestContext },
+        );
+      } finally {
+        // A register response can arrive after sign-out's unregister. Remove only
+        // this login's late association, retaining its queued session revocation.
+        if (!(await stillSignedIn(sessionToken)))
+          await rpc("notifications/unregisterPush", undefined, { requestContext }).catch(
+            () => undefined,
+          );
+      }
+    };
+    const registering = accounts.map((account) =>
+      register(account.token, account.userId).catch(() => undefined),
+    );
+    if (activeToken && !accounts.some((account) => account.token === activeToken)) {
+      registering.push(register(activeToken).catch(() => undefined));
     }
-    await rpc("notifications/registerPush", {
-      token,
-      ...(Platform.OS === "android" &&
-      nativeSession &&
-      requireOptionalNativeModule<{ supportsSenderAvatars?: boolean }>("RakazoNotifications")
-        ?.supportsSenderAvatars
-        ? { presentation: "android_sender" as const }
-        : {}),
-    });
-    await registerCallPushToken({ expoToken: token });
+    await Promise.all(registering);
+    if (generation === currentSessionGeneration() && apiBase === currentApiBase())
+      await registerCallPushToken({ expoToken: token });
   } catch {
     // Expo Go without an EAS project id and Android builds without a Firebase config
     // cannot mint an Expo push token.

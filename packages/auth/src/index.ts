@@ -1,6 +1,7 @@
 import { expo } from "@better-auth/expo";
 import { passkey } from "@better-auth/passkey";
 import type { ProductAnalytics, TransactionalEmailProvider } from "@rakazo/adapter-kit";
+import { SignupAttribution } from "@rakazo/contracts";
 import {
   displayName,
   emailAllowed,
@@ -8,6 +9,7 @@ import {
   MAX_PASSWORD_LENGTH,
   MESSAGING_EMAIL_SUFFIX,
   MIN_PASSWORD_LENGTH,
+  signupAttributionFromHeaders,
   signupPolicyFromEnv,
 } from "@rakazo/core";
 import type { PrismaClient, SecurityEventType } from "@rakazo/db";
@@ -27,7 +29,7 @@ import {
   getOAuthState,
 } from "better-auth/api";
 import { parseSetCookieHeader } from "better-auth/cookies";
-import { emailOTP, organization } from "better-auth/plugins";
+import { emailOTP, multiSession, organization } from "better-auth/plugins";
 import {
   ACCOUNT_EXPORT_TOKEN_PREFIX,
   consumeAccountExportToken,
@@ -39,6 +41,11 @@ import {
   sessionForAuthHook,
   signedBearer,
 } from "./account-security.js";
+import {
+  accountSessions,
+  MAX_SAVED_BROWSER_ACCOUNTS,
+  requireSavedAccountCapacity,
+} from "./account-sessions.js";
 import { breachedPasswordCheck } from "./breached-password.js";
 import { DEACTIVATED_AT_FIELD } from "./directory.js";
 import type { EmailLocaleOf } from "./email.js";
@@ -244,6 +251,12 @@ export function createAuth(prisma: PrismaClient, env: AuthEnv) {
   // Better Auth's own token key, so every stored token shares one cipher and key.
   let authContext: Promise<{ secretConfig: TokenKey }> | undefined;
   const tokenKey = async () => (await authContext!).secretConfig;
+  const attributionField = {
+    type: "string",
+    required: false,
+    input: false,
+    returned: false,
+  } as const;
   const auth = betterAuth({
     appName: "Rakazo",
     logger: env.logger,
@@ -322,7 +335,16 @@ export function createAuth(prisma: PrismaClient, env: AuthEnv) {
     },
     user: {
       // Set by the directory; read with every session so a deactivated account is refused.
-      additionalFields: DEACTIVATED_AT_FIELD,
+      additionalFields: {
+        ...DEACTIVATED_AT_FIELD,
+        signupSurface: attributionField,
+        signupUtmSource: attributionField,
+        signupUtmMedium: attributionField,
+        signupUtmCampaign: attributionField,
+        signupUtmContent: attributionField,
+        signupUtmTerm: attributionField,
+        signupReferringDomain: attributionField,
+      },
       validateUserInfo: async ({ user, source }, ctx) => {
         if (source.method !== "oauth" || source.oauth?.providerId !== "oidc") return;
         const expectedUser = (await getOAuthState())?.serverContext?.reauthUserId;
@@ -407,6 +429,8 @@ export function createAuth(prisma: PrismaClient, env: AuthEnv) {
     plugins: [
       signedBearer,
       expo(),
+      multiSession({ maximumSessions: MAX_SAVED_BROWSER_ACCOUNTS }),
+      accountSessions(),
       accountSecurity(
         env.email,
         emailLocaleOf,
@@ -455,6 +479,11 @@ export function createAuth(prisma: PrismaClient, env: AuthEnv) {
     ],
     hooks: {
       before: createAuthMiddleware(async (ctx) => {
+        if (ctx.path === "/sign-in/social") {
+          await addOAuthServerContext({
+            signupAttribution: signupAttributionFromHeaders(ctx.headers),
+          });
+        }
         if (
           ctx.path === "/sign-in/social" &&
           ctx.body?.provider === "oidc" &&
@@ -667,6 +696,7 @@ export function createAuth(prisma: PrismaClient, env: AuthEnv) {
       session: {
         create: {
           before: async (session, ctx) => {
+            if (ctx?.headers) await requireSavedAccountCapacity(ctx, session.userId);
             // The auth adapter can still be inside the signup transaction.
             const user = await ctx?.context.internalAdapter.findUserById(session.userId);
             const policy = signupPolicyFromEnv(env);
@@ -753,7 +783,7 @@ export function createAuth(prisma: PrismaClient, env: AuthEnv) {
         },
         delete: {
           after: async (session, ctx) => {
-            if (ctx?.path === "/sign-out") {
+            if (ctx?.path === "/sign-out" || ctx?.path === "/accounts/remove") {
               await recordSecurityEvent({ type: "auth.sign_out", userId: session.userId });
             } else if (ctx?.path && REVOCATION_PATHS.has(ctx.path)) {
               await recordSecurityEvent({
@@ -769,9 +799,18 @@ export function createAuth(prisma: PrismaClient, env: AuthEnv) {
       user: {
         create: {
           after: async (user, ctx) => {
+            const attribution = SignupAttribution.safeParse({
+              surface: user.signupSurface ?? undefined,
+              utmSource: user.signupUtmSource ?? undefined,
+              utmMedium: user.signupUtmMedium ?? undefined,
+              utmCampaign: user.signupUtmCampaign ?? undefined,
+              utmContent: user.signupUtmContent ?? undefined,
+              utmTerm: user.signupUtmTerm ?? undefined,
+              referringDomain: user.signupReferringDomain ?? undefined,
+            });
             env.analytics?.capture(
               user.id,
-              { name: "account_created" },
+              { name: "account_created", ...(attribution.success ? attribution.data : {}) },
               { id: user.id, at: user.createdAt },
             );
             await recordSecurityEvent({
@@ -780,13 +819,28 @@ export function createAuth(prisma: PrismaClient, env: AuthEnv) {
               metadata: { via: ctx?.path ?? null },
             });
           },
-          before: async (user) => {
+          before: async (user, ctx = null) => {
             if (isMessagingEmail(user.email)) {
               throw new APIError("BAD_REQUEST", { message: "Email is not available" });
             }
+            const callbackAttribution = SignupAttribution.safeParse(
+              ctx && isOidcCallback(ctx)
+                ? (await getOAuthState())?.serverContext?.signupAttribution
+                : undefined,
+            );
+            const attribution = callbackAttribution.success
+              ? callbackAttribution.data
+              : signupAttributionFromHeaders(ctx?.headers);
             return {
               data: {
                 ...user,
+                signupSurface: attribution.surface,
+                signupUtmSource: attribution.utmSource,
+                signupUtmMedium: attribution.utmMedium,
+                signupUtmCampaign: attribution.utmCampaign,
+                signupUtmContent: attribution.utmContent,
+                signupUtmTerm: attribution.utmTerm,
+                signupReferringDomain: attribution.referringDomain,
                 ...(user.name !== undefined ? { name: displayName(user.name, "") } : {}),
               },
             };
@@ -863,8 +917,15 @@ function withoutSessionTokens(
   if (path === "/list-sessions" && Array.isArray(returned)) {
     return returned.map(withoutToken);
   }
+  if (path === "/multi-session/list-device-sessions" && Array.isArray(returned)) {
+    return returned.map((item) =>
+      isRecord(item) ? { ...item, session: withoutToken(item.session) } : item,
+    );
+  }
   if (
-    (path === "/get-session" || path === "/update-session") &&
+    (path === "/get-session" ||
+      path === "/update-session" ||
+      path === "/multi-session/set-active") &&
     isRecord(returned) &&
     isRecord(returned.session)
   ) {
@@ -984,7 +1045,7 @@ function loopbackTwinOrigins(origin: string): string[] {
  * route under it stays closed, including ones a future plugin version adds.
  */
 export function isBlockedAuthPath(path: string): boolean {
-  return path.startsWith("/organization");
+  return path.startsWith("/organization") || path.startsWith("/multi-session");
 }
 
 /** Set while the directory has turned the account off. */

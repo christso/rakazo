@@ -4,7 +4,7 @@ import { Alert } from "react-native";
 import { create, get, isSupported } from "react-native-passkeys";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { authHeaders, currentApiBase, fetchMobileJson } from "./api";
-import { passwordResetCapabilities } from "./api-auth";
+import { passwordResetCapabilities, rememberAuthenticatedAccount } from "./api-auth";
 import { clearSpace } from "./api-server";
 import {
   addPasskey,
@@ -36,6 +36,7 @@ vi.mock("./api-server", () => ({
 }));
 vi.mock("./api-auth", () => ({
   passwordResetCapabilities: vi.fn(),
+  rememberAuthenticatedAccount: vi.fn(async () => undefined),
 }));
 vi.mock("./session", () => ({
   currentSessionGeneration: vi.fn(() => 1),
@@ -161,6 +162,12 @@ describe("passkey sign-in", () => {
     expect(verify?.body).toEqual({ response: credential });
     expect(clearSpace).toHaveBeenCalledOnce();
     expect(replaceSessionTokenIfCurrent).toHaveBeenCalledWith(1, "new-session");
+    expect(rememberAuthenticatedAccount).toHaveBeenCalledWith(
+      "https://rakazo.example.test",
+      "new-session",
+      expect.objectContaining({ user: { id: "user-1" } }),
+      1,
+    );
   });
 
   it.each([

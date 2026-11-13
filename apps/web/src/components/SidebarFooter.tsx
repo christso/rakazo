@@ -1,5 +1,5 @@
 import { Trans, useLingui } from "@lingui/react/macro";
-import type { NavLink } from "@rakazo/contracts";
+import type { NavLink, SavedAccountSummary } from "@rakazo/contracts";
 import { ANDROID_APP_STORE_URL, IOS_APP_STORE_URL } from "@rakazo/contracts";
 import {
   AppMarkStack,
@@ -14,6 +14,7 @@ import {
   Check,
   Download,
   FolderOpen,
+  Gauge,
   Link2,
   LogOut,
   Plug,
@@ -22,12 +23,14 @@ import {
   Smartphone,
   SquareKanban,
   UserPlus,
-  UserRound,
+  UsersRound,
 } from "lucide-react";
 import { useLayoutEffect, useRef, useState } from "react";
 import type { Organization } from "../lib/organizations";
+import { AccountAvatar } from "./AccountAvatar";
 import { useSidebarUpdate } from "./DesktopUpdates";
 import { IconTooltip } from "./IconTooltip";
+import { SavedAccountSwitcher } from "./SavedAccountSwitcher";
 
 type Props = {
   mini?: boolean;
@@ -45,10 +48,18 @@ type Props = {
   onLink?: (link: NavLink) => void;
   onArtifacts: () => void;
   onSettings: () => void;
+  /** How much of the member's allowance is used; the Usage row shows only with one. */
+  usage?: string | null;
+  onUsage?: () => void;
   onInvite?: () => void;
   onLogOut: () => void;
   signingOut: boolean;
   logOutError: string | null;
+  accounts?: SavedAccountSummary[];
+  activeUserId?: string | null;
+  onSwitchAccount?: (userId: string) => void;
+  onAddAccount?: () => void;
+  onLogOutAll?: () => void;
   organizations?: Organization[];
   activeOrganizationId?: string | null;
   onSwitchOrganization?: (organization: Organization) => void;
@@ -75,17 +86,26 @@ export function SidebarFooter({
   onLink,
   onArtifacts,
   onSettings,
+  usage,
+  onUsage,
   onInvite,
   onLogOut,
   signingOut,
   logOutError,
+  accounts = [],
+  activeUserId,
+  onSwitchAccount,
+  onAddAccount,
+  onLogOutAll,
   organizations = [],
   activeOrganizationId,
   onSwitchOrganization,
 }: Props) {
   const { t } = useLingui();
   const update = useSidebarUpdate();
-  const [failedImage, setFailedImage] = useState<string | null>(null);
+  const otherAccounts = accounts.filter((account) => account.userId !== activeUserId);
+  const [switcherOpen, setSwitcherOpen] = useState(false);
+  const menuTriggerRef = useRef<HTMLButtonElement>(null);
   const pillRef = useRef<HTMLButtonElement>(null);
   const labelRef = useRef<HTMLSpanElement>(null);
   const [markCount, setMarkCount] = useState(3);
@@ -116,22 +136,12 @@ export function SidebarFooter({
     >
       <Popover open={open} onOpenChange={onOpenChange}>
         <PopoverTrigger
+          ref={menuTriggerRef}
           data-testid="user-menu-trigger"
           aria-label={t`Account menu for ${name}`}
           className="grid size-9 shrink-0 place-items-center overflow-hidden rounded-full border border-border bg-sidebar-accent text-body font-medium text-foreground outline-none hover:border-foreground/30 focus-visible:ring-2 focus-visible:ring-ring"
         >
-          {image && failedImage !== image ? (
-            <img
-              src={image}
-              alt=""
-              className="size-full object-cover"
-              onError={() => setFailedImage(image)}
-            />
-          ) : initials ? (
-            initials
-          ) : (
-            <UserRound size={18} aria-hidden="true" />
-          )}
+          <AccountAvatar image={image} initials={initials} className="size-full border-0" />
         </PopoverTrigger>
         {open ? (
           <PopoverContent
@@ -149,6 +159,22 @@ export function SidebarFooter({
                 <p className="truncate text-label text-muted-foreground">{email}</p>
               ) : null}
             </div>
+            {onAddAccount || otherAccounts.length > 0 ? (
+              <Button
+                variant="ghost"
+                className="h-9 w-full justify-start gap-2.5 font-normal"
+                disabled={signingOut}
+                aria-haspopup="dialog"
+                onClick={() => {
+                  onOpenChange(false);
+                  setSwitcherOpen(true);
+                }}
+              >
+                <UsersRound className="text-muted-foreground" strokeWidth={1.75} />
+                <Trans>Switch accounts</Trans>
+              </Button>
+            ) : null}
+            <div className="my-1 border-t border-border" />
             {organizations.length > 1 ? (
               <>
                 {organizations.map((organization) => {
@@ -177,6 +203,19 @@ export function SidebarFooter({
               >
                 <Plug className="text-muted-foreground" strokeWidth={1.75} />
                 <Trans>Connect apps</Trans>
+              </Button>
+            ) : null}
+            {usage ? (
+              <Button
+                variant="ghost"
+                className="h-9 w-full justify-start gap-2.5 font-normal"
+                onClick={onUsage}
+              >
+                <Gauge className="text-muted-foreground" strokeWidth={1.75} />
+                <Trans>Usage</Trans>
+                <span className="ms-auto text-body-sm tabular-nums text-muted-foreground">
+                  {usage}
+                </span>
               </Button>
             ) : null}
             <Button
@@ -266,6 +305,17 @@ export function SidebarFooter({
               <LogOut className="text-muted-foreground" strokeWidth={1.75} />
               <Trans>Log out</Trans>
             </Button>
+            {otherAccounts.length && onLogOutAll ? (
+              <Button
+                variant="ghost"
+                className="h-9 w-full justify-start gap-2.5 font-normal"
+                disabled={signingOut}
+                onClick={onLogOutAll}
+              >
+                <LogOut className="text-muted-foreground" strokeWidth={1.75} />
+                <Trans>Log out all accounts</Trans>
+              </Button>
+            ) : null}
             {logOutError ? (
               <p role="alert" className="px-2.5 pt-1 pb-2 text-body-sm text-destructive">
                 {logOutError}
@@ -274,6 +324,16 @@ export function SidebarFooter({
           </PopoverContent>
         ) : null}
       </Popover>
+      <SavedAccountSwitcher
+        open={switcherOpen}
+        onOpenChange={setSwitcherOpen}
+        triggerRef={menuTriggerRef}
+        accounts={accounts}
+        activeUserId={activeUserId}
+        signingOut={signingOut}
+        onSwitchAccount={onSwitchAccount}
+        onAddAccount={onAddAccount}
+      />
       {!mini ? (
         <Button
           variant="outline"

@@ -1,5 +1,5 @@
 import { ORPCError } from "@orpc/server";
-import { runContinueJob, runJobKey } from "@rakazo/adapter-kit";
+import { createAdapterContext, runContinueJob, runJobKey } from "@rakazo/adapter-kit";
 import { settleCallRequest } from "@rakazo/adapters";
 import type { Actor } from "@rakazo/contracts";
 import {
@@ -25,10 +25,11 @@ import {
   withTransactionRetry,
 } from "@rakazo/db";
 import { getLogger } from "@rakazo/logging";
-import { releaseComputerControl } from "../computer-control.js";
+import { answerComputerRequest } from "../computer-control.js";
 import type { RouterDeps } from "../router.js";
 import { createRoutineTestRun, routineTestRunNonce, routineTestTarget } from "../routines.js";
 import { assertTeachingSendAllowed } from "../taught-skills.js";
+import { purgeClearedThreadMemory } from "../thread-memory.js";
 import {
   isBackgroundRun,
   isPeerRun,
@@ -40,6 +41,7 @@ import { reactToThreadMessage } from "../thread-reactions.js";
 import {
   markThreadRead,
   markThreadUnreadFrom,
+  setThreadSnooze,
   setThreadUnreadState,
 } from "../thread-read-state.js";
 import { threadSnapshot } from "../thread-snapshot.js";
@@ -56,7 +58,6 @@ import { mapBotSecretInputError } from "./bots.js";
 import type { RouterContext } from "./context.js";
 import {
   botsRunOwnModels,
-  computerContext,
   HEARTBEAT,
   modelSetup,
   THREAD_MESSAGE_PAGE_SIZE,
@@ -89,7 +90,11 @@ export function takeoverReleaser(deps: RouterDeps, actor: Actor, target: ThreadT
               select: { botId: true },
             })
           )?.botId;
-    if (botId) await releaseComputerControl(deps, actor, botId, "done", runId);
+    if (!botId) return;
+    // A reply from someone the bot did not ask still steers it, but answers nothing.
+    await answerComputerRequest(deps, actor, botId, "done", runId).catch((error: unknown) => {
+      if (!(error instanceof ORPCError)) throw error;
+    });
   };
 }
 
@@ -118,7 +123,7 @@ export function threadsRoutes(ctx: RouterContext) {
     const noModel =
       setup.needsModel &&
       !(await botsRunOwnModels(deps, actor, sendTargetBotIds(target, input, replied)));
-    if (noModel && (target.kind !== "bot" || !isStopMessage(input))) {
+    if (noModel && !isStopMessage(input)) {
       throw new ORPCError("BAD_REQUEST", { message: MODEL_REQUIRED_SEND_ERROR });
     }
     if (target.kind === "bot") {
@@ -317,49 +322,27 @@ export function threadsRoutes(ctx: RouterContext) {
         const target = await resolveThreadTarget(deps.prisma, context.actor, input);
         const contextBotId = target.kind === "bot" ? target.botId : target.memberBotIds[0];
         if (!contextBotId) throw new IsolationError();
-        const { cancelledRunIds, historyCompactionGeneration } = await deps.events.clearThread({
-          spaceId: context.actor.spaceId,
-          threadId: target.threadId,
-          botId: contextBotId,
-          ...(target.kind === "group" ? { groupId: target.groupId } : {}),
-        });
-        const [configuredMemory] = await Promise.all([
-          target.kind === "bot"
-            ? deps.memoryProviders.resolve(context.actor.spaceId).catch((error) => {
-                getLogger().error("semantic memory resolution after thread clear failed", error);
-                return null;
-              })
-            : Promise.resolve(null),
-          Promise.all(
-            cancelledRunIds.map((runId) =>
-              deps.jobs.cancel(runJobKey(runId)).catch(() => undefined),
-            ),
+        const { cancelledRunIds, historyCompactionGeneration, removedStorageKeys } =
+          await deps.events.clearThread({
+            spaceId: context.actor.spaceId,
+            threadId: target.threadId,
+            botId: contextBotId,
+            ...(target.kind === "group" ? { groupId: target.groupId } : {}),
+          });
+        await Promise.all(
+          cancelledRunIds.map((runId) => deps.jobs.cancel(runJobKey(runId)).catch(() => undefined)),
+        );
+        const removal = createAdapterContext(
+          context.actor,
+          contextBotId,
+          `thread-clear:${target.threadId}`,
+        );
+        await Promise.all(
+          removedStorageKeys.map((storageKey) =>
+            deps.artifacts.remove(storageKey, removal).catch(() => undefined),
           ),
-        ]);
-        // Durable memories remain in their Space-private containers. Clear only removes
-        // conversation-derived summaries from the previous generation; including the new
-        // generation also covers a compaction job that began just after the clear committed.
-        if (configuredMemory && target.kind === "bot") {
-          // Best effort: the conversation rows are already deleted, so failing the clear here
-          // would help nothing — a failed purge only leaves stale summaries recallable.
-          try {
-            const purged = await configuredMemory.provider.purgeHistory(
-              {
-                botId: target.botId,
-                generations: [
-                  Math.max(0, historyCompactionGeneration - 1),
-                  historyCompactionGeneration,
-                ],
-              },
-              computerContext(context.actor, target.botId, `thread-clear:${target.threadId}`),
-            );
-            if (!purged.ok) {
-              getLogger().error("semantic memory purge after thread clear failed", purged.error);
-            }
-          } catch (error) {
-            getLogger().error("semantic memory purge after thread clear failed", error);
-          }
-        }
+        );
+        await purgeClearedThreadMemory(deps, context.actor, target, historyCompactionGeneration);
         return { ok: true as const };
       }),
       followUp: authed.threads.followUp.handler(async ({ context, input }) => {
@@ -665,6 +648,11 @@ export function threadsRoutes(ctx: RouterContext) {
         } else {
           await setThreadUnreadState(deps.prisma, context.actor, target, true);
         }
+        return { ok: true as const };
+      }),
+      snooze: authed.threads.snooze.handler(async ({ context, input }) => {
+        const target = await resolveThreadTarget(deps.prisma, context.actor, input);
+        await setThreadSnooze(deps.prisma, context.actor, target, input.until);
         return { ok: true as const };
       }),
     },

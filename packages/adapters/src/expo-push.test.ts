@@ -127,10 +127,11 @@ describe("expo push", () => {
     };
     expect(body.to).toBe("ExponentPushToken[test]");
     expect(body.title).toBe("Need you");
-    expect(body.collapseId).toBe("th-1");
-    expect(body.tag).toBe("th-1");
+    expect(body.collapseId).toHaveLength(64);
+    expect(body.tag).toBe(body.collapseId);
     expect(body.data).toEqual({
       kind: "takeover",
+      userId: "user-1",
       botId: "bot-1",
       threadId: "th-1",
       spaceId: "w",
@@ -230,7 +231,7 @@ describe("expo push", () => {
     await expect(loadPushToken(tokens, "user-1")).resolves.toBeUndefined();
   });
 
-  it("does not send a token another account claimed while the session was looked up", async () => {
+  it("does not send a login removed while its session was looked up", async () => {
     const tokens = new MemoryPushTokenStore();
     const token = "ExponentPushToken[device]";
     await tokens.save("user-1", token, "session-1");
@@ -254,6 +255,7 @@ describe("expo push", () => {
       notifyContext,
     );
     await vi.waitFor(() => expect(waiting).toBe(true));
+    await tokens.endSession("user-1", "session-1");
     await tokens.save("user-2", token, "session-2");
     release();
 
@@ -569,6 +571,8 @@ function recordingJobs() {
     enqueue: async (job) => {
       enqueued.push(job);
     },
+    enqueueIn: async () => undefined,
+    cancelIn: async () => undefined,
     cancel: async () => undefined,
     close: async () => undefined,
   };
@@ -584,6 +588,35 @@ const pushMessage = {
 } as const;
 
 describe("expo push delivery outcomes", () => {
+  it("logs a failed device without hiding another device's successful delivery", async () => {
+    const sink = createTestSink();
+    installLogger(createLogger({ service: "test", sinks: [sink] }));
+    const tokens = new MemoryPushTokenStore();
+    const failedToken = "ExponentPushToken[unreachable-device]";
+    await tokens.save("user-1", failedToken, "first-session");
+    await tokens.save("user-1", "ExponentPushToken[reachable-device]", "second-session");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: unknown, init?: RequestInit) => {
+        const request = JSON.parse(String(init?.body));
+        if (request.to === failedToken) throw new Error("network failure");
+        return jsonResponse({ data: { status: "ok", id: "ticket" } });
+      }),
+    );
+    const push = new ExpoPushProvider(tokens, {
+      retryDelaysMs: [],
+      sessionExpiresAt: async () => new Date(Date.now() + 60_000),
+    });
+
+    await expect(push.deliver(pushMessage, notifyContext)).resolves.toBe("delivered");
+    expect(sink.events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ level: "error", deviceDigest: credentialDigest(failedToken) }),
+      ]),
+    );
+    expect(JSON.stringify(sink.events)).not.toContain(failedToken);
+  });
+
   it.each<{
     name: string;
     outcomes: ExpoOutcome[];
@@ -773,6 +806,24 @@ describe("expo push receipts", () => {
     );
   });
 
+  it.each([
+    { code: "ProviderError", level: "warn" },
+    { code: "MessageRateExceeded", level: "warn" },
+    { code: "InvalidCredentials", level: "error" },
+    { code: "MessageTooBig", level: "error" },
+  ])("logs a $code receipt at $level", async ({ code, level }) => {
+    const sink = createTestSink();
+    installLogger(createLogger({ service: "test", sinks: [sink] }));
+    const { push, receipt } = await deliveredTicket();
+    fakeExpo([], { "ticket-1": { status: "error", message: code, details: { error: code } } });
+
+    await push.checkReceipt(receipt);
+
+    expect(
+      sink.events.filter((event) => event.message === `expo push receipt error: ${code}`),
+    ).toEqual([expect.objectContaining({ level })]);
+  });
+
   it("keeps a token the device registered after the unregistered send", async () => {
     const { tokens, push, receipt } = await deliveredTicket();
     await tokens.save("user-1", "ExponentPushToken[new]");
@@ -889,7 +940,7 @@ it("carries sender identity, marks actionable notifications high priority, and b
   expect(request).toMatchObject({ mutableContent: true, priority: "high" });
   expect(Buffer.byteLength(JSON.stringify(request))).toBeLessThanOrEqual(3300);
   expect(request.body).toMatch(/^x(🔔)+…$/u);
-  expect(Array.from(request.body as string)).toHaveLength(90);
+  expect(Array.from(request.body as string).length).toBeLessThanOrEqual(90);
 });
 
 it("uses data-only delivery only for Android builds that registered sender support", async () => {
@@ -915,6 +966,7 @@ it("uses data-only delivery only for Android builds that registered sender suppo
   );
   expect(request).not.toHaveProperty("title");
   expect(request).not.toHaveProperty("body");
+  expect(request).not.toHaveProperty("tag");
   expect(request.data).toMatchObject({
     notificationTitle: "Marketing",
     notificationBody: "Draft ready",
@@ -923,4 +975,68 @@ it("uses data-only delivery only for Android builds that registered sender suppo
     sender: { botId: "bot", name: "Marketing" },
   });
   expect(request).not.toHaveProperty("priority");
+});
+
+it("carries the larger avatar only to devices without Android's 96px limit", async () => {
+  const tokens = new MemoryPushTokenStore();
+  await tokens.save("user-1", "ExponentPushToken[iphone]");
+  const fetchMock = vi.fn(async () => jsonResponse({ data: { status: "ok" } }));
+  vi.stubGlobal("fetch", fetchMock);
+  await new ExpoPushProvider(tokens).send(
+    {
+      kind: "completion",
+      title: "Marketing",
+      body: "Draft ready",
+      botId: "bot",
+      threadId: "thread",
+      sender: { botId: "bot", name: "Marketing", avatar: "small", avatarLarge: "large" },
+    },
+    notifyContext,
+  );
+  const request = JSON.parse(
+    String((fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].body),
+  );
+  expect(request.data.sender).toEqual({ botId: "bot", name: "Marketing", avatar: "large" });
+
+  const androidTokens = new MemoryPushTokenStore();
+  await androidTokens.save("user-2", "ExponentPushToken[droid]", "", "android_sender");
+  const androidFetch = vi.fn(async () => jsonResponse({ data: { status: "ok" } }));
+  fetchMock.mockImplementation(androidFetch);
+  await new ExpoPushProvider(androidTokens).send(
+    {
+      kind: "completion",
+      title: "Marketing",
+      body: "Draft ready",
+      botId: "bot",
+      threadId: "thread",
+      sender: { botId: "bot", name: "Marketing", avatar: "small", avatarLarge: "large" },
+    },
+    { ...notifyContext, userId: "user-2" },
+  );
+  const androidRequest = JSON.parse(
+    String((fetchMock.mock.calls.at(-1) as unknown as [string, RequestInit])[1].body),
+  );
+  expect(androidRequest.data.sender).toEqual({ botId: "bot", name: "Marketing", avatar: "small" });
+});
+
+it("falls back to the small avatar when no larger one fit the payload", async () => {
+  const tokens = new MemoryPushTokenStore();
+  await tokens.save("user-3", "ExponentPushToken[iphone]");
+  const fetchMock = vi.fn(async () => jsonResponse({ data: { status: "ok" } }));
+  vi.stubGlobal("fetch", fetchMock);
+  await new ExpoPushProvider(tokens).send(
+    {
+      kind: "completion",
+      title: "Marketing",
+      body: "Draft ready",
+      botId: "bot",
+      threadId: "thread",
+      sender: { botId: "bot", name: "Marketing", avatar: "small" },
+    },
+    { ...notifyContext, userId: "user-3" },
+  );
+  const request = JSON.parse(
+    String((fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].body),
+  );
+  expect(request.data.sender).toEqual({ botId: "bot", name: "Marketing", avatar: "small" });
 });

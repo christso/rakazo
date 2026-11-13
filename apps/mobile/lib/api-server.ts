@@ -1,3 +1,4 @@
+import { t } from "@lingui/core/macro";
 import * as SecureStore from "expo-secure-store";
 import type { PendingSignOut } from "./api";
 import {
@@ -21,8 +22,12 @@ import {
 } from "./api";
 import type { EndpointResult } from "./endpoint";
 import { defaultApiBase, normalizeApiBase } from "./endpoint";
-import { t } from "./i18n";
 import { resumeLiveNotifications } from "./live-notifications";
+import {
+  pendingSessionTokens,
+  retryPendingSessionRevocations,
+} from "./pending-session-revocations";
+import { clearSavedAccounts } from "./saved-accounts";
 import { API_BASE_STORAGE_KEY as ENDPOINT_KEY } from "./server-config";
 import { loadServerHeaders, saveServerHeaders, serverHeaders } from "./server-headers";
 import {
@@ -64,6 +69,33 @@ export async function loadApiBase() {
   }
   await loadServerHeaders(apiBase);
   setCachedApiBase(apiBase);
+  // A process may have stopped after recording sign-out but before clearing its primary token.
+  const generation = currentSessionGeneration();
+  let sessionRecoveryFailed = false;
+  try {
+    const pending = await pendingSessionTokens(apiBase);
+    if (pending.size) {
+      const token = await loadSessionToken();
+      if (
+        token &&
+        pending.has(token) &&
+        generation === currentSessionGeneration() &&
+        apiBase === currentApiBase()
+      ) {
+        if (!(await clearSessionToken())) sessionRecoveryFailed = true;
+        if (generation + 1 === currentSessionGeneration() && apiBase === currentApiBase())
+          if (!(await clearSpace())) sessionRecoveryFailed = true;
+      }
+    }
+  } catch {
+    // Unknown tombstones cannot authorize the primary credential. Quarantine it,
+    // but finish restoring the server and Space before reporting the storage error.
+    sessionRecoveryFailed = true;
+    if (generation === currentSessionGeneration() && apiBase === currentApiBase())
+      await clearSessionToken().catch(() => undefined);
+  }
+  void retryPendingSessionRevocations(apiBase).catch(() => undefined);
+
   try {
     const storedSpace = (await SecureStore.getItemAsync(SPACE_KEY)) ?? "";
     setSelectedSpace(storedSpace);
@@ -75,6 +107,7 @@ export async function loadApiBase() {
   }
   // A revocation left pending by an earlier sign-out or server switch retries on this launch.
   void flushPendingSignOut(true);
+  if (sessionRecoveryFailed) throw new Error(t`Could not continue`);
   return currentApiBase();
 }
 export async function selectSpace(id: string) {
@@ -242,6 +275,10 @@ let hangUpBeforeCredentialsCleared: (() => Promise<void>) | undefined;
 export function configureSessionEndHangUp(hangUp: (() => Promise<void>) | undefined): void {
   hangUpBeforeCredentialsCleared = hangUp;
 }
+/** Runs the registered call cleanup before any account or endpoint loses its bearer. */
+export async function hangUpBeforeSessionEnd(): Promise<void> {
+  await hangUpBeforeCredentialsCleared?.();
+}
 type ClearedCredentials = {
   previousToken: string;
   previousSpace: string;
@@ -258,7 +295,7 @@ async function clearCredentialsForEndpointChange(
   previousHeaders: Record<string, string>,
 ): Promise<({ ok: true } & ClearedCredentials) | { ok: false; result: EndpointResult }> {
   // The old server's session authorizes the call's hang-up; send it while it still exists.
-  await hangUpBeforeCredentialsCleared?.().catch(() => undefined);
+  await hangUpBeforeSessionEnd().catch(() => undefined);
   const generation = currentSessionGeneration();
   // A save still running reads as no session; its token may land before the clear.
   const previousToken = sessionSaveInProgress()
@@ -273,7 +310,7 @@ async function clearCredentialsForEndpointChange(
   if (!previousToken.ok || !revokedToken.ok) {
     return {
       ok: false,
-      result: { ok: false, error: t("Could not save the previous server session") },
+      result: { ok: false, error: t`Could not save the previous server session` },
     };
   }
   let pendingSignOut: PendingSignOut | undefined;
@@ -291,7 +328,7 @@ async function clearCredentialsForEndpointChange(
       // Without the record the old server keeps its session, so the switch cannot proceed.
       return {
         ok: false,
-        result: { ok: false, error: t("Could not save the previous server session") },
+        result: { ok: false, error: t`Could not save the previous server session` },
       };
     }
   }
@@ -300,7 +337,7 @@ async function clearCredentialsForEndpointChange(
     await settleRolledBackSignOut(pendingSignOut, restoredToken);
     return {
       ok: false as const,
-      result: { ok: false as const, error: t("Could not clear the previous server session") },
+      result: { ok: false as const, error: t`Could not clear the previous server session` },
     };
   };
   // Captured before the read, so a selection made during it cannot pass as the one read.
@@ -440,19 +477,22 @@ export async function saveApiBase(
     }
     if (!(await saveServerHeaders(parsed.url, headers))) {
       await rollBackEndpointChange(cleared);
-      return { ok: false, error: t("Could not save the server URL") };
+      return { ok: false, error: t`Could not save the server URL` };
     }
     try {
       await SecureStore.setItemAsync(ENDPOINT_KEY, parsed.url);
     } catch {
       await saveServerHeaders(previous, previousHeaders);
       await rollBackEndpointChange(cleared);
-      return { ok: false, error: t("Could not save the server URL") };
+      return { ok: false, error: t`Could not save the server URL` };
     }
     setCachedApiBase(parsed.url);
     await clearStoredValue(SPACE_ROLLBACK_KEY);
     if (cleared?.pendingSignOut) await promotePendingSignOut(cleared.pendingSignOut);
-    if (cleared) await clearStoredValue(ORGANIZATION_SPACES_KEY);
+    if (cleared) {
+      await clearSavedAccounts();
+      await clearStoredValue(ORGANIZATION_SPACES_KEY);
+    }
     return parsed;
   });
 }
@@ -470,7 +510,7 @@ export async function resetApiBase(): Promise<EndpointResult> {
     } catch {
       if (cleared) {
         await rollBackEndpointChange(cleared);
-        return { ok: false, error: t("Could not clear the custom server URL") };
+        return { ok: false, error: t`Could not clear the custom server URL` };
       }
     }
     if (!(await saveServerHeaders(url, {}))) {
@@ -481,14 +521,20 @@ export async function resetApiBase(): Promise<EndpointResult> {
         // this launch follows it too: the old session is not restored, its record stays for the
         // next retry to revoke, and a later sign-in's token is never sent to another server.
         setCachedApiBase(url);
-        if (cleared) await clearStoredValue(ORGANIZATION_SPACES_KEY);
+        if (cleared) {
+          await clearSavedAccounts();
+          await clearStoredValue(ORGANIZATION_SPACES_KEY);
+        }
       }
-      return { ok: false, error: t("Could not clear the custom server URL") };
+      return { ok: false, error: t`Could not clear the custom server URL` };
     }
     setCachedApiBase(url);
     await clearStoredValue(SPACE_ROLLBACK_KEY);
     if (cleared?.pendingSignOut) await promotePendingSignOut(cleared.pendingSignOut);
-    if (cleared) await clearStoredValue(ORGANIZATION_SPACES_KEY);
+    if (cleared) {
+      await clearSavedAccounts();
+      await clearStoredValue(ORGANIZATION_SPACES_KEY);
+    }
     return { ok: true, url };
   });
 }

@@ -1,17 +1,18 @@
 import { Trans, useLingui } from "@lingui/react/macro";
 import {
+  accountDisplay,
   credentialIssue,
   MAX_PASSWORD_LENGTH,
   MIN_PASSWORD_LENGTH,
   signupRequiresEmailVerification,
   suggestEmailCorrection,
 } from "@rakazo/core";
-import { Button, Input, InputOTP, InputOTPGroup, InputOTPSlot, Label } from "@rakazo/ui-web";
-import { Server } from "lucide-react";
+import { Badge, Button, Input, InputOTP, InputOTPGroup, InputOTPSlot, Label } from "@rakazo/ui-web";
 import { useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { IconTooltip } from "../components/IconTooltip";
+import { AccountAvatar } from "../components/AccountAvatar";
 import { PasskeySignIn } from "../components/PasskeySignIn";
+import { switchSavedAccount, useSavedAccounts } from "../lib/account-sessions";
 import { authClient } from "../lib/auth";
 import type { AuthCapabilities } from "../lib/auth-capabilities";
 import { fetchAuthCapabilities } from "../lib/auth-capabilities";
@@ -32,6 +33,7 @@ export const submitClass = "mt-3 h-12 w-full rounded-xl text-body-lg";
 export function AuthPage({ mode }: { mode: AuthMode }) {
   const { t } = useLingui();
   const [searchParams, setSearchParams] = useSearchParams();
+  const saved = useSavedAccounts();
   const next = signInNext(searchParams.get("next"));
   // Switching between sign-in and sign-up keeps where the person was going.
   const nextQuery = next ? `?next=${encodeURIComponent(next)}` : "";
@@ -197,6 +199,10 @@ export function AuthPage({ mode }: { mode: AuthMode }) {
 
   function enterApp() {
     clearSpaceSelection();
+    if (searchParams.get("add") === "1") {
+      window.location.assign("/app");
+      return;
+    }
     // The routes move a signed-in user on once the session refetch lands. Navigating
     // first beats it, so the guards bounce through sign-in and the shell.
     entering.current = true;
@@ -243,6 +249,39 @@ export function AuthPage({ mode }: { mode: AuthMode }) {
         </div>
       ) : (
         <>
+          {mode === "in" && !codeStep
+            ? saved.accounts.map((account) => {
+                const display = accountDisplay(account, account.email);
+                return (
+                  <Button
+                    key={account.userId}
+                    type="button"
+                    variant="outline"
+                    className="mb-3 h-14 w-full justify-start gap-3 rounded-xl px-3 font-normal"
+                    onClick={() => void switchSavedAccount(account.userId)}
+                  >
+                    <AccountAvatar
+                      image={display.image}
+                      initials={display.initial}
+                      className="size-8 text-body"
+                    />
+                    <span className="min-w-0 flex-1 text-start">
+                      <span className="block truncate">{display.label}</span>
+                      {display.label !== account.email ? (
+                        <span className="block truncate text-label text-muted-foreground">
+                          {account.email}
+                        </span>
+                      ) : null}
+                    </span>
+                    {account.unread > 0 ? (
+                      <Badge variant="secondary" className="tabular-nums">
+                        {account.unread}
+                      </Badge>
+                    ) : null}
+                  </Button>
+                );
+              })
+            : null}
           {capabilityError ? (
             <div role="alert" className="w-full text-center">
               <p>
@@ -556,7 +595,6 @@ export function AuthFrame({
   onSubmit: (event: React.FormEvent) => void;
   children: React.ReactNode;
 }) {
-  const { t } = useLingui();
   const server = desktopBridge()?.server;
   return (
     <div
@@ -565,20 +603,6 @@ export function AuthFrame({
     >
       <div className="app-drag flex items-center gap-2 px-5 py-[18px]">
         <WindowChrome />
-        {server ? (
-          <IconTooltip label={t`Change server`}>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              aria-label={t`Change server`}
-              className="app-no-drag ml-auto text-muted-foreground"
-              onClick={() => void server.change()}
-            >
-              <Server />
-            </Button>
-          </IconTooltip>
-        ) : null}
       </div>
       <div className="flex flex-1 items-center justify-center px-6 pb-16">
         <form onSubmit={onSubmit} className="flex w-full max-w-[460px] flex-col items-center">
@@ -595,6 +619,13 @@ export function AuthFrame({
           {children}
         </form>
       </div>
+      {server ? (
+        <div className="flex justify-center pb-6">
+          <Button type="button" variant="text" size="sm" onClick={() => void server.change()}>
+            <Trans>Change server</Trans>
+          </Button>
+        </div>
+      ) : null}
     </div>
   );
 }

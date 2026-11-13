@@ -25,6 +25,7 @@ import {
 } from "@rakazo/core";
 import { getLogger } from "@rakazo/logging";
 import { ModelImageLimitError, pruneForRebuild } from "./context-pruning.js";
+import { ContextBudgetError } from "./context-selection.js";
 import { groqRequestContextWindow } from "./groq-request-budget.js";
 import { estimateModelContextTokens } from "./model-context.js";
 import { IMAGE_RETURNING_COMPUTER_TOOLS } from "./model-vision.js";
@@ -56,6 +57,8 @@ import {
   withoutThinkingBlocks,
   withoutThinkingFrom,
 } from "./thinking-signatures.js";
+import type { PacerSlot } from "./token-pacer.js";
+import { pacerTokensPerMinute, sharedTokenPacer } from "./token-pacer.js";
 
 const MODEL_PROVIDER_RETRY_DELAYS_MS = [2_000, 8_000, 20_000] as const;
 
@@ -83,6 +86,12 @@ export interface FallbackStreamState {
   continuingCutReply?: boolean;
   onSwitch(target: RuntimeModelTarget): Promise<void>;
   onContextLimit(contextWindow: number): void;
+  /**
+   * The context a backup's own context policy would send on its first call. The policy shortens
+   * older tool results and drops older turns to fit the backup's window, so a backup is judged on
+   * that, not on a transcript sized for the primary. Throws ContextBudgetError when nothing fits.
+   */
+  prepareForTarget?(target: RuntimeModelTarget, context: TranscriptContext): TranscriptContext;
   isProviderFailure(message: AssistantMessage): boolean;
   /** Set once a provider rejected replayed thinking signatures; see thinking-signatures.ts. */
   dropThinkingBlocks?: boolean;
@@ -233,6 +242,7 @@ function fallbackIncompatibility(
   context: TranscriptContext,
   options: ModelsSimpleStreamOptions | undefined,
   tools: readonly ConnectorTool[],
+  prepareForTarget?: FallbackStreamState["prepareForTarget"],
 ): string | undefined {
   // The backup's own context policy prunes on its first call; judge what it would send. Too
   // many user images for its limit throws, and the caller skips the backup.
@@ -241,9 +251,12 @@ function fallbackIncompatibility(
       ...context,
       messages: pruneForRebuild(context.messages, candidate.config.maxImagesPerPrompt),
     };
+    if (prepareForTarget) context = prepareForTarget(candidate, context);
   } catch (error) {
     if (error instanceof ModelImageLimitError)
       return "The request exceeds the backup model's image limit.";
+    if (error instanceof ContextBudgetError)
+      return "Conversation exceeds the backup model's context limit.";
     throw error;
   }
   const inputTokens = estimateModelContextTokens(context, estimatePiImageTokens);
@@ -259,8 +272,14 @@ function fallbackIncompatibility(
   // small input-relative margin, not a fixed 4096 tokens that would exclude
   // otherwise usable small-context models on short turns.
   const contextSafetyMargin = Math.max(256, Math.ceil(inputTokens * 0.1));
-  if (candidate.model.contextWindow <= inputTokens + outputTokens + contextSafetyMargin)
-    return "Conversation exceeds the backup model's context limit.";
+  // A context the backup's own policy prepared was sized against the output reserve the send
+  // uses, so it is judged by that accounting with no extra margin. A policy that keeps the
+  // transcript as is still has to fit.
+  const exceedsWindow = prepareForTarget
+    ? candidate.model.contextWindow <
+      inputTokens + effectiveOutputReserve(candidate.model.contextWindow, outputTokens)
+    : candidate.model.contextWindow <= inputTokens + outputTokens + contextSafetyMargin;
+  if (exceedsWindow) return "Conversation exceeds the backup model's context limit.";
   const imageCount = contextImageCount(context);
   if (
     (imageCount > 0 || tools.some((tool) => IMAGE_RETURNING_COMPUTER_TOOLS.has(tool.name))) &&
@@ -401,6 +420,7 @@ export function fallbackAwareModelStream(
           requestContext(true),
           options,
           state.request.tools,
+          state.prepareForTarget,
         );
         if (incompatibility) {
           skip(incompatibility);
@@ -484,6 +504,27 @@ export function fallbackAwareModelStream(
         sentTarget.model.contextWindow,
         operatorMaxTokens(sentTarget.model),
       );
+      // Wait only as long as RAKAZO_LOCAL_TOKENS_PER_MINUTE needs (token-pacer.ts).
+      let paceSlot: PacerSlot | undefined;
+      const paceLimit = pacerTokensPerMinute(target.config.provider);
+      if (paceLimit !== undefined) {
+        const paced = await sharedTokenPacer.acquire(
+          `${target.config.provider}|${sentTarget.model.baseUrl}`,
+          estimateModelContextTokens(requestContext(), estimatePiImageTokens),
+          paceLimit,
+          signal,
+        );
+        paceSlot = paced.slot;
+        // Time spent pacing is not model time: keep it out of the request budget.
+        startedAt += paced.waitedMs;
+        if (paced.waitedMs >= 1_000) {
+          getLogger().info("model.pacer.wait", {
+            runId: state.request.runId,
+            provider: target.config.provider,
+            waitedMs: paced.waitedMs,
+          });
+        }
+      }
       try {
         const apiKey = target.credentials?.accessToken ?? target.apiKey;
         const reasoning = thinkingLevel === "off" ? undefined : thinkingLevel;
@@ -498,11 +539,16 @@ export function fallbackAwareModelStream(
               : attemptOptions,
         );
       } catch (error) {
+        paceSlot?.release();
         finishWithThrownError(target, error);
         return;
       }
       try {
         for await (const event of stream) {
+          if (event.type === "error") paceSlot?.release();
+          if (event.type === "done") {
+            paceSlot?.settle(event.message.usage.input + event.message.usage.cacheRead);
+          }
           if (event.type === "error") {
             recordFailure(target, event.error.errorMessage ?? "Model request failed.");
             let terminalEvent = event;

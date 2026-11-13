@@ -1,5 +1,5 @@
 import type { PrismaClient } from "@rakazo/db";
-import { runAsSystem, withTransactionRetry } from "@rakazo/db";
+import { countUnreadInboxChats, runAsSystem, withTransactionRetry } from "@rakazo/db";
 import { advisoryLock } from "./advisory-lock.js";
 import { credentialDigest } from "./credential-digest.js";
 import { EncryptedSecretStore } from "./secrets.js";
@@ -22,7 +22,7 @@ export type CallPushDevice = CallPushRegistration & {
   revision: string;
 };
 
-/** Account-wide registrations, shared by API replicas and notification workers. */
+/** Per-login registrations, shared by API replicas and notification workers. */
 export interface PushTokenStore {
   saveDevice?(userId: string, registration: CallPushRegistration, sessionId: string): Promise<void>;
   devices?(userId: string): Promise<CallPushDevice[]>;
@@ -33,6 +33,7 @@ export interface PushTokenStore {
     transport?: "voip" | "expo",
   ): Promise<void>;
   load(userId: string): Promise<PushRecord | undefined>;
+  list(userId: string): Promise<PushRecord[]>;
   save(
     userId: string,
     token: string,
@@ -199,16 +200,31 @@ export class PrismaPushTokenStore implements PushTokenStore {
   }
 
   async load(userId: string): Promise<PushRecord | undefined> {
-    return runAsSystem("load an account's notification registration", async () => {
-      const row = await this.prisma.pushToken.findUnique({ where: { userId } });
-      if (!row) return undefined;
-      return {
-        token: await this.encryption.load(row.ciphertext, `push-token:${userId}`),
-        sessionId: row.sessionId,
-        ...(row.presentation === "android_sender"
-          ? { presentation: "android_sender" as const }
-          : {}),
-      };
+    return (await this.list(userId))[0];
+  }
+
+  async list(userId: string): Promise<PushRecord[]> {
+    return runAsSystem("load an account's notification devices", async () => {
+      const [rows, legacy] = await Promise.all([
+        this.prisma.pushRegistration.findMany({ where: { userId } }),
+        this.prisma.pushToken.findUnique({ where: { userId } }),
+      ]);
+      // Older instances may rotate a legacy registration during the deployment overlap.
+      // Prefer the most recent registration for that login, never a different account.
+      if (legacy) {
+        const index = rows.findIndex((row) => row.sessionId === legacy.sessionId);
+        if (index < 0) rows.push(legacy);
+        else if (rows[index]!.updatedAt < legacy.updatedAt) rows[index] = legacy;
+      }
+      return Promise.all(
+        rows.map(async (row) => ({
+          token: await this.encryption.load(row.ciphertext, `push-token:${userId}`),
+          sessionId: row.sessionId,
+          ...(row.presentation === "android_sender"
+            ? { presentation: "android_sender" as const }
+            : {}),
+        })),
+      );
     });
   }
 
@@ -219,6 +235,36 @@ export class PrismaPushTokenStore implements PushTokenStore {
     presentation?: "android_sender",
   ): Promise<void> {
     await this.register(userId, token, sessionId, "register", presentation);
+  }
+
+  /** The icon counts all valid accounts on this device, rather than the last sender. */
+  async deviceForToken(token: string): Promise<{ badge: number; accounts: number }> {
+    return runAsSystem("count unread chats for a notification device", async () => {
+      const tokenDigest = credentialDigest(token);
+      const rows = [
+        ...(await this.prisma.pushRegistration.findMany({
+          where: { tokenDigest },
+          select: { userId: true, sessionId: true },
+        })),
+        ...(await this.prisma.pushToken.findMany({
+          where: { tokenDigest },
+          select: { userId: true, sessionId: true },
+        })),
+      ];
+      if (!rows.length) return { badge: 0, accounts: 0 };
+      const sessions = await this.prisma.session.findMany({
+        where: {
+          expiresAt: { gt: new Date() },
+          OR: rows.map((row) => ({ id: row.sessionId, userId: row.userId })),
+        },
+        select: { userId: true },
+      });
+      const users = [...new Set(sessions.map((session) => session.userId))];
+      const counts = await Promise.all(
+        users.map((userId) => countUnreadInboxChats(this.prisma, { userId })),
+      );
+      return { badge: counts.reduce((sum, count) => sum + count, 0), accounts: users.length };
+    });
   }
 
   importLegacy(userId: string, token: string, sessionId: string): Promise<boolean> {
@@ -249,22 +295,19 @@ export class PrismaPushTokenStore implements PushTokenStore {
     return runAsSystem("register or import a notification device", () =>
       withTransactionRetry(() =>
         this.prisma.$transaction(async (tx) => {
-          // Account locks serialize sign-out/replacement; token locks serialize device handover.
-          // Keep advisory acquisition ordered; row-lock conflicts during handover are retried.
+          // Both account removal and registration acquire the same account lock.
+          // Device locking is needed only to keep weaker legacy imports from claiming it.
           await advisoryLock(tx, "push-token", tokenDigest, "joined");
           await advisoryLock(tx, "push-user", userId, "joined");
-          // Legacy files are weaker evidence than any existing database registration.
-          // Use the same locks as live registration so the check and insert are atomic.
-          if (
-            mode === "import" &&
-            (await tx.pushToken.findFirst({
-              where: { OR: [{ userId }, { tokenDigest }] },
-              select: { userId: true },
-            }))
-          )
-            return false;
-          // Lock the session against deletion until registration commits. A late registration
-          // after sign-out cannot publish a token, even when its request authenticated earlier.
+          if (mode === "import") {
+            const where = { OR: [{ userId }, { tokenDigest }] };
+            if (
+              (await tx.pushRegistration.findFirst({ where })) ||
+              (await tx.pushToken.findFirst({ where }))
+            )
+              return false;
+          }
+          // A late request authenticated before logout cannot recreate a registration.
           const sessions = await tx.$queryRaw<Array<{ id: string }>>`
           SELECT id FROM "session" WHERE id = ${sessionId} AND "userId" = ${userId}
           AND "expiresAt" > CURRENT_TIMESTAMP FOR UPDATE`;
@@ -272,17 +315,28 @@ export class PrismaPushTokenStore implements PushTokenStore {
           const data = {
             ciphertext: sealed.ciphertext,
             tokenDigest,
-            sessionId,
             presentation: presentation ?? null,
           };
-          if (mode === "import") await tx.pushToken.create({ data: { userId, ...data } });
-          else {
-            await tx.pushToken.deleteMany({ where: { tokenDigest, userId: { not: userId } } });
+          await tx.pushRegistration.upsert({
+            where: { userId_sessionId: { userId, sessionId } },
+            create: { userId, sessionId, ...data },
+            update: data,
+          });
+          // Keep single-account delivery working in old workers during the rolling upgrade.
+          // The old schema can project only one owner for a shared token; never evict it.
+          const legacyOwner = await tx.pushToken.findUnique({
+            where: { tokenDigest },
+            select: { userId: true },
+          });
+          if (!legacyOwner || legacyOwner.userId === userId) {
             await tx.pushToken.upsert({
               where: { userId },
-              create: { userId, ...data },
-              update: data,
+              create: { userId, sessionId, ...data },
+              update: { sessionId, ...data },
             });
+          } else {
+            // A rotated login must not fall back to a token it no longer registered.
+            await tx.pushToken.deleteMany({ where: { userId, sessionId } });
           }
           return true;
         }),
@@ -295,35 +349,44 @@ export class PrismaPushTokenStore implements PushTokenStore {
       withTransactionRetry(() =>
         this.prisma.$transaction(async (tx) => {
           await advisoryLock(tx, "push-user", userId, "joined");
-          await tx.pushToken.deleteMany({
-            where: { userId, ...(tokenDigest ? { tokenDigest } : {}) },
-          });
+          const where = { userId, ...(tokenDigest ? { tokenDigest } : {}) };
+          await tx.pushRegistration.deleteMany({ where });
+          await tx.pushToken.deleteMany({ where });
         }),
       ),
     );
   }
 
   async endSession(userId: string, sessionId: string, nextSessionId?: string): Promise<void> {
-    await runAsSystem("revoke or retarget a session's notification registration", () =>
+    await runAsSystem("revoke or retarget a login's notification devices", () =>
       withTransactionRetry(() =>
         this.prisma.$transaction(async (tx) => {
           await advisoryLock(tx, "push-user", userId, "joined");
           const where = { userId, sessionId };
-          // Password changes may retarget a live installation; sign-out revokes both transports.
-          if (!nextSessionId) await tx.callPushDevice.deleteMany({ where });
-          if (nextSessionId) {
-            const session = await tx.session.findFirst({
+          const next =
+            nextSessionId &&
+            (await tx.session.findFirst({
               where: { id: nextSessionId, userId, expiresAt: { gt: new Date() } },
               select: { id: true },
+            }));
+          if (next) {
+            const old = await tx.pushRegistration.findUnique({
+              where: { userId_sessionId: where },
             });
-            if (!session) {
-              await tx.callPushDevice.deleteMany({ where });
-              await tx.pushToken.deleteMany({ where });
-              return;
+            if (old) {
+              await tx.pushRegistration.upsert({
+                where: { userId_sessionId: { userId, sessionId: next.id } },
+                create: { ...old, sessionId: next.id },
+                update: {},
+              });
             }
-            await tx.callPushDevice.updateMany({ where, data: { sessionId: nextSessionId } });
-            await tx.pushToken.updateMany({ where, data: { sessionId: nextSessionId } });
-          } else await tx.pushToken.deleteMany({ where });
+            await tx.callPushDevice.updateMany({ where, data: { sessionId: next.id } });
+            await tx.pushToken.updateMany({ where, data: { sessionId: next.id } });
+          } else {
+            await tx.callPushDevice.deleteMany({ where });
+            await tx.pushToken.deleteMany({ where });
+          }
+          await tx.pushRegistration.deleteMany({ where });
         }),
       ),
     );

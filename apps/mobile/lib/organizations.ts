@@ -1,4 +1,5 @@
 import type { MenuAction } from "@expo/ui/community/menu";
+import { t } from "@lingui/core/macro";
 import type { OrganizationList } from "@rakazo/contracts";
 import { organizationLandingSpaceId, organizationOfSpace } from "@rakazo/core";
 import { useQuery } from "@tanstack/react-query";
@@ -10,7 +11,6 @@ import {
   rememberOrganizationSpace,
   selectSpace,
 } from "./api-server";
-import { t } from "./i18n";
 import { queryClient, removeSpaceQueries, rpcQuery } from "./query";
 
 export type Organization = OrganizationList["organizations"][number];
@@ -98,10 +98,17 @@ function returnHome(): void {
   router.replace("/");
 }
 
-async function enterSpace(spaceId: string, leaving: Organization | undefined): Promise<boolean> {
+async function enterSpace(
+  spaceId: string,
+  leaving: Organization | undefined,
+  stillCurrent: () => boolean = () => true,
+): Promise<boolean> {
+  if (!stillCurrent()) return false;
   const current = selectedSpaceId();
   if (leaving && current) await rememberOrganizationSpace(leaving.id, current);
+  if (!stillCurrent()) return false;
   if (!(await selectSpace(spaceId).catch(() => false))) return false;
+  if (!stillCurrent()) return false;
   if (leaving) removeSpaceQueries(leaving.spaceIds);
   void refreshOrganizations();
   noteOrganizationSwitch();
@@ -152,15 +159,21 @@ async function switchNow(
  * remembering where this one was left; the opened chat stays on top. A failed list read falls
  * back to the last one this session had, so the Space being left is still remembered.
  */
-export async function selectSpaceAcrossOrganizations(spaceId: string): Promise<boolean> {
+export async function selectSpaceAcrossOrganizations(
+  spaceId: string,
+  stillCurrent: () => boolean = () => true,
+): Promise<boolean> {
+  if (!stillCurrent()) return false;
   const query = organizationsQuery();
   const list =
     (await queryClient.fetchQuery({ ...query, retry: false }).catch(() => undefined)) ??
     queryClient.getQueryData(query.queryKey);
+  if (!stillCurrent()) return false;
   return afterPendingSwitch(async () => {
+    if (!stillCurrent()) return false;
     const leaving = organizationOfSpace(list?.organizations ?? [], selectedSpaceId());
     if (!leaving || leaving.spaceIds.includes(spaceId)) return selectSpace(spaceId);
-    return enterSpace(spaceId, leaving);
+    return enterSpace(spaceId, leaving, stillCurrent);
   });
 }
 
@@ -175,7 +188,7 @@ export async function leaveDeletedOrganization(
   const selected =
     (await selectSpace(activeSpaceId).catch(() => false)) ||
     (await adoptDeletedSpaceFallback(activeSpaceId));
-  if (!selected) throw new Error(t("Could not switch spaces"));
+  if (!selected) throw new Error(t`Could not switch spaces`);
   removeSpaceQueries(deleted.spaceIds);
   void refreshOrganizations();
   noteOrganizationSwitch();

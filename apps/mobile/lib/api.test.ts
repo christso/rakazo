@@ -1,6 +1,7 @@
 import { getArtifactById } from "./artifacts";
 
 vi.mock("./ai-consent", () => ({ promptAiConsent: vi.fn() }));
+vi.mock("react-native", () => ({ Platform: { OS: "ios" } }));
 
 import type { RpcInput } from "@rakazo/contracts";
 import { isServerUnreachable } from "@rakazo/core";
@@ -60,6 +61,33 @@ describe("mobile API requests", () => {
     const fetch = vi.fn();
     vi.stubGlobal("fetch", fetch);
     await expect(rpc("bots/list", {}, { requestContext: context })).rejects.toThrow();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("does not dispatch an old request after an account changes during credential lookup", async () => {
+    let release!: (token: string) => void;
+    let started!: () => void;
+    const lookupStarted = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const lookup = new Promise<string>((resolve) => {
+      release = resolve;
+    });
+    vi.mocked(SecureStore.getItemAsync).mockImplementation(async (key) => {
+      if (key === "rakazo.session_token") {
+        started();
+        return lookup;
+      }
+      return null;
+    });
+    const fetch = vi.fn(async () => jsonResponse({ json: [] }));
+    vi.stubGlobal("fetch", fetch);
+    const pending = rpc("bots/list", {});
+    const rejected = expect(pending).rejects.toThrow();
+    await lookupStarted;
+    await saveSessionToken("fake-replacement-session");
+    release("fake-previous-session");
+    await rejected;
     expect(fetch).not.toHaveBeenCalled();
   });
 
@@ -266,6 +294,16 @@ describe("mobile API requests", () => {
       }),
     );
     await expect(rpc("bots/get", { botId: "missing" })).rejects.toThrow("Bot does not exist");
+  });
+
+  it("asks to update a server from before vault import", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(null, { status: 404 })),
+    );
+    await expect(rpc("vault/import", { rows: [] } as never)).rejects.toThrow(
+      new Error("Update your server to import logins."),
+    );
   });
 
   it("shows the server's message instead of the procedure name", async () => {

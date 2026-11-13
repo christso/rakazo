@@ -1,3 +1,4 @@
+import { t } from "@lingui/core/macro";
 import type { RpcInput, RpcOutput, RpcPath, ThreadSnapshot } from "@rakazo/contracts";
 import { CLIENT_UPDATE_REQUIRED_STATUS, parseServerHeaders } from "@rakazo/contracts";
 import {
@@ -17,7 +18,6 @@ import * as SecureStore from "expo-secure-store";
 import { promptAiConsent } from "./ai-consent";
 import type { EndpointResult } from "./endpoint";
 import { defaultApiBase, normalizeApiBase } from "./endpoint";
-import { t } from "./i18n";
 import { identityLabels } from "./identity-display";
 import {
   newMobileAvatarSnapshotRequest,
@@ -25,7 +25,9 @@ import {
   syncMobileAvatarSession,
 } from "./logo-avatar-activity";
 import { reportMobileError } from "./monitoring";
+import { completeSessionRevocation } from "./pending-session-revocations";
 import { followSelectedSpace, selectedSpaceChanged } from "./referral";
+import { forgetSavedToken } from "./saved-accounts";
 import { fetchServer } from "./server-headers";
 import {
   clearSessionToken,
@@ -180,10 +182,10 @@ export async function captureApiRequestContext(
   const apiBase = currentApiBase();
   const headers = await authHeaders(spaceId);
   if (apiBase !== currentApiBase()) {
-    throw new Error(t("The server changed while starting the request"));
+    throw new Error(t`The server changed while starting the request`);
   }
   if (generation !== currentSessionGeneration())
-    throw new Error(t("Something went wrong. Try again."));
+    throw new Error(t`Something went wrong. Try again.`);
   return { apiBase, headers, sessionGeneration: generation };
 }
 /** Revoking other sessions also refuses this one until the replacement is saved. */
@@ -195,6 +197,7 @@ export async function fetchMobileJson<T>(
   input: Parameters<typeof fetch>[0],
   init: RequestInit,
   invalidJsonFallback?: T,
+  apiBase = currentApiBase(),
 ): Promise<{ response: Response; body: T; invalidJson?: boolean }> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(new Error("Request timed out")), RPC_TIMEOUT_MS);
@@ -203,10 +206,11 @@ export async function fetchMobileJson<T>(
       fetchServer(
         input,
         {
+          credentials: "omit",
           ...init,
           signal: controller.signal,
         },
-        currentApiBase(),
+        apiBase,
       ),
       controller.signal,
       "Request timed out",
@@ -515,6 +519,7 @@ export function deliverSignOutRecord(record: PendingSignOut, persisted = true): 
         : record;
       if (current && (await deliverPendingSignOut(current)) === "delivered") {
         await removePendingSignOut(current);
+        await completeSessionRevocation(current.apiBase, current.token).catch(() => undefined);
       }
     } catch {
       // Delivery problems never surface; the record waits for the next pass.
@@ -579,10 +584,14 @@ export function subscribeSessionRejected(listener: () => void): () => void {
     sessionRejectedListeners.delete(listener);
   };
 }
-async function rejectSession() {
+async function rejectSession(token: string) {
+  const apiBase = currentApiBase();
+  const generation = currentSessionGeneration();
   // The server ended the session; the user never asked to leave. Keep the unsent
   // queue, so the app can report those messages before a sign-in deletes them.
   await clearSessionToken({ keepUnsent: true });
+  await forgetSavedToken(apiBase, token).catch(() => undefined);
+  if (generation + 1 !== currentSessionGeneration() || apiBase !== currentApiBase()) return;
   for (const listener of sessionRejectedListeners) listener();
 }
 export type RpcOptions = {
@@ -658,15 +667,17 @@ async function request(
   const requestSpaceId = requestHeaders["x-rakazo-space-id"];
   try {
     if (
-      consentContext?.sessionGeneration !== undefined &&
-      consentContext.sessionGeneration !== currentSessionGeneration()
+      requestSessionGeneration !== currentSessionGeneration() ||
+      requestApiBase !== currentApiBase() ||
+      (consentContext?.sessionGeneration !== undefined &&
+        consentContext.sessionGeneration !== currentSessionGeneration())
     )
-      throw new Error(t("Something went wrong. Try again."));
+      throw new Error(t`Something went wrong. Try again.`);
     let res: Response;
     const correlation = clientCorrelationHeaders();
     try {
       res = await fetchServer(
-        `${consentContext?.apiBase ?? currentApiBase()}/rpc/${proc}`,
+        `${requestApiBase}/rpc/${proc}`,
         {
           method: "POST",
           headers: {
@@ -678,7 +689,7 @@ async function request(
           body: JSON.stringify({ json: body }),
           signal: controller.signal,
         },
-        consentContext?.apiBase ?? currentApiBase(),
+        requestApiBase,
       );
     } catch (error) {
       // The native fetch reports an aborted request with an implementation detail
@@ -695,7 +706,11 @@ async function request(
       noteServerReachable(!isUnreachableStatus(res.status));
     if (proc === "aiConsent/status" && res.status === 404) {
       cancelResponseBody(res);
-      throw new Error(t("Update your server to use AI data sharing in this mobile version."));
+      throw new Error(t`Update your server to use AI data sharing in this mobile version.`);
+    }
+    if (proc === "vault/import" && res.status === 404) {
+      cancelResponseBody(res);
+      throw new Error(t`Update your server to import logins.`);
     }
     const parsed: { json?: unknown } = await readBoundedJsonResponse<{ json?: unknown }>(
       res,
@@ -727,7 +742,7 @@ async function request(
         !passwordChangesInFlight &&
         requestSessionGeneration === currentSessionGeneration()
       ) {
-        await rejectSession();
+        await rejectSession(requestHeaders.authorization.replace(/^Bearer /, ""));
       }
       // After a delete where SecureStore could not clear the stale id, restart
       // reloads it and the first RPCs 401. Probe once without a Space header:

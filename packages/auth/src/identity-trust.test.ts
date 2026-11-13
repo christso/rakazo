@@ -2,6 +2,7 @@ import { createHash, createHmac, generateKeyPairSync, randomBytes, sign } from "
 import type { TransactionalEmail } from "@rakazo/adapter-kit";
 import type * as Db from "@rakazo/db";
 import { bootstrapUserSpace, recordSecurityEvent, SpaceDeletionInProgressError } from "@rakazo/db";
+import { parseSetCookieHeader } from "better-auth/cookies";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AuthEnv } from "./index.js";
 import { CLIENT_IP_HEADER, createAuth } from "./index.js";
@@ -54,7 +55,7 @@ function fixture({
   stalledDelivery?: boolean;
 } & Pick<
   AuthEnv,
-  "singleAccount" | "afterDeleteSession" | "afterReplaceSession" | "beforeDeleteUser"
+  "singleAccount" | "afterDeleteSession" | "afterReplaceSession" | "beforeDeleteUser" | "analytics"
 > = {}) {
   const data: Record<string, Record<string, unknown>[]> = {
     user: [],
@@ -275,6 +276,53 @@ function fixture({
 }
 
 beforeEach(() => vi.clearAllMocks());
+
+it("stores validated signup attribution once, hides it from auth responses, and captures it", async () => {
+  const analytics = { capture: vi.fn(), flush: vi.fn(async () => undefined) };
+  const f = fixture({ analytics });
+  const attribution = { surface: "web", utmSource: "community", utmCampaign: "launch" };
+  const response = await f.auth.handler(
+    new Request("http://auth.example.test/api/auth/sign-up/email", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        origin: "http://web.example.test",
+        cookie: `rakazo_signup_attribution=${encodeURIComponent(JSON.stringify(attribution))}`,
+        "x-rakazo-signup-surface": "android",
+      },
+      body: JSON.stringify({
+        email: "new@example.test",
+        password: "offline-password12",
+        name: "New User",
+      }),
+    }),
+  );
+  expect(response.status, await response.clone().text()).toBe(200);
+  expect(f.data.user![0]).toMatchObject({
+    signupSurface: "android",
+    signupUtmSource: "community",
+    signupUtmCampaign: "launch",
+  });
+  const body = await response.json();
+  expect(body).toHaveProperty("user.id");
+  expect(body).not.toHaveProperty("user.signupSurface");
+  expect(body).not.toHaveProperty("user.signupUtmSource");
+  expect(analytics.capture).toHaveBeenCalledWith(
+    expect.any(String),
+    {
+      name: "account_created",
+      ...attribution,
+      surface: "android",
+    },
+    { id: expect.any(String), at: expect.any(Date) },
+  );
+  await f.signin("new@example.test");
+  expect(f.data.user![0]).toMatchObject({
+    signupSurface: "android",
+    signupUtmSource: "community",
+    signupUtmCampaign: "launch",
+  });
+});
 
 describe("client address and security events", () => {
   const signInWith = (f: ReturnType<typeof fixture>, headers: Record<string, string>) =>
@@ -507,6 +555,38 @@ describe("identity trust through auth endpoints", () => {
     expect((await f.signin()).status).toBe(200);
   });
 
+  it.each(["live verification policy", "messaging identity"])(
+    "applies %s to saved browser accounts",
+    async (reason) => {
+      const f = fixture();
+      const { id, token } = await f.legacyAccount(
+        reason === "messaging identity" ? "msg-fixture@messaging.invalid" : "family@example.test",
+      );
+      const cookieName = (await f.auth.$context).authCookies.sessionToken.name;
+      const request = (path: string, body?: unknown) =>
+        f.auth.handler(
+          new Request(`http://auth.example.test/api/auth${path}`, {
+            method: body ? "POST" : "GET",
+            headers: {
+              origin: "http://web.example.test",
+              "content-type": "application/json",
+              cookie: `${cookieName}=${encodeURIComponent(token)}`,
+            },
+            body: body ? JSON.stringify(body) : undefined,
+          }),
+        );
+      if (reason === "live verification policy") {
+        expect(await (await request("/accounts/list")).json()).toEqual([
+          expect.objectContaining({ userId: id }),
+        ]);
+        f.policy.signupAllowlist = "@example.test";
+      }
+      expect(await f.sessionFor(token)).toBeNull();
+      expect(await (await request("/accounts/list")).json()).toEqual([]);
+      expect((await request("/accounts/select", { userId: id })).status).toBe(401);
+    },
+  );
+
   it("does not leak request-local verification settings when signup policy changes", async () => {
     const f = fixture({ delivery: false });
     expect(await (await f.signup()).json()).toMatchObject({ token: expect.any(String) });
@@ -545,6 +625,152 @@ describe("identity trust through auth endpoints", () => {
 });
 
 describe("session credentials", () => {
+  it("adopts an existing primary cookie and refuses a sixth distinct browser account", async () => {
+    const f = fixture({ delivery: false });
+    const primary = await f.signup("family@example.test");
+    const first = (await primary.json()) as { user: { id: string } };
+    const cookies = new Map<string, string>();
+    for (const [name, value] of parseSetCookieHeader(primary.headers.get("set-cookie") ?? "")) {
+      if (!name.includes("_multi-")) cookies.set(name, value.value);
+    }
+    const request = async (path: string, body?: unknown) => {
+      const response = await f.auth.handler(
+        new Request(`http://auth.example.test/api/auth${path}`, {
+          method: body ? "POST" : "GET",
+          headers: {
+            origin: "http://web.example.test",
+            "content-type": "application/json",
+            cookie: [...cookies].map(([k, v]) => `${k}=${v}`).join("; "),
+          },
+          body: body ? JSON.stringify(body) : undefined,
+        }),
+      );
+      for (const [name, value] of parseSetCookieHeader(response.headers.get("set-cookie") ?? "")) {
+        if (value["max-age"] === 0) cookies.delete(name);
+        else cookies.set(name, value.value);
+      }
+      return response;
+    };
+    for (let index = 1; index < 5; index++) {
+      const signup = await request("/sign-up/email", {
+        email: `fixture-${index}@example.test`,
+        password: "offline-password12",
+        name: "Fixture",
+      });
+      expect(signup.status, await signup.clone().text()).toBe(200);
+    }
+    const list = (await (await request("/accounts/list")).json()) as Array<{ userId: string }>;
+    expect(list).toHaveLength(5);
+    expect(list.some((account) => account.userId === first.user.id)).toBe(true);
+    const refused = await request("/sign-up/email", {
+      email: "sixth@example.test",
+      password: "offline-password12",
+      name: "Fixture",
+    });
+    expect(refused.status, await refused.clone().text()).toBe(403);
+    expect(await refused.json()).toMatchObject({ code: "SAVED_ACCOUNT_LIMIT" });
+    const again = await request("/sign-in/email", {
+      email: "family@example.test",
+      password: "offline-password12",
+    });
+    expect(again.status, await again.clone().text()).toBe(200);
+    expect(await (await request("/accounts/list")).json()).toHaveLength(5);
+  });
+
+  it("keeps cookie-proven accounts signed in and selects/removes them without exposing tokens", async () => {
+    const f = fixture({ delivery: false });
+    const cookies = new Map<string, string>();
+    const request = async (path: string, body?: unknown, origin = "http://web.example.test") => {
+      const response = await f.auth.handler(
+        new Request(`http://auth.example.test/api/auth${path}`, {
+          method: body ? "POST" : "GET",
+          headers: {
+            origin,
+            "content-type": "application/json",
+            cookie: [...cookies].map(([k, v]) => `${k}=${v}`).join("; "),
+          },
+          body: body ? JSON.stringify(body) : undefined,
+        }),
+      );
+      for (const [key, value] of parseSetCookieHeader(response.headers.get("set-cookie") ?? "")) {
+        if (value["max-age"] === 0) cookies.delete(key);
+        else cookies.set(key, value.value);
+      }
+      return response;
+    };
+    const signup = (email: string) =>
+      request("/sign-up/email", { email, password: "offline-password12", name: "Fixture" });
+    const first = (await (await signup("family@example.test")).json()) as {
+      user: { id: string };
+      token: string;
+    };
+    const second = (await (await signup("work@example.test")).json()) as {
+      user: { id: string };
+      token: string;
+    };
+    const listed = await request("/accounts/list");
+    expect(listed.status).toBe(200);
+    const text = await listed.text();
+    expect(JSON.parse(text)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ userId: first.user.id, email: "family@example.test" }),
+        expect.objectContaining({ userId: second.user.id, email: "work@example.test" }),
+      ]),
+    );
+    for (const token of [first.token, second.token]) {
+      expect(text).not.toContain(token.split(".")[0]);
+    }
+    const selected = await request("/accounts/select", { userId: first.user.id });
+    expect(selected.status, await selected.clone().text()).toBe(200);
+    expect(await selected.json()).toEqual({ userId: first.user.id });
+    expect(
+      ((await (await request("/get-session")).json()) as { user: { id: string } }).user.id,
+    ).toBe(first.user.id);
+    expect((await request("/accounts/select", { userId: "foreign-user" })).status).toBe(401);
+    expect(
+      (await request("/accounts/select", { userId: second.user.id }, "https://evil.example.test"))
+        .status,
+    ).toBe(403);
+    const removed = await request("/accounts/remove", { userId: first.user.id });
+    expect(removed.status, await removed.clone().text()).toBe(200);
+    expect(await (await request("/accounts/list")).json()).toEqual([
+      expect.objectContaining({ userId: second.user.id }),
+    ]);
+    expect(f.data.session!.some((row) => row.userId === first.user.id)).toBe(false);
+    expect(f.data.session!.some((row) => row.userId === second.user.id)).toBe(true);
+    expect(vi.mocked(recordSecurityEvent)).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "auth.sign_out", userId: first.user.id }),
+    );
+    expect((await request("/sign-out", {})).status).toBe(200);
+    expect(await (await request("/accounts/list")).json()).toEqual([]);
+    expect(f.data.session).toEqual([]);
+  });
+
+  it("does not select expired or revoked saved account cookies", async () => {
+    const f = fixture({ delivery: false });
+    const created = await f.signup("family@example.test");
+    const body = (await created.json()) as { user: { id: string } };
+    const cookie = [...parseSetCookieHeader(created.headers.get("set-cookie") ?? "")]
+      .map(([k, v]) => `${k}=${v.value}`)
+      .join("; ");
+    const request = () =>
+      f.auth.handler(
+        new Request("http://auth.example.test/api/auth/accounts/select", {
+          method: "POST",
+          headers: {
+            origin: "http://web.example.test",
+            "content-type": "application/json",
+            cookie,
+          },
+          body: JSON.stringify({ userId: body.user.id }),
+        }),
+      );
+    for (const session of f.data.session!) session.expiresAt = new Date(0);
+    expect((await request()).status).toBe(401);
+    f.data.session!.splice(0);
+    expect((await request()).status).toBe(401);
+  });
+
   it("lists and reads sessions without handing out their tokens", async () => {
     const f = fixture({ delivery: false });
     await f.signup();

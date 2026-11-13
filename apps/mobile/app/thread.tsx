@@ -1,13 +1,20 @@
+import { t } from "@lingui/core/macro";
+import { useLingui } from "@lingui/react/macro";
 import { isRetryableError } from "@rakazo/core";
 import { useIsFocused, useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useState, useSyncExternalStore } from "react";
-import { ActivityIndicator, Alert, Pressable, Text, View } from "react-native";
+import { ActivityIndicator, Alert, StyleSheet, Text, View } from "react-native";
+import { NativeActionButton } from "../components/native-action-button";
 import { Thread } from "../components/thread/thread-screen";
 import { currentApiBase, selectedSpaceId } from "../lib/api";
-import { t, useI18n } from "../lib/i18n";
+import { mobileTokens } from "../lib/appearance";
+import { normalizeApiBase } from "../lib/endpoint";
+
 import { integrationsCacheScope } from "../lib/integrations-cache";
-import { useMobileTokens } from "../lib/native";
+import { useMobileTokens, useThemedStyles } from "../lib/native";
 import {
+  notificationOpenTarget,
+  notificationTargetLink,
   threadRouteSpaceOnFocus,
   threadSpaceRequest,
   threadSpaceSwitchResult,
@@ -50,7 +57,7 @@ export default function ThreadRoute() {
             });
         })
         .catch((error) => {
-          if (!cancelled && !notified) Alert.alert(t("Could not continue"), errorText(error));
+          if (!cancelled && !notified) Alert.alert(t`Could not continue`, errorText(error));
           notified = true;
           if (!cancelled && isRetryableError(error)) timer = setTimeout(verify, 5_000);
         });
@@ -61,10 +68,24 @@ export default function ThreadRoute() {
     };
   }, [generation, ready]);
   const tokens = useMobileTokens();
-  const { t } = useI18n();
+  const styles = useThemedStyles(createStyles);
+  const { t } = useLingui();
   const router = useRouter();
   const focused = useIsFocused();
-  const { spaceId } = useLocalSearchParams<{ spaceId?: string | string[] }>();
+  const params = useLocalSearchParams<{
+    spaceId?: string | string[];
+    userId?: string | string[];
+    apiBase?: string | string[];
+  }>();
+  const { spaceId, userId, apiBase } = params;
+  const requestedServer = typeof apiBase === "string" ? normalizeApiBase(apiBase) : null;
+  const wrongServer =
+    apiBase !== undefined && (!requestedServer?.ok || requestedServer.url !== currentApiBase());
+  const currentOwner = owner?.generation === generation && generation === ready ? owner : null;
+  const wrongAccount =
+    wrongServer ||
+    (userId !== undefined &&
+      (typeof userId !== "string" || (currentOwner !== null && currentOwner.userId !== userId)));
   const [activeSpaceId, setActiveSpaceId] = useState<string | null>(() => selectedSpaceId());
   const [switchFailed, setSwitchFailed] = useState(false);
   const [appliedFocus, setAppliedFocus] = useState(focused);
@@ -83,7 +104,7 @@ export default function ThreadRoute() {
   const request = threadSpaceRequest(spaceId, focusSync.activeSpaceId);
 
   useEffect(() => {
-    if (!focused) return;
+    if (!focused || wrongAccount || !currentOwner) return;
     const next = threadSpaceRequest(spaceId, activeSpaceId);
     if (next.action === "show") {
       setSwitchFailed(false);
@@ -96,8 +117,14 @@ export default function ThreadRoute() {
     let cancelled = false;
     setSwitchFailed(false);
     const requestedSpaceId = next.spaceId;
-    void selectSpaceAcrossOrganizations(requestedSpaceId).then((switched) => {
-      if (cancelled) return;
+    const requestGeneration = currentOwner.generation;
+    const requestServer = currentApiBase();
+    const stillCurrent = () =>
+      !cancelled &&
+      requestGeneration === currentSessionGeneration() &&
+      requestServer === currentApiBase();
+    void selectSpaceAcrossOrganizations(requestedSpaceId, stillCurrent).then((switched) => {
+      if (!stillCurrent()) return;
       // selectSpace commits the id before it resolves; a failed write rolls it back.
       if (threadSpaceSwitchResult(requestedSpaceId, switched, selectedSpaceId()) === "ready") {
         setActiveSpaceId(requestedSpaceId);
@@ -108,38 +135,66 @@ export default function ThreadRoute() {
     return () => {
       cancelled = true;
     };
-  }, [activeSpaceId, focused, spaceId]);
+  }, [activeSpaceId, focused, spaceId, wrongAccount, currentOwner]);
 
+  if (wrongAccount)
+    return (
+      <View style={styles.screen}>
+        <Text style={styles.feedbackMessage}>{t`Sign in to open this notification`}</Text>
+        <NativeActionButton
+          label={t`Sign in`}
+          onPress={() => {
+            const route = notificationOpenTarget(params);
+            router.replace(
+              route
+                ? {
+                    pathname: "/notification-open",
+                    params: { target: notificationTargetLink(route) },
+                  }
+                : "/",
+            );
+          }}
+        />
+      </View>
+    );
+  if (!currentOwner)
+    return <ActivityIndicator accessibilityLabel={t`Loading…`} color={tokens.foreground} />;
   if (request.action === "show" && !focusSync.switchFailed)
     return (
-      <>
-        {owner?.generation !== generation ? <ActivityIndicator color={tokens.foreground} /> : null}
-        <View style={{ flex: 1, display: owner?.generation === generation ? "flex" : "none" }}>
-          {owner ? <Thread key={owner.key} sessionEpoch={ready} userId={owner.userId} /> : null}
-        </View>
-      </>
+      <View style={styles.thread}>
+        <Thread key={currentOwner.key} sessionEpoch={ready} userId={currentOwner.userId} />
+      </View>
     );
   return (
-    <View
-      style={{
-        flex: 1,
-        alignItems: "center",
-        justifyContent: "center",
-        backgroundColor: tokens.background,
-      }}
-    >
+    <View style={styles.screen}>
       {request.action === "switch" && !focusSync.switchFailed ? (
         <ActivityIndicator color={tokens.foreground} />
       ) : (
-        <View style={{ alignItems: "center", gap: 12 }}>
-          <Text style={{ color: tokens.foreground, fontSize: 16 }}>
-            {t("Could not switch spaces")}
-          </Text>
-          <Pressable accessibilityRole="button" onPress={() => router.replace("/")}>
-            <Text style={{ color: tokens.foreground, fontSize: 16 }}>{t("Return to inbox")}</Text>
-          </Pressable>
+        <View style={styles.feedback}>
+          <Text style={styles.feedbackMessage}>{t`Could not switch spaces`}</Text>
+          <NativeActionButton
+            label={t`Return to inbox`}
+            prominence="secondary"
+            onPress={() => router.replace("/")}
+          />
         </View>
       )}
     </View>
   );
+}
+
+function createStyles() {
+  const tokens = mobileTokens();
+  return StyleSheet.create({
+    screen: {
+      flex: 1,
+      alignItems: "center",
+      justifyContent: "center",
+      backgroundColor: tokens.background,
+      gap: 12,
+    },
+    thread: { flex: 1 },
+    feedback: { alignItems: "center", gap: 12 },
+    feedbackMessage: { color: tokens.foreground, fontSize: 16 },
+  });
 }

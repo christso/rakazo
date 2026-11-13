@@ -10,7 +10,9 @@ const state = vi.hoisted(() => ({
   selected: "space-1" as string | null,
   selectSpace: vi.fn(),
   replace: vi.fn(),
-  params: {} as { spaceId?: string },
+  verifyOwner: vi.fn(),
+  generation: 1,
+  params: {} as { botId?: string; spaceId?: string; userId?: string },
 }));
 
 const { element } = vi.hoisted(() => ({
@@ -28,9 +30,13 @@ vi.mock("expo-router", () => ({
 vi.mock("react-native", () => ({
   ActivityIndicator: () => createElement("progress"),
   Alert: { alert: vi.fn() },
-  Pressable: element("button"),
+  StyleSheet: { create: (styles: unknown) => styles },
   Text: element("span"),
   View: element("div"),
+}));
+vi.mock("../components/native-action-button", () => ({
+  NativeActionButton: ({ label, onPress }: { label: string; onPress: () => void }) =>
+    createElement("button", { type: "button", onClick: onPress }, label),
 }));
 vi.mock("../components/thread/thread-screen", () => ({
   Thread: ({ userId }: { userId: string }) => createElement("main", null, `thread:${userId}`),
@@ -43,20 +49,17 @@ vi.mock("./api", () => ({
   selectedSpaceId: () => state.selected,
 }));
 vi.mock("./organizations", () => ({ selectSpaceAcrossOrganizations: state.selectSpace }));
-vi.mock("./i18n", () => {
-  const t = (text: string) => text;
-  return { t, useI18n: () => ({ t }) };
-});
 vi.mock("./integrations-cache", () => ({ integrationsCacheScope: () => null }));
-vi.mock("./native", () => ({ useMobileTokens: () => ({}) }));
+vi.mock("./appearance", () => ({ mobileTokens: () => ({}) }));
+vi.mock("./native", () => ({
+  useMobileTokens: () => ({}),
+  useThemedStyles: (create: () => unknown) => create(),
+}));
 vi.mock("./session", () => ({
-  currentReadySessionGeneration: () => 1,
-  currentSessionGeneration: () => 1,
+  currentReadySessionGeneration: () => state.generation,
+  currentSessionGeneration: () => state.generation,
   subscribeSessionGeneration: () => () => undefined,
-  loadVerifiedIntegrationsScope: async () => ({
-    apiBase: "https://app.example.test",
-    userId: "user-1",
-  }),
+  loadVerifiedIntegrationsScope: state.verifyOwner,
 }));
 vi.mock("./user-error", () => ({ errorText: () => "error" }));
 
@@ -69,6 +72,11 @@ beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   state.selected = "space-1";
   state.params = {};
+  state.generation = 1;
+  state.verifyOwner.mockReset().mockResolvedValue({
+    apiBase: "https://app.example.test",
+    userId: "user-1",
+  });
   state.selectSpace.mockReset();
   state.replace.mockReset();
   container = document.createElement("div");
@@ -89,7 +97,7 @@ it("switches to the requested space before showing the thread", async () => {
     return true;
   });
   await render();
-  expect(state.selectSpace).toHaveBeenCalledWith("space-2");
+  expect(state.selected).toBe("space-2");
   expect(container.textContent).toBe("thread:user-1");
 });
 
@@ -108,4 +116,61 @@ it("shows the thread without switching when no space is requested", async () => 
   await render();
   expect(state.selectSpace).not.toHaveBeenCalled();
   expect(container.textContent).toBe("thread:user-1");
+});
+
+it("never mounts a thread when its notification belongs to another account", async () => {
+  state.params = { botId: "bot-1", userId: "other-user", spaceId: "other-space" };
+  await render();
+  expect(container.textContent).toContain("Sign in to open this notification");
+  expect(container.textContent).not.toContain("thread:");
+  expect(state.selectSpace).not.toHaveBeenCalled();
+  act(() => container.querySelector("button")?.click());
+  expect(state.replace).toHaveBeenCalledWith({
+    pathname: "/notification-open",
+    params: { target: "rakazo://thread?botId=bot-1&userId=other-user&spaceId=other-space" },
+  });
+});
+
+it("waits for notification ownership before switching spaces or showing recovery", async () => {
+  state.params = { userId: "user-1", spaceId: "space-2" };
+  let verify!: (value: { apiBase: string; userId: string }) => void;
+  state.verifyOwner.mockReturnValue(
+    new Promise((resolve) => {
+      verify = resolve;
+    }),
+  );
+  state.selectSpace.mockImplementation(async (spaceId: string) => {
+    state.selected = spaceId;
+    return true;
+  });
+  await render();
+  expect(container.querySelector("progress")).not.toBeNull();
+  expect(container.textContent).not.toContain("Sign in");
+  expect(container.textContent).not.toContain("thread:");
+  expect(state.selectSpace).not.toHaveBeenCalled();
+  await act(async () => verify({ apiBase: "https://app.example.test", userId: "user-1" }));
+  expect(container.textContent).toBe("thread:user-1");
+  expect(state.selected).toBe("space-2");
+});
+
+it("does not use the previous session's owner while a new session is being verified", async () => {
+  await render();
+  expect(container.textContent).toBe("thread:user-1");
+  state.generation++;
+  state.params = { userId: "user-2", spaceId: "space-2" };
+  let verify!: (value: { apiBase: string; userId: string }) => void;
+  state.verifyOwner.mockReturnValue(
+    new Promise((resolve) => {
+      verify = resolve;
+    }),
+  );
+  await render();
+  expect(container.querySelector("progress")).not.toBeNull();
+  expect(container.textContent).not.toContain("Sign in");
+  expect(container.textContent).not.toContain("thread:");
+  expect(state.selectSpace).not.toHaveBeenCalled();
+  await act(async () => verify({ apiBase: "https://app.example.test", userId: "other-user" }));
+  expect(container.textContent).toContain("Sign in to open this notification");
+  expect(container.textContent).not.toContain("thread:");
+  expect(state.selectSpace).not.toHaveBeenCalled();
 });

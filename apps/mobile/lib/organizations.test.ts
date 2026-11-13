@@ -1,6 +1,6 @@
 import type { OrganizationList } from "@rakazo/contracts";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { adoptDeletedSpaceFallback } from "./api-server";
+import { adoptDeletedSpaceFallback, rememberOrganizationSpace } from "./api-server";
 import type { Organization } from "./organizations";
 import {
   activeOrganization,
@@ -39,7 +39,6 @@ vi.mock("./api", () => ({
   selectedSpaceId: () => state.selected,
 }));
 vi.mock("./session", () => ({ currentSessionGeneration: () => 1 }));
-vi.mock("./i18n", () => ({ t: (text: string) => text }));
 
 const work: Organization = {
   id: "org-work",
@@ -161,6 +160,50 @@ describe("switchOrganization", () => {
 
 describe("selectSpaceAcrossOrganizations", () => {
   const list: OrganizationList = { activeOrganizationId: work.id, organizations: [work, home] };
+
+  it.each([false, true])(
+    "keeps a newer account selection after an old read settles (%s)",
+    async (rejectRead) => {
+      let resolveRead!: (value: OrganizationList) => void;
+      let reject!: (error: Error) => void;
+      state.rpc.mockReturnValue(
+        new Promise<OrganizationList>((resolve, rejectPromise) => {
+          resolveRead = resolve;
+          reject = rejectPromise;
+        }),
+      );
+      let current = true;
+      const pending = selectSpaceAcrossOrganizations("space-b2", () => current);
+      await vi.waitFor(() => expect(state.rpc).toHaveBeenCalled());
+      current = false;
+      state.selected = "new-account-space";
+      if (rejectRead) reject(new Error("Cancelled old account read"));
+      else resolveRead(list);
+      await expect(pending).resolves.toBe(false);
+      expect(state.selected).toBe("new-account-space");
+      expect(state.selectSpace).not.toHaveBeenCalled();
+    },
+  );
+
+  it("keeps a newer notification selection while remembering the old Space", async () => {
+    state.rpc.mockResolvedValue(list);
+    let remembered!: () => void;
+    vi.mocked(rememberOrganizationSpace).mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          remembered = resolve;
+        }),
+    );
+    let current = true;
+    const pending = selectSpaceAcrossOrganizations("space-b2", () => current);
+    await vi.waitFor(() => expect(remembered).toBeDefined());
+    current = false;
+    state.selected = "new-notification-space";
+    remembered();
+    await expect(pending).resolves.toBe(false);
+    expect(state.selected).toBe("new-notification-space");
+    expect(state.selectSpace).not.toHaveBeenCalled();
+  });
 
   it("switches organizations for a Space in another one", async () => {
     state.rpc.mockResolvedValue(list);

@@ -2,6 +2,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { native } = vi.hoisted(() => ({
   native: {
+    setAccount: undefined as undefined | ((userId: string, label: string) => Promise<void>),
+    getSettings: vi.fn(async () => ({
+      liveConnection: false,
+      messages: true,
+      scheduledTasks: true,
+      needsAttention: true,
+    })),
+    setSettings: vi.fn(async (..._args: unknown[]) => undefined),
     setOpenThread: vi.fn(async (): Promise<void> => undefined),
     resume: vi.fn(async (): Promise<void> => undefined),
     resumeAfterMute: vi.fn(async (): Promise<void> => undefined),
@@ -13,23 +21,53 @@ vi.mock("expo-modules-core", () => ({ requireNativeModule: () => native }));
 vi.mock("expo-notifications", () => ({
   setNotificationHandler: vi.fn(),
   dismissAllNotificationsAsync: vi.fn(),
+  getPresentedNotificationsAsync: vi.fn(async () => []),
+  getPermissionsAsync: vi.fn(async () => ({ granted: true })),
+  requestPermissionsAsync: vi.fn(async () => ({ granted: true })),
 }));
 vi.mock("react-native", () => ({ Platform: { OS: "android" } }));
+vi.mock("./session", () => ({ loadSessionToken: async () => "" }));
 vi.mock("./i18n", () => ({ getActiveUiLocale: () => "de", t: (text: string) => text }));
 const store = vi.hoisted(() => new Map<string, string>());
 vi.mock("expo-secure-store", () => ({
-  getItemAsync: async (key: string) => store.get(key) ?? null,
+  getItemAsync: vi.fn(async (key: string) => store.get(key) ?? null),
   setItemAsync: async (key: string, value: string) => void store.set(key, value),
   deleteItemAsync: async (key: string) => void store.delete(key),
 }));
 
 import * as Notifications from "expo-notifications";
+import * as SecureStore from "expo-secure-store";
 import {
   afterChatNotifyChange,
+  DEFAULT_LIVE_NOTIFICATION_SETTINGS,
   resumeLiveNotifications,
+  setLiveNotificationSettings,
   stopLiveNotifications,
 } from "./live-notifications";
+import { loadSavedAccounts, rememberSavedAccount } from "./saved-accounts";
 import { saveServerHeaders } from "./server-headers";
+
+beforeEach(() => {
+  store.clear();
+  native.setAccount = undefined;
+  native.stop.mockClear();
+  native.setSettings.mockClear();
+  native.resume.mockClear();
+  native.resumeAfterMute.mockClear();
+  native.getSettings.mockReset().mockResolvedValue({
+    liveConnection: false,
+    messages: true,
+    scheduledTasks: true,
+    needsAttention: true,
+  });
+});
+
+const endpoint = "https://app.example.test";
+const account = (userId: string) => ({
+  userId,
+  token: `${userId}-token`,
+  email: `${userId}@example.test`,
+});
 
 describe("Android live notification resume", () => {
   beforeEach(() => {
@@ -121,6 +159,169 @@ describe("Android live notification resume", () => {
     } finally {
       native.resumeAfterMute = resumeAfterMute;
     }
+  });
+});
+
+describe("Android account ownership", () => {
+  beforeEach(() => {
+    native.setAccount = vi.fn(async () => undefined);
+  });
+
+  it("labels the poller's alerts with the account only when several are saved", async () => {
+    await rememberSavedAccount(endpoint, account("family"));
+    await resumeLiveNotifications(endpoint, "family-token", "space-1");
+    expect(native.setAccount).toHaveBeenLastCalledWith("family", "");
+    expect(native.resume).toHaveBeenCalledWith(endpoint, "family-token", "space-1", "de", "");
+
+    await rememberSavedAccount(endpoint, account("work"));
+    await resumeLiveNotifications(endpoint, "family-token", "space-1");
+    expect(native.setAccount).toHaveBeenLastCalledWith("family", "family@example.test");
+  });
+
+  it("restores each account's own preferences in a shared Space", async () => {
+    const family = { ...DEFAULT_LIVE_NOTIFICATION_SETTINGS, liveConnection: true, messages: false };
+    await rememberSavedAccount(endpoint, account("family"));
+    await rememberSavedAccount(endpoint, {
+      ...account("work"),
+      notifications: DEFAULT_LIVE_NOTIFICATION_SETTINGS,
+    });
+    await setLiveNotificationSettings(family, endpoint, "family-token", "shared-space");
+    expect((await loadSavedAccounts(endpoint))[0]?.notifications).toEqual(family);
+
+    await resumeLiveNotifications(endpoint, "work-token", "shared-space");
+    expect(native.setAccount).toHaveBeenLastCalledWith("work", "work@example.test");
+    expect(native.setSettings).toHaveBeenLastCalledWith(
+      DEFAULT_LIVE_NOTIFICATION_SETTINGS,
+      endpoint,
+      "work-token",
+      "shared-space",
+      "de",
+      "",
+    );
+    await resumeLiveNotifications(endpoint, "family-token", "shared-space");
+    expect(native.setSettings).toHaveBeenLastCalledWith(
+      family,
+      endpoint,
+      "family-token",
+      "shared-space",
+      "de",
+      "",
+    );
+    expect(native.resume).not.toHaveBeenCalled();
+  });
+
+  it("restores account settings before forwarding a mute restart without stopping pending work", async () => {
+    const settings = { ...DEFAULT_LIVE_NOTIFICATION_SETTINGS, liveConnection: true };
+    await rememberSavedAccount(endpoint, { ...account("family"), notifications: settings });
+    await afterChatNotifyChange(endpoint, "family-token", "space-1", {
+      botId: "bot-1",
+      notify: false,
+    });
+    expect(native.setAccount).toHaveBeenCalledWith("family", "");
+    expect(native.setSettings).toHaveBeenCalledExactlyOnceWith(
+      settings,
+      endpoint,
+      "family-token",
+      "space-1",
+      "de",
+      "",
+    );
+    expect(native.resumeAfterMute).toHaveBeenCalledExactlyOnceWith(
+      endpoint,
+      "family-token",
+      "space-1",
+      "de",
+      "",
+      "bot-1",
+    );
+    expect(native.setSettings.mock.invocationCallOrder[0]).toBeLessThan(
+      native.resumeAfterMute.mock.invocationCallOrder[0] as number,
+    );
+    expect(native.stop).not.toHaveBeenCalled();
+    expect(native.resume).not.toHaveBeenCalled();
+  });
+
+  it("keeps account preferences on builds without the mute restart method", async () => {
+    const settings = { ...DEFAULT_LIVE_NOTIFICATION_SETTINGS, liveConnection: true };
+    await rememberSavedAccount(endpoint, { ...account("family"), notifications: settings });
+    const resumeAfterMute = native.resumeAfterMute;
+    Reflect.deleteProperty(native, "resumeAfterMute");
+    try {
+      await afterChatNotifyChange(endpoint, "family-token", "space-1", {
+        botId: "bot-1",
+        notify: false,
+      });
+      expect(native.setSettings).toHaveBeenCalledWith(
+        settings,
+        endpoint,
+        "family-token",
+        "space-1",
+        "de",
+        "",
+      );
+      expect(native.resume).not.toHaveBeenCalled();
+      expect(native.stop).not.toHaveBeenCalled();
+    } finally {
+      native.resumeAfterMute = resumeAfterMute;
+    }
+  });
+
+  it("does not forward a mute restart for an unrecognized bearer", async () => {
+    await rememberSavedAccount(endpoint, account("family"));
+    await afterChatNotifyChange(endpoint, "unknown-token", "space-1", {
+      botId: "bot-1",
+      notify: false,
+    });
+    expect(native.stop).toHaveBeenCalledWith(false);
+    expect(native.resumeAfterMute).not.toHaveBeenCalled();
+    expect(native.setSettings).not.toHaveBeenCalled();
+  });
+
+  it("keeps a legacy login polling before its account is saved", async () => {
+    await resumeLiveNotifications(endpoint, "family-token", "space-1");
+    expect(native.setAccount).toHaveBeenCalledWith("", "");
+    expect(native.resume).toHaveBeenCalled();
+  });
+
+  it("pauses for a bearer that is not one of the saved accounts", async () => {
+    await rememberSavedAccount(endpoint, account("family"));
+    await resumeLiveNotifications(endpoint, "unknown-token", "space-1");
+    expect(native.stop).toHaveBeenCalledWith(false);
+    expect(native.setAccount).not.toHaveBeenCalled();
+    expect(native.resume).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])(
+    "pauses when account ownership cannot be read (new native: %s)",
+    async (modern) => {
+      if (!modern) native.setAccount = undefined;
+      vi.mocked(SecureStore.getItemAsync).mockRejectedValueOnce(new Error("locked"));
+      await resumeLiveNotifications(endpoint, "work-token", "space-1");
+      expect(native.stop).toHaveBeenCalledWith(false);
+      expect(native.resume).not.toHaveBeenCalled();
+      expect(native.setSettings).not.toHaveBeenCalled();
+    },
+  );
+
+  it("keeps an older binary working with one saved account and pauses it with several", async () => {
+    native.setAccount = undefined;
+    await rememberSavedAccount(endpoint, account("family"));
+    await resumeLiveNotifications(endpoint, "family-token", "space-1");
+    expect(native.resume).toHaveBeenCalledWith(endpoint, "family-token", "space-1", "de", "");
+    native.resume.mockClear();
+    await rememberSavedAccount(endpoint, account("work"));
+    await resumeLiveNotifications(endpoint, "family-token", "space-1");
+    expect(native.stop).toHaveBeenCalledWith(false);
+    expect(native.resume).not.toHaveBeenCalled();
+  });
+
+  it("keeps other logins' alerts when an older binary signs one out", async () => {
+    native.setAccount = undefined;
+    await stopLiveNotifications(true);
+    expect(native.stop).toHaveBeenLastCalledWith(true);
+    await rememberSavedAccount(endpoint, account("work"));
+    await stopLiveNotifications(true);
+    expect(native.stop).toHaveBeenLastCalledWith(false);
   });
 });
 

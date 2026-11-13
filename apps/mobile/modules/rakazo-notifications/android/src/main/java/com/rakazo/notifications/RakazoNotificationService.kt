@@ -31,6 +31,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import org.json.JSONArray
 import org.json.JSONException
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
@@ -54,7 +55,7 @@ class RakazoNotificationService : Service() {
   private val knownCompleted = mutableSetOf<String>()
   private val completions = PollCompletions(knownCompleted)
   private val alertedAttention = mutableSetOf<String>()
-  private var historySpaceId: String? = null
+  private var historyScope: String? = null
   private val tokenCache = PollTokenCache()
   private val historyWrites = PollHistoryWrites()
 
@@ -62,9 +63,14 @@ class RakazoNotificationService : Service() {
     super.onCreate()
     manager = getSystemService(NotificationManager::class.java)
     val state = getSharedPreferences(STATE_PREFERENCES, MODE_PRIVATE)
-    if (!state.getBoolean(THREAD_NOTIFICATION_IDS, false)) {
-      manager.cancelAll()
-      state.edit().putBoolean(THREAD_NOTIFICATION_IDS, true).apply()
+    if (!state.getBoolean(ACCOUNT_NOTIFICATION_IDS, false)) {
+      // Older native builds keyed thread alerts without server/account ownership.
+      manager.activeNotifications.filter {
+        it.tag == null && it.id != LIVE_NOTIFICATION_ID &&
+          it.notification.extras.containsKey("rakazo.threadId") &&
+          it.notification.extras.getString("rakazo.userId").isNullOrBlank()
+      }.forEach { manager.cancel(it.tag, it.id) }
+      state.edit().putBoolean(ACCOUNT_NOTIFICATION_IDS, true).apply()
     }
     createRakazoChannels(this)
   }
@@ -77,9 +83,13 @@ class RakazoNotificationService : Service() {
       intent?.getStringExtra(EXTRA_MUTED_BOT_ID)?.let { botId ->
         // Only a seeded poll can hold pending replies, and a discard always changes the
         // seen set, so the mute persists here instead of waiting for the next poll.
-        completions.muteBot(botId) {
-          val stored = getSharedPreferences(STATE_PREFERENCES, MODE_PRIVATE).getString(SEEN_RUNS_SPACE_ID, null)
-          if (ownsStoredHistory(stored, historySpaceId)) persistCompleted(seeded = true)
+        val storage = NotificationStorage(this)
+        val stored = getSharedPreferences(STATE_PREFERENCES, MODE_PRIVATE).getString(SEEN_RUNS_SPACE_ID, null)
+        if (
+          ownsStoredHistory(stored, historyScope) &&
+          historyScope == notificationScope(storage.endpoint, storage.userId, storage.spaceId)
+        ) {
+          completions.muteBot(botId) { persistCompleted(seeded = true) }
         }
       }
       sessionGeneration.incrementAndGet().also {
@@ -169,7 +179,11 @@ class RakazoNotificationService : Service() {
           if (!runIfCurrent(generation) {
               completions.complete(run, alreadyPosted = {
                 manager.activeNotifications.any {
-                  it.notification.extras.getString(EXTRA_RUN_ID) == run.runId
+                  val extras = it.notification.extras
+                  extras.getString(EXTRA_RUN_ID) == run.runId &&
+                    extras.getString("rakazo.userId") == storage.userId &&
+                    extras.getString("rakazo.apiBase") == storage.endpoint &&
+                    extras.getString("rakazo.spaceId") == run.spaceId
                 }
               }) {
                 if (reply != null) {
@@ -247,33 +261,41 @@ class RakazoNotificationService : Service() {
       if (generation != sessionGeneration.get()) return null
       completions.useSession(endpoint, spaceId, token, sessionEpoch)
       val state = getSharedPreferences(STATE_PREFERENCES, MODE_PRIVATE)
-      if (historySpaceId != spaceId) {
+      val storage = NotificationStorage(this)
+      val scope = notificationScope(endpoint, storage.userId, spaceId)
+      if (historyScope != scope) {
         knownCompleted.clear()
         alertedAttention.clear()
         historyWrites.reset()
-        if (state.getString(SEEN_RUNS_SPACE_ID, null) == spaceId) {
+        if (state.getString(SEEN_RUNS_SPACE_ID, null) == scope) {
           knownCompleted += state.getStringSet(SEEN_RUNS, emptySet()).orEmpty()
         } else {
           state.edit()
-            .putString(SEEN_RUNS_SPACE_ID, spaceId)
+            .putString(SEEN_RUNS_SPACE_ID, scope)
             .remove(SEEN_RUNS)
             .putBoolean(SEEN_RUNS_SEEDED, false)
             .apply()
         }
-        historySpaceId = spaceId
+        historyScope = scope
       }
       state.getBoolean(SEEN_RUNS_SEEDED, false)
     }
+
+  private fun notificationScope(endpoint: String, userId: String, spaceId: String): String =
+    JSONArray().put(endpoint).put(userId).put(spaceId).toString()
 
   private fun post(run: RunRecord, copy: NotificationCopy) {
     if (!run.notificationsEnabled || isOpenThread(run)) return
     val notification = builder(copy.channel)
       .setSmallIcon(R.drawable.ic_rakazo_notification)
       .setContentTitle(copy.title)
+      .setSubText(accountLabel())
       .setContentText(copy.body)
       .setStyle(Notification.BigTextStyle().bigText(copy.body))
       .setContentIntent(openApp(run))
       .addExtras(Bundle().apply {
+        putString("rakazo.userId", NotificationStorage(this@RakazoNotificationService).userId)
+        putString("rakazo.apiBase", NotificationStorage(this@RakazoNotificationService).endpoint)
         if (run.status == "completed") putString(EXTRA_RUN_ID, run.runId)
         putString("rakazo.spaceId", run.spaceId)
         putString("rakazo.botId", run.botId)
@@ -282,7 +304,7 @@ class RakazoNotificationService : Service() {
       .setAutoCancel(true)
       .setCategory(Notification.CATEGORY_MESSAGE)
       .build()
-    manager.notify(run.threadId.hashCode(), notification)
+    manager.notify(accountNotificationId(run.threadId), notification)
   }
 
   private fun showLive(active: List<RunRecord>, avatarStyle: String, context: Context) {
@@ -300,6 +322,7 @@ class RakazoNotificationService : Service() {
         liveStatusIcon(primary, avatarStyle),
       )
       .setContentTitle(title)
+      .setSubText(accountLabel())
       .setContentText(body)
       .setStyle(Notification.BigTextStyle().bigText(body))
       .setContentIntent(openApp(primary))
@@ -371,16 +394,22 @@ class RakazoNotificationService : Service() {
       }
       Intent(
         Intent.ACTION_VIEW,
-        Uri.parse(destination),
+        Uri.parse(destination + "&userId=" + Uri.encode(NotificationStorage(this).userId) + "&apiBase=" + Uri.encode(NotificationStorage(this).endpoint)),
       ).setPackage(packageName)
     }.apply { flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP }
     return PendingIntent.getActivity(
       this,
-      run?.threadId?.hashCode() ?: 0,
+      run?.threadId?.let(::accountNotificationId) ?: 0,
       intent,
       PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
     )
   }
+
+  private fun accountNotificationId(threadId: String): Int =
+    "${NotificationStorage(this).endpoint}:${NotificationStorage(this).userId}:$threadId".hashCode()
+
+  /** Set only while several logins share this device. */
+  private fun accountLabel(): String? = NotificationStorage(this).accountLabel.ifBlank { null }
 
   private fun stop() {
     stopForeground(STOP_FOREGROUND_REMOVE)
@@ -403,6 +432,7 @@ class RakazoNotificationService : Service() {
     private const val SEEN_RUNS = "seen_runs"
     private const val SEEN_RUNS_SEEDED = "seen_runs_seeded"
     private const val SEEN_RUNS_SPACE_ID = "seen_runs_space_id"
+    private const val ACCOUNT_NOTIFICATION_IDS = "account_notification_ids"
     internal const val EXTRA_RUN_ID = "rakazo.runId"
     private const val THREAD_NOTIFICATION_IDS = "thread_notification_ids"
     private val sessionLock = Any()
@@ -421,7 +451,10 @@ class RakazoNotificationService : Service() {
     }
 
     fun stop(context: Context) {
-      context.stopService(Intent(context, RakazoNotificationService::class.java))
+      synchronized(sessionLock) {
+        sessionGeneration.incrementAndGet()
+        context.stopService(Intent(context, RakazoNotificationService::class.java))
+      }
     }
 
     fun isOpenThread(botId: String, threadId: String): Boolean = synchronized(sessionLock) {
@@ -434,9 +467,9 @@ class RakazoNotificationService : Service() {
         openThreadId = threadId
       }
       if (threadId != null) {
-        val manager = context.getSystemService(NotificationManager::class.java)
-        manager.cancel(threadId.hashCode())
-        manager.cancel(SenderPush.notificationId(threadId))
+        context.getSystemService(NotificationManager::class.java).cancel("${NotificationStorage(context).endpoint}:${NotificationStorage(context).userId}:$threadId".hashCode())
+        val storage = NotificationStorage(context)
+        context.getSystemService(NotificationManager::class.java).cancel(SenderPush.notificationId(storage.endpoint, storage.userId, threadId))
       }
       start(context, resetToken = false, action = ACTION_THREAD_CHANGED)
     }
@@ -449,7 +482,14 @@ class RakazoNotificationService : Service() {
         openThreadId = null
         stop(context)
         context.getSharedPreferences(STATE_PREFERENCES, MODE_PRIVATE).edit().clear().apply()
-        context.getSystemService(NotificationManager::class.java).cancelAll()
+        val manager = context.getSystemService(NotificationManager::class.java)
+        val storage = NotificationStorage(context)
+        manager.activeNotifications.filter {
+          it.id == LIVE_NOTIFICATION_ID || (
+            it.notification.extras.getString("rakazo.userId") == storage.userId &&
+              it.notification.extras.getString("rakazo.apiBase") == storage.endpoint
+            )
+        }.forEach { manager.cancel(it.tag, it.id) }
       }
     }
   }
@@ -731,6 +771,10 @@ private fun takeFencedCode(
 
 /** Matching `>` for a tag at `<`, ignoring `>` inside quoted attributes. Mirrors htmlTagClose. */
 private fun htmlTagClose(text: String, open: Int): Int {
+  if (text.startsWith("<!--", open)) {
+    val close = text.indexOf("-->", open + 4)
+    return if (close == -1) text.length - 1 else close + 2
+  }
   var quote: Char? = null
   var gtInOpenQuote = -1
   for (i in open + 1 until text.length) {

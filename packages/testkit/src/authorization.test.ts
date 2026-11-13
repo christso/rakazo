@@ -294,6 +294,7 @@ describeWithDatabase("API authorization and resource isolation", () => {
       ["bots/archive", { botId: "missing-bot" }],
       ["bots/restore", { botId: "missing-bot" }],
       ["bots/remove", { botId: "missing-bot" }],
+      ["bots/removePreview", { botId: "missing-bot" }],
       ["bots/importCreate"],
       ["bots/importSetupState"],
       ["bots/templates"],
@@ -302,6 +303,7 @@ describeWithDatabase("API authorization and resource isolation", () => {
       ["bots/restoreInstructions"],
       ["bots/setComputer"],
       ["bots/rotateWebhookSecret"],
+      ["bots/revealWebhookSecret", { botId: "missing-bot" }],
       ["bots/emailAddress", { botId: "missing-bot" }],
       ["bots/emailAddresses"],
       ["bots/claimEmailAddress", { botId: "missing-bot", name: "intruder" }],
@@ -343,6 +345,7 @@ describeWithDatabase("API authorization and resource isolation", () => {
       ],
       ["threads/markRead", { botId: "missing-bot" }],
       ["threads/markUnread", { botId: "missing-bot" }],
+      ["threads/snooze", { botId: "missing-bot", until: null }],
       ["threads/head"],
       ["threads/react"],
       ["threads/endCall"],
@@ -358,6 +361,7 @@ describeWithDatabase("API authorization and resource isolation", () => {
       ["computer/files", { botId: "missing-bot", path: "/" }],
       ["computer/readFile", { botId: "missing-bot", path: "MEMORY.md" }],
       ["computer/screenUrl", { botId: "missing-bot" }],
+      ["computer/preview", { botId: "missing-bot" }],
       ["computer/heartbeat", { botId: "missing-bot" }],
       ["computer/recover"],
       ["computer/reset"],
@@ -448,6 +452,7 @@ describeWithDatabase("API authorization and resource isolation", () => {
       ["pages/remove"],
       ["usage/list"],
       ["usage/summary"],
+      ["usage/limits"],
       ["export/bot", { botId: "missing-bot" }],
       ["export/accountToken"],
       ["notifications/subscribe"],
@@ -463,6 +468,8 @@ describeWithDatabase("API authorization and resource isolation", () => {
       ],
       ["notifications/registerPush", { token: "ExponentPushToken[not-real]" }],
       ["notifications/unregisterPush"],
+      ["notifications/followWorkActivity", { token: "ab".repeat(32) }],
+      ["notifications/registerWorkActivityStarts", { token: "ab".repeat(32) }],
       ["search/query", { q: "anything" }],
       ["voice/catalog"],
       ["voice/status"],
@@ -571,6 +578,8 @@ describeWithDatabase("API authorization and resource isolation", () => {
       ["vault/list"],
       ["vault/put"],
       ["vault/reveal"],
+      ["vault/activity"],
+      ["vault/import"],
       ["vault/remove"],
       ["botSecrets/list"],
       ["botSecrets/put"],
@@ -717,6 +726,7 @@ describeWithDatabase("API authorization and resource isolation", () => {
       ],
       ["threads/markRead", { botId: ownerBot.id }],
       ["threads/markUnread", { botId: ownerBot.id }],
+      ["threads/snooze", { botId: ownerBot.id, until: null }],
       ["computer/status", { botId: ownerBot.id }],
       ["computer/boot", { botId: ownerBot.id }],
       ["computer/stop", { botId: ownerBot.id }],
@@ -726,6 +736,7 @@ describeWithDatabase("API authorization and resource isolation", () => {
       ["computer/files", { botId: ownerBot.id, path: "/" }],
       ["computer/readFile", { botId: ownerBot.id, path: "PRIVATE.md" }],
       ["computer/screenUrl", { botId: ownerBot.id }],
+      ["computer/preview", { botId: ownerBot.id }],
       ["computer/heartbeat", { botId: ownerBot.id }],
       ["routines/list", { botId: ownerBot.id }],
       ["routines/create", routineInput(ownerBot.id)],
@@ -768,6 +779,7 @@ describeWithDatabase("API authorization and resource isolation", () => {
       ["threads/followUp", { groupId: ownerGroup.id, text: "intruder follow-up" }],
       ["threads/markRead", { groupId: ownerGroup.id }],
       ["threads/markUnread", { groupId: ownerGroup.id }],
+      ["threads/snooze", { groupId: ownerGroup.id, until: null }],
     ];
     await Promise.all(
       groupCalls.map(([procedure, input]) => expectDenied(app, intruder, procedure, input)),
@@ -870,6 +882,7 @@ describeWithDatabase("API authorization and resource isolation", () => {
     ).toMatchObject({ content: "owner-only-memory" });
 
     // Destructive bot removal is checked last so an authorization regression is unmistakable.
+    await expectDenied(app, intruder, "bots/removePreview", { botId: ownerBot.id });
     await expectDenied(app, intruder, "bots/remove", {
       botId: ownerBot.id,
       deleteMemories: true,
@@ -879,7 +892,7 @@ describeWithDatabase("API authorization and resource isolation", () => {
     ).not.toBeNull();
   });
 
-  it("hands a device's push token to the account that registers it last", async () => {
+  it("keeps a device registered for every signed-in account and unregisters only the caller", async () => {
     const first = await signup(app, `push-first-${stamp}@rakazo.test`, "Push First");
     const second = await signup(app, `push-second-${stamp}@rakazo.test`, "Push Second");
     const firstUser = (await rpc<Actor>(app, first, "me")).userId;
@@ -894,7 +907,10 @@ describeWithDatabase("API authorization and resource isolation", () => {
 
     await rpc(app, second, "notifications/registerPush", { token: device });
     await expect(loadPushToken(secondUser)).resolves.toBe(device);
-    await expect(loadPushToken(firstUser)).resolves.toBeUndefined();
+    await expect(loadPushToken(firstUser)).resolves.toBe(device);
+    await rpc(app, second, "notifications/unregisterPush");
+    await expect(loadPushToken(secondUser)).resolves.toBeUndefined();
+    await expect(loadPushToken(firstUser)).resolves.toBe(device);
     const multiline = await raw(app, first, "notifications/registerPush", {
       token: `${device}\nsession`,
     });
@@ -985,7 +1001,12 @@ describeWithDatabase("API authorization and resource isolation", () => {
   it("uses the bearer session over another account's session cookie", async () => {
     const a = await phoneSession(app, `phone-cookie-a-${stamp}@rakazo.test`);
     const b = await phoneSession(app, `phone-cookie-b-${stamp}@rakazo.test`);
-    const both = { ...b.headers, cookie: a.cookie, "content-type": "application/json" };
+    const both = {
+      ...b.headers,
+      cookie: a.cookie,
+      "x-rakazo-user-id": b.userId,
+      "content-type": "application/json",
+    };
     const me = () =>
       app.request("/rpc/me", { method: "POST", headers: both, body: JSON.stringify({ json: {} }) });
 
@@ -1002,6 +1023,47 @@ describeWithDatabase("API authorization and resource isolation", () => {
     expect((await me()).status).toBe(401);
     expect(await a.me()).toBe(200);
   });
+
+  it("ends already-open thread and board streams after their browser session signs out", async () => {
+    const cookie = await signup(app, `stream-revocation-${stamp}@example.test`, "Stream Owner");
+    const { userId } = await rpc<Actor>(app, cookie, "me");
+    const bot = await rpc<{ id: string }>(app, cookie, "bots/create", botInput("Stream Bot"));
+    const controller = new AbortController();
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const streams = await Promise.all(
+        [
+          ["threads/subscribe", { botId: bot.id, cursor: -1 }],
+          ["boards/subscribe", {}],
+        ].map(([procedure, input]) =>
+          app.request(`/rpc/${procedure}`, {
+            method: "POST",
+            headers: {
+              cookie,
+              origin: "http://127.0.0.1:5173",
+              "content-type": "application/json",
+              "x-rakazo-user-id": userId,
+            },
+            body: JSON.stringify({ json: input }),
+            signal: controller.signal,
+          }),
+        ),
+      );
+      expect(streams.map((stream) => stream.status)).toEqual([200, 200]);
+      const closed = Promise.all(streams.map((stream) => stream.text()));
+      await authPost(app, cookie, "/sign-out");
+      const frames = await Promise.race([
+        closed,
+        new Promise<never>((_resolve, reject) => {
+          timeout = setTimeout(() => reject(new Error("Signed-out streams stayed open")), 25_000);
+        }),
+      ]);
+      for (const frame of frames) expect(frame).toContain('"code":"UNAUTHORIZED"');
+    } finally {
+      clearTimeout(timeout);
+      controller.abort();
+    }
+  }, 40_000);
 
   it("accepts only signed bearer tokens, and every sign-in hands one out", async () => {
     const email = `phone-signed-${stamp}@rakazo.test`;

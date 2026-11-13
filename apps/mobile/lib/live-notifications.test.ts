@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+const secureStorage = vi.hoisted(() => new Map<string, string>());
+const session = vi.hoisted(() => ({ token: "" }));
 vi.mock("expo-modules-core", () => ({ requireNativeModule: vi.fn() }));
 vi.mock("expo-notifications", () => ({
   setNotificationHandler: vi.fn(),
@@ -8,7 +10,16 @@ vi.mock("expo-notifications", () => ({
   dismissAllNotificationsAsync: vi.fn(async () => undefined),
 }));
 vi.mock("react-native", () => ({ Platform: { OS: "ios" } }));
-vi.mock("expo-secure-store", () => ({}));
+vi.mock("expo-secure-store", () => ({
+  deleteItemAsync: vi.fn(async (key: string) => {
+    secureStorage.delete(key);
+  }),
+  getItemAsync: vi.fn(async (key: string) => secureStorage.get(key) ?? null),
+  setItemAsync: vi.fn(async (key: string, value: string) => {
+    secureStorage.set(key, value);
+  }),
+}));
+vi.mock("./session", () => ({ loadSessionToken: async () => session.token }));
 
 import * as Notifications from "expo-notifications";
 import {
@@ -19,8 +30,24 @@ import {
   setOpenNotificationThread,
   stopLiveNotifications,
 } from "./live-notifications";
+import { rememberSavedAccount, rememberServerOrigin } from "./saved-accounts";
 
-beforeEach(() => vi.clearAllMocks());
+const apiBase = "https://app.example.test";
+beforeEach(() => {
+  vi.clearAllMocks();
+  secureStorage.clear();
+  session.token = "";
+});
+
+async function signInAs(active: string, ...others: string[]) {
+  for (const userId of [active, ...others])
+    await rememberSavedAccount(apiBase, {
+      userId,
+      token: `${userId}-token`,
+      email: `${userId}@example.test`,
+    });
+  session.token = `${active}-token`;
+}
 
 // The handler is installed once per module; keep it across cleared mocks.
 let foreground: Parameters<typeof Notifications.setNotificationHandler>[0] | undefined;
@@ -151,11 +178,102 @@ describe("after a chat's notifications change", () => {
 });
 
 describe("when the session ends", () => {
-  it("clears the previous account's delivered notifications", async () => {
+  it("clears every delivered notification once no login remains", async () => {
+    vi.mocked(Notifications.getPresentedNotificationsAsync).mockResolvedValue([
+      { request: { identifier: "family", content: { data: { userId: "family" } } } },
+      { request: { identifier: "legacy", content: { data: {} } } },
+    ] as never);
     await stopLiveNotifications();
-    expect(Notifications.dismissAllNotificationsAsync).not.toHaveBeenCalled();
+    expect(Notifications.dismissNotificationAsync).not.toHaveBeenCalled();
 
     await stopLiveNotifications(true);
-    expect(Notifications.dismissAllNotificationsAsync).toHaveBeenCalledOnce();
+    expect(vi.mocked(Notifications.dismissNotificationAsync).mock.calls).toEqual([
+      ["family"],
+      ["legacy"],
+    ]);
+  });
+
+  it("keeps the delivered notifications of logins still on this device", async () => {
+    await signInAs("work");
+    vi.mocked(Notifications.getPresentedNotificationsAsync).mockResolvedValue([
+      { request: { identifier: "family", content: { data: { userId: "family" } } } },
+      { request: { identifier: "work", content: { data: { "rakazo.userId": "work" } } } },
+      { request: { identifier: "legacy", content: { data: {} } } },
+    ] as never);
+    await stopLiveNotifications(true);
+    expect(vi.mocked(Notifications.dismissNotificationAsync).mock.calls).toEqual([["family"]]);
+  });
+});
+
+describe("with several logins", () => {
+  it("alerts for another login's work, even for the open thread's ID", async () => {
+    await signInAs("family", "work");
+    await setOpenNotificationThread({ botId: "bot-1", threadId: "thread-1" });
+    await expect(
+      foregroundHandler()?.handleNotification({
+        request: {
+          content: { data: { userId: "work", kind: "completion", threadId: "thread-1" } },
+        },
+      } as never),
+    ).resolves.toMatchObject({ shouldShowBanner: true });
+    await expect(
+      foregroundHandler()?.handleNotification({
+        request: {
+          content: {
+            data: { userId: "family", apiBase, kind: "completion", threadId: "thread-1" },
+          },
+        },
+      } as never),
+    ).resolves.toMatchObject({ shouldShowBanner: false });
+  });
+
+  it("alerts for an untagged delivery whose login is ambiguous", async () => {
+    await signInAs("family", "work");
+    await setOpenNotificationThread({ threadId: "thread-1" });
+    await expect(
+      foregroundHandler()?.handleNotification({
+        request: { content: { data: { kind: "completion", threadId: "thread-1" } } },
+      } as never),
+    ).resolves.toMatchObject({ shouldShowBanner: true, shouldShowList: true });
+  });
+
+  it("recognizes the server by the same names a notification tap accepts", async () => {
+    await signInAs("family", "work");
+    await rememberServerOrigin(apiBase, "https://web.example.test");
+    await setOpenNotificationThread({ threadId: "thread-1" });
+    for (const name of [`${apiBase}/`, "https://web.example.test"])
+      await expect(
+        foregroundHandler()?.handleNotification({
+          request: {
+            content: {
+              data: { userId: "family", apiBase: name, kind: "completion", threadId: "thread-1" },
+            },
+          },
+        } as never),
+      ).resolves.toMatchObject({ shouldShowBanner: false });
+    await expect(
+      foregroundHandler()?.handleNotification({
+        request: {
+          content: {
+            data: {
+              userId: "family",
+              apiBase: "https://other.example.test",
+              kind: "completion",
+              threadId: "thread-1",
+            },
+          },
+        },
+      } as never),
+    ).resolves.toMatchObject({ shouldShowBanner: true });
+  });
+
+  it("dismisses a read thread's notifications only for the active login", async () => {
+    await signInAs("family", "work");
+    vi.mocked(Notifications.getPresentedNotificationsAsync).mockResolvedValueOnce([
+      { request: { identifier: "family", content: { data: { userId: "family", threadId: "t" } } } },
+      { request: { identifier: "work", content: { data: { userId: "work", threadId: "t" } } } },
+    ] as never);
+    await dismissThreadNotifications({ threadId: "t" });
+    expect(vi.mocked(Notifications.dismissNotificationAsync).mock.calls).toEqual([["family"]]);
   });
 });

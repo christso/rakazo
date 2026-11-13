@@ -4,7 +4,11 @@ export * from "./agent-environment.js";
 export * from "./agent-import-settings.js";
 export * from "./ai-consent.js";
 export type { ApnsVoipConfig } from "./apns-voip.js";
-export { apnsVoipConfig, createApnsVoipProvider } from "./apns-voip-config.js";
+export {
+  apnsVoipConfig,
+  createApnsActivityProvider,
+  createApnsVoipProvider,
+} from "./apns-voip-config.js";
 export * from "./artifact-store-factory.js";
 export * from "./artifacts.js";
 export * from "./audit-forwarding.js";
@@ -21,15 +25,26 @@ export {
   forgetBotSecret,
   getBotSecretMetadata,
   isSecretAlreadySaved,
+  LOGIN_ALREADY_SAVED,
+  LOGIN_CODE_REPEAT_WINDOW_MS,
+  LOGIN_CODE_TRIES,
+  LOGIN_CODES_USED_UP,
   listBotSecretMetadata,
+  listBotSecrets,
   listVaultItems,
+  loginCodeClaim,
   newVaultItemName,
   normalizeSecretDestination,
   pageUrlOrigin,
   relabelVaultItem,
+  resolveLoginFill,
   revealBotSecret,
+  SAVED_LOGIN_UNREADABLE,
   SPACE_VAULT_NOT_IN_USE,
   storeBotSecret,
+  UNKNOWN_BOTS,
+  UNSUPPORTED_ACCESS,
+  VAULT_CHANGED,
 } from "./bot-secrets.js";
 export * from "./browser-emulator.js";
 export * from "./browser-provider-factory.js";
@@ -66,6 +81,7 @@ export * from "./computer-workspace.js";
 export * from "./configured-sandbox.js";
 export * from "./connector-catalog.js";
 export * from "./connector-registry.js";
+export { purgeClearedConversationMemory } from "./conversation-memory-cleanup.js";
 export * from "./createos-sandbox.js";
 export * from "./current-time.js";
 export * from "./cursor-cloud-agent.js";
@@ -80,6 +96,7 @@ export * from "./email-emulator.js";
 export * from "./email-provider.js";
 export * from "./executor.js";
 export * from "./expo-push.js";
+export * from "./expo-push-factory.js";
 export * from "./fake-browser.js";
 export * from "./fake-sandbox.js";
 export * from "./fake-web.js";
@@ -89,11 +106,14 @@ export * from "./fleet-tools.js";
 export * from "./github-webhook-emulator.js";
 export * from "./graphql-connectors.js";
 export * from "./group-handoff.js";
+export { HindsightMemoryProvider } from "./hindsight-memory-provider.js";
 export * from "./home.js";
 export * from "./home-object-store.js";
 export { HonchoMemoryProvider } from "./honcho-memory-provider.js";
 export * from "./host-aware-sandbox.js";
+export * from "./host-computer-device.js";
 export * from "./http-decisions.js";
+export * from "./inbound-delivery.js";
 export * from "./inbound-email.js";
 export * from "./incus-sandbox.js";
 export * from "./infisical-secret-store.js";
@@ -146,6 +166,7 @@ export * from "./openai-voice.js";
 export * from "./openrouter-usage.js";
 export * from "./page-browser-session.js";
 export * from "./page-share-secrets.js";
+export * from "./paid-services-factory.js";
 export * from "./parallel-web.js";
 export * from "./payment-wallet-factory.js";
 export * from "./payment-wallets.js";
@@ -163,6 +184,7 @@ export { serializeToolResult } from "./pi-runtime-tools.js";
 export * from "./pi-session.js";
 export { shutdownPiTelemetry } from "./pi-telemetry.js";
 export * from "./pipedream-connector.js";
+export * from "./plan-limits.js";
 export * from "./plugin-connectors.js";
 export * from "./plugin-marketplace.js";
 export * from "./product-analytics.js";
@@ -176,7 +198,12 @@ export * from "./remote-mcp.js";
 export * from "./resend-email.js";
 export { finishRoutineHandover } from "./routine-handover.js";
 export * from "./routine-watch.js";
-export { notifyMemberMessage } from "./run-notifications.js";
+export {
+  completionNotificationBody,
+  completionNotificationPreview,
+  notifyMemberMessage,
+  runEventNotifies,
+} from "./run-notifications.js";
 export * from "./run-runtime.js";
 export * from "./run-secret.js";
 export * from "./run-wakeup.js";
@@ -203,8 +230,11 @@ export * from "./storage-migration.js";
 export * from "./strategic-initiative.js";
 export * from "./stripe-billing.js";
 export { SupermemoryMemoryProvider } from "./supermemory-memory-provider.js";
+export { T3CodeConnections } from "./t3code-connections.js";
 export * from "./task-catalog.js";
 export * from "./teaching-session.js";
+export * from "./team-chat.js";
+export * from "./team-chat-judge.js";
 export * from "./team-chat-messaging.js";
 export * from "./third-party-connector-emulator.js";
 export * from "./ticket-changes.js";
@@ -213,10 +243,21 @@ export { dispatcherFetch } from "./undici-fetch.js";
 export * from "./user-device-emulator.js";
 export * from "./user-device-gateway.js";
 export * from "./user-device-protocol.js";
+export { listVaultItemUses } from "./vault-activity.js";
+export {
+  migrateVaultValues,
+  openSealedVaultValue,
+  rotateVaultKeys,
+  vaultItemsNotUnderKeys,
+  vaultItemsUnderOlderKeys,
+} from "./vault-values.js";
 export * from "./voice-factory.js";
+export * from "./voice-model-connection.js";
 export * from "./wakeup.js";
 export * from "./web-limits.js";
 export * from "./web-provider-factory.js";
 export * from "./web-ssrf.js";
 export * from "./web-tools.js";
+export * from "./work-activity.js";
 export * from "./wrapped-env.js";
+export * from "./xai-voice.js";

@@ -7,7 +7,6 @@ import { unsentSendsRestored } from "./unsent-sends";
 vi.mock("react-native", () => ({ Alert: { alert: vi.fn() } }));
 vi.mock("./thread-feedback", () => ({ hasUnsentSends: vi.fn() }));
 vi.mock("./unsent-sends", () => ({ unsentSendsRestored: vi.fn() }));
-vi.mock("./i18n", () => ({ t: (text: string) => text }));
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -53,6 +52,7 @@ it("asks when the persisted queue could not be restored", async () => {
 it.each([
   ["sign-out", "Signing out deletes unsent messages.", "Sign out anyway"] as const,
   ["server-switch", "Switching servers deletes unsent messages.", "Switch anyway"] as const,
+  ["account-switch", "Switching accounts deletes unsent messages.", "Switch anyway"] as const,
 ])(
   "asks before %s clears the queue and follows the chosen button",
   async (kind, message, confirm) => {

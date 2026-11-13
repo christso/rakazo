@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import type {
   AdapterContext,
@@ -12,7 +12,8 @@ import { getLogger } from "@rakazo/logging";
 import type { IncomingCallPush, VoipPushProvider } from "./apns-voip.js";
 import { combineSignals } from "./connector-safety.js";
 import { credentialDigest } from "./credential-digest.js";
-import type { PushRecord, PushTokenStore } from "./push-token-store.js";
+import type { PushTokenStore } from "./push-token-store.js";
+import { PushSessionEndedError } from "./push-token-store.js";
 import { readBodyCapped, withAbort } from "./web-ssrf.js";
 
 const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
@@ -22,6 +23,8 @@ const EXPO_PUSH_TIMEOUT_MS = 15_000;
 const EXPO_PUSH_RETRY_DELAYS_MS = [1_000, 2_000];
 /** Expo suggests reading receipts 15 minutes after a send and clears them after a day. */
 const EXPO_RECEIPT_DELAY_MS = 15 * 60_000;
+/** APNs or FCM turned down one device, or it got too many pushes; the deployment is fine. */
+const EXPECTED_RECEIPT_ERRORS = new Set(["ProviderError", "MessageRateExceeded"]);
 /** Keeps a push well inside Expo's 4096-byte payload limit. */
 const MAX_PUSH_TITLE_CHARS = 100;
 const MAX_PUSH_BODY_CHARS = 180;
@@ -33,21 +36,44 @@ const RESPONSE_TOO_LARGE = "Expo push response is too large.";
 /** Data a notification tap uses to open the bot or group thread in its space.
  * `deliveryId` distinguishes this send from another push for the same thread:
  * the Expo request identifier stays the thread id. */
-export function expoPushData(message: NotificationMessage, spaceId: string, deliveryId: string) {
+export function expoPushData(
+  message: NotificationMessage,
+  spaceId: string,
+  deliveryId: string,
+  largeAvatar = false,
+  userId?: string,
+  apiBase?: string,
+) {
+  const sender = message.sender
+    ? {
+        botId: message.sender.botId,
+        name: message.sender.name,
+        avatar: largeAvatar
+          ? (message.sender.avatarLarge ?? message.sender.avatar)
+          : message.sender.avatar,
+      }
+    : undefined;
   return {
     kind: message.kind,
-    ...(message.sender ? { sender: message.sender } : {}),
+    ...(sender ? { sender } : {}),
     botId: message.botId,
     threadId: message.threadId,
     ...(message.runId ? { runId: message.runId } : {}),
     deliveryId,
+    ...(userId ? { userId } : {}),
+    ...(apiBase ? { apiBase } : {}),
     ...(spaceId ? { spaceId } : {}),
     ...(message.groupId ? { groupId: message.groupId } : {}),
   };
 }
 
 /** Android devices with native call support render data-only pushes themselves. */
-function incomingCallPayload(token: string, call: IncomingCallPush, dataOnly = false) {
+function incomingCallPayload(
+  token: string,
+  call: IncomingCallPush,
+  owner: { userId: string; apiBase?: string },
+  dataOnly = false,
+) {
   const expiration = Math.floor(Date.parse(call.expiresAt) / 1000);
   const botName = call.botName.slice(0, MAX_PUSH_TITLE_CHARS);
   return {
@@ -61,6 +87,8 @@ function incomingCallPayload(token: string, call: IncomingCallPush, dataOnly = f
       botId: call.botId,
       botName,
       expiresAt: call.expiresAt,
+      userId: owner.userId,
+      ...(owner.apiBase ? { apiBase: owner.apiBase } : {}),
     },
     ...(dataOnly
       ? {}
@@ -160,6 +188,11 @@ export type ExpoPushOptions = {
   /** Sent as a bearer token when the Expo project enforces enhanced push security. */
   accessToken?: string;
   retryDelaysMs?: readonly number[];
+  accountLabel?: (userId: string) => Promise<string>;
+  /** Unread chats and live logins across every account registered on the device. */
+  deviceForToken?: (token: string) => Promise<{ badge: number; accounts: number }>;
+  /** Canonical public server origin; prevents opening an old server's push on another server. */
+  apiBase?: string;
 };
 
 export class ExpoPushProvider implements NotificationProvider {
@@ -171,7 +204,7 @@ export class ExpoPushProvider implements NotificationProvider {
 
   constructor(
     private readonly tokens: PushTokenStore,
-    options: ExpoPushOptions = {},
+    private readonly options: ExpoPushOptions = {},
   ) {
     this.voip = options.voip;
     this.sessionExpiresAt = options.sessionExpiresAt;
@@ -190,7 +223,7 @@ export class ExpoPushProvider implements NotificationProvider {
   }
 
   async hasPushRecipient(userId: string): Promise<boolean> {
-    return Boolean(await this.deliverableToken(userId));
+    return (await this.deliverableTokens(userId)).length > 0;
   }
 
   async send(message: NotificationMessage, context: AdapterContext): Promise<void> {
@@ -199,6 +232,7 @@ export class ExpoPushProvider implements NotificationProvider {
 
   async incomingCall(userId: string, call: IncomingCallPush): Promise<void> {
     const devices = (await this.tokens.devices?.(userId)) ?? [];
+    const nativeTokens = new Set<string>();
     await Promise.allSettled(
       devices.map(async (device) => {
         if (device.userId !== userId || !(Date.parse(call.expiresAt) > Date.now())) return;
@@ -217,6 +251,7 @@ export class ExpoPushProvider implements NotificationProvider {
           )
         )
           return;
+        if (device.expoToken) nativeTokens.add(device.expoToken);
         let invalidVoip = false;
         let invalidExpo = false;
         try {
@@ -245,11 +280,15 @@ export class ExpoPushProvider implements NotificationProvider {
         }
       }),
     );
-    // Old native builds registered only the account's Expo token.
-    if (devices.length === 0 && !call.ended) {
-      const token = (await this.deliverableToken(userId))?.token;
-      if (token && (await this.sendCallPush(userId, token, call)) === "invalid")
-        await this.tokens.remove(userId, credentialDigest(token));
+    if (!call.ended) {
+      await Promise.allSettled(
+        (await this.deliverableTokens(userId))
+          .filter((token) => !nativeTokens.has(token))
+          .map(async (token) => {
+            if ((await this.sendCallPush(userId, token, call)) === "invalid")
+              await this.tokens.remove(userId, credentialDigest(token));
+          }),
+      );
     }
   }
 
@@ -260,7 +299,12 @@ export class ExpoPushProvider implements NotificationProvider {
     call: IncomingCallPush,
     dataOnly = false,
   ): Promise<"sent" | "invalid" | "failed"> {
-    const payload = incomingCallPayload(token, call, dataOnly);
+    const payload = incomingCallPayload(
+      token,
+      call,
+      { userId, apiBase: this.options.apiBase },
+      dataOnly,
+    );
     if (payload.ttl <= 0) return "failed";
     try {
       const { status, body } = await this.postWithBackoff(
@@ -290,61 +334,112 @@ export class ExpoPushProvider implements NotificationProvider {
    * Neither is an Expo acceptance, so callers must not record a reminder.
    */
   async deliver(message: NotificationMessage, context: AdapterContext): Promise<ExpoPushDelivery> {
-    const registration = await this.deliverableToken(context.userId);
-    if (!registration) return "undeliverable";
-    const token = registration.token;
-    const title = capped(message.title, MAX_PUSH_TITLE_CHARS);
-    let bodyChars = MAX_PUSH_BODY_CHARS;
-    let text = capped(message.body, bodyChars);
-    const data = expoPushData(message, context.spaceId, randomUUID());
-    const shared = {
-      to: token,
-      collapseId: message.threadId,
-      tag: message.threadId,
-      ...(message.badge === undefined ? {} : { badge: message.badge }),
-    };
-    const urgent =
-      message.kind === "help" || message.kind === "takeover" || message.kind === "failure";
-    const build = () =>
-      registration.presentation === "android_sender"
-        ? {
-            ...shared,
-            ...(urgent ? { priority: "high" } : {}),
-            data: {
-              ...data,
-              notificationTitle: title,
-              notificationBody: text,
-              ...(message.badge === undefined ? {} : { notificationBadge: message.badge }),
-            },
-          }
-        : {
-            ...shared,
-            title,
-            body: text,
-            data,
-            ...(message.sender ? { mutableContent: true } : {}),
-            ...(urgent ? { priority: "high" } : {}),
-          };
-    let payload = build();
-    while (Buffer.byteLength(JSON.stringify(payload)) > MAX_PUSH_PAYLOAD_BYTES && bodyChars > 1) {
-      bodyChars = Math.floor(bodyChars / 2);
-      text = capped(message.body, bodyChars);
-      payload = build();
+    const tokens = await this.deliverableTokens(context.userId);
+    if (!tokens.length) return "undeliverable";
+    // APNs collapse identifiers have a 64-byte limit; include server and account ownership.
+    const tag = createHash("sha256")
+      .update(JSON.stringify([this.options.apiBase ?? "", context.userId, message.threadId]))
+      .digest("hex");
+    const results = await Promise.allSettled(
+      tokens.map(async (token) => {
+        const registration = (await this.tokens.list(context.userId)).find(
+          (row) => row.token === token,
+        );
+        const device = await this.options.deviceForToken?.(token).catch(() => undefined);
+        const badge = this.options.deviceForToken ? device?.badge : message.badge;
+        // Only a device with several logins needs to say which account a push belongs to.
+        const label =
+          device && device.accounts > 1
+            ? await this.options.accountLabel?.(context.userId)
+            : undefined;
+        const title = capped(message.title, MAX_PUSH_TITLE_CHARS);
+        let bodyChars = MAX_PUSH_BODY_CHARS;
+        let text = capped(message.body, bodyChars);
+        const data = expoPushData(
+          message,
+          context.spaceId,
+          randomUUID(),
+          registration?.presentation !== "android_sender",
+          context.userId,
+          this.options.apiBase,
+        );
+        const shared = {
+          to: token,
+          collapseId: tag,
+          ...(badge === undefined ? {} : { badge }),
+        };
+        const urgent =
+          message.kind === "help" || message.kind === "takeover" || message.kind === "failure";
+        const build = () =>
+          registration?.presentation === "android_sender"
+            ? {
+                ...shared,
+                ...(urgent ? { priority: "high" } : {}),
+                data: {
+                  ...data,
+                  notificationTitle: title,
+                  notificationBody: text,
+                  ...(badge === undefined ? {} : { notificationBadge: badge }),
+                },
+              }
+            : {
+                ...shared,
+                tag,
+                title,
+                ...(label ? { subtitle: capped(label, MAX_PUSH_TITLE_CHARS) } : {}),
+                body: text,
+                data,
+                ...(message.sender ? { mutableContent: true } : {}),
+                ...(urgent ? { priority: "high" } : {}),
+              };
+        let payload = build();
+        while (
+          Buffer.byteLength(JSON.stringify(payload)) > MAX_PUSH_PAYLOAD_BYTES &&
+          bodyChars > 1
+        ) {
+          bodyChars = Math.floor(bodyChars / 2);
+          text = capped(message.body, bodyChars);
+          payload = build();
+        }
+        let reply: { status: number; body: unknown };
+        try {
+          reply = await this.postWithBackoff(EXPO_PUSH_URL, payload, context.signal, async () => {
+            // Metadata and retry delays can outlive a logout or device-token rotation.
+            if (!(await this.deliverableTokens(context.userId, token)).includes(token))
+              throw new PushSessionEndedError();
+          });
+        } catch (error) {
+          if (error instanceof PushSessionEndedError) return "undeliverable" as const;
+          throw error;
+        }
+        const { status, body } = reply;
+        const [ticket] = expoPushTickets(body);
+        if (status < 300 && body === undefined)
+          throw new Error("Expo push returned an invalid response.");
+        if (ticket?.details?.error === "DeviceNotRegistered") {
+          await this.tokens.remove(context.userId, credentialDigest(token));
+          return "undeliverable" as const;
+        }
+        const failure =
+          expoUnauthorizedError(body, status, this.accessToken) ??
+          expoPushErrorMessage(body, status);
+        if (failure) throw new Error(failure);
+        if (ticket?.id) await this.scheduleReceiptCheck(context.userId, token, ticket.id);
+        return "delivered" as const;
+      }),
+    );
+    if (results.some((result) => result.status === "fulfilled" && result.value === "delivered")) {
+      for (const [index, result] of results.entries()) {
+        if (result.status === "rejected")
+          getLogger().error("expo push device delivery failed", {
+            deviceDigest: credentialDigest(tokens[index]!),
+          });
+      }
+      return "delivered";
     }
-    const { status, body } = await this.postWithBackoff(EXPO_PUSH_URL, payload, context.signal);
-    const [ticket] = expoPushTickets(body);
-    if (status < 300 && body === undefined) {
-      throw new Error("Expo push returned an invalid response.");
-    }
-    if (ticket?.details?.error === "DeviceNotRegistered") {
-      await this.tokens.remove(context.userId, credentialDigest(token));
-      return "undeliverable";
-    }
-    const failure =
-      expoUnauthorizedError(body, status, this.accessToken) ?? expoPushErrorMessage(body, status);
-    if (failure) throw new Error(failure);
-    if (ticket?.id) await this.scheduleReceiptCheck(context.userId, token, ticket.id);
-    return "delivered";
+    const failed = results.find((result) => result.status === "rejected");
+    if (failed?.status === "rejected") throw failed.reason;
+    return "undeliverable";
   }
 
   /** Drops the token when the receipt says the device is no longer registered. */
@@ -381,13 +476,20 @@ export class ExpoPushProvider implements NotificationProvider {
       await this.tokens.remove(receipt.userId, receipt.tokenDigest);
       return;
     }
-    getLogger().error(
-      `expo push receipt error: ${result.details?.error ?? result.message ?? "unknown"}`,
-    );
+    const code = result.details?.error;
+    const message = `expo push receipt error: ${code ?? result.message ?? "unknown"}`;
+    if (code && EXPECTED_RECEIPT_ERRORS.has(code)) getLogger().warn(message);
+    else getLogger().error(message);
   }
 
-  private async postWithBackoff(url: string, payload: unknown, signal?: AbortSignal) {
+  private async postWithBackoff(
+    url: string,
+    payload: unknown,
+    signal?: AbortSignal,
+    beforeSend?: () => Promise<void>,
+  ) {
     for (let attempt = 0; ; attempt += 1) {
+      await beforeSend?.();
       const reply = await postToExpo(url, payload, this.accessToken, signal);
       const retryDelay = this.retryDelaysMs[attempt];
       if (retryDelay === undefined || !expoAskedToBackOff(reply.status, reply.body)) return reply;
@@ -413,26 +515,37 @@ export class ExpoPushProvider implements NotificationProvider {
    * row is removed. The token is read again after the lookup so a handover
    * during that wait is not sent.
    */
-  private async deliverableToken(userId: string): Promise<PushRecord | undefined> {
-    const saved = await this.tokens.load(userId);
-    if (!saved?.token) return undefined;
-    if (!saved.sessionId) return saved;
-    if (!this.sessionExpiresAt) return undefined;
-    let expiresAt: Date | null;
-    try {
-      expiresAt = await this.sessionExpiresAt(saved.sessionId);
-    } catch (error) {
-      getLogger().error("push session lookup failed", error);
-      return undefined;
-    }
-    if (!expiresAt) return undefined;
-    if (expiresAt.getTime() <= Date.now()) {
-      await this.tokens.endSession(userId, saved.sessionId);
-      return undefined;
-    }
-    const current = await this.tokens.load(userId);
-    if (current?.token !== saved.token || current.sessionId !== saved.sessionId) return undefined;
-    return current;
+  private async deliverableTokens(userId: string, targetToken?: string): Promise<string[]> {
+    const saved = (await this.tokens.list(userId)).filter(
+      (row) => !targetToken || row.token === targetToken,
+    );
+    const valid = await Promise.all(
+      saved.map(async (record) => {
+        if (!record.token) return undefined;
+        if (!record.sessionId) return record.token;
+        if (!this.sessionExpiresAt) return undefined;
+        let expiresAt: Date | null;
+        try {
+          expiresAt = await this.sessionExpiresAt(record.sessionId);
+        } catch (error) {
+          getLogger().error("push session lookup failed", error);
+          return undefined;
+        }
+        if (!expiresAt) return undefined;
+        if (expiresAt.getTime() <= Date.now()) {
+          await this.tokens.endSession(userId, record.sessionId);
+          return undefined;
+        }
+        // Recheck after the network/database wait: logout or rotation can run meanwhile.
+        const current = await this.tokens.list(userId);
+        return current.some(
+          (row) => row.token === record.token && row.sessionId === record.sessionId,
+        )
+          ? record.token
+          : undefined;
+      }),
+    );
+    return [...new Set(valid.filter((token): token is string => Boolean(token)))];
   }
 }
 

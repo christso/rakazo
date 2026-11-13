@@ -4,8 +4,15 @@ import type { ReactNode } from "react";
 import { act } from "react";
 import type { Root } from "react-dom/client";
 import { createRoot } from "react-dom/client";
+import { Alert } from "react-native";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import NotificationOpen from "../app/notification-open";
 import SignIn from "../app/sign-in";
+import {
+  loadAccountSummaries,
+  selectNotificationAccount,
+  selectSavedAccount,
+} from "./account-sessions";
 import { rpc } from "./api";
 import {
   passwordResetCapabilities,
@@ -16,13 +23,39 @@ import {
 } from "./api-auth";
 import type * as Endpoint from "./endpoint";
 import type { NativeActionButtonProps } from "./native-controls";
+import { promptNotificationSignIn } from "./open-notification";
 import { passkeysAvailable, signInWithPasskey } from "./passkey";
 import { loadSessionToken } from "./session";
 import { continueWithSso } from "./sso";
 
-const route = vi.hoisted(() => ({ mode: "in", waiting: false, redirect: vi.fn() }));
+const route = vi.hoisted(() => ({
+  mode: "in",
+  addAccount: undefined as string | undefined,
+  notificationTarget: undefined as string | undefined,
+  target: undefined as string | undefined,
+  waiting: false,
+  redirect: vi.fn(),
+}));
 const router = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn() }));
 const server = vi.hoisted(() => ({ base: "https://example.invalid", refocus: () => {} }));
+
+vi.mock("./account-sessions", () => ({
+  selectNotificationAccount: vi.fn(async () => "selected"),
+  loadAccountSummaries: vi.fn(async () => []),
+  selectSavedAccount: vi.fn(async () => true),
+}));
+vi.mock("./open-notification", () => ({ promptNotificationSignIn: vi.fn() }));
+vi.mock("../components/settings-group", () => ({
+  SettingsGroup: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  SettingsRow: ({ title, onPress }: { title: string; onPress?: () => void }) => (
+    <button type="button" onClick={onPress}>
+      {title}
+    </button>
+  ),
+}));
+vi.mock("../components/sheet-header", () => ({
+  cancelHeaderOptions: (label: string, onPress: () => void) => ({ cancel: { label, onPress } }),
+}));
 
 vi.mock("expo-router", () => ({
   Redirect: ({ href }: { href: string }) => {
@@ -34,11 +67,21 @@ vi.mock("expo-router", () => ({
   useFocusEffect: (effect: () => void) => {
     server.refocus = effect;
   },
+  Stack: {
+    Screen: ({ options }: { options: { cancel?: { label: string; onPress: () => void } } }) =>
+      options.cancel ? (
+        <button type="button" onClick={options.cancel.onPress}>
+          {options.cancel.label}
+        </button>
+      ) : null,
+  },
 }));
 vi.mock("react-native", () => {
   const Container = ({ children }: { children: ReactNode }) => <div>{children}</div>;
   return {
     Platform: { OS: "ios" },
+    Alert: { alert: vi.fn() },
+    StyleSheet: { create: (styles: unknown) => styles },
     Keyboard: { dismiss: vi.fn() },
     AccessibilityInfo: { announceForAccessibility: vi.fn() },
     KeyboardAvoidingView: Container,
@@ -115,12 +158,10 @@ vi.mock("../components/native-action-button", () => ({
     </button>
   ),
 }));
-vi.mock("./native", () => ({ useMobileTokens: () => tokensForAppearance("light") }));
-vi.mock("./i18n", () => ({
-  useI18n: () => ({
-    t: (text: string, values?: Record<string, string>) =>
-      text.replace(/\{(\w+)\}/g, (_, key: string) => values?.[key] ?? key),
-  }),
+vi.mock("./appearance", () => ({ mobileTokens: () => tokensForAppearance("light") }));
+vi.mock("./native", () => ({
+  useMobileTokens: () => tokensForAppearance("light"),
+  useThemedStyles: (create: () => unknown) => create(),
 }));
 vi.mock("./api-server", () => ({}));
 vi.mock("./api-live", () => ({}));
@@ -135,6 +176,7 @@ vi.mock("./endpoint", async (importOriginal) => ({
 }));
 vi.mock("./session", () => ({
   loadSessionToken: vi.fn().mockResolvedValue(null),
+  currentSessionGeneration: () => 0,
 }));
 vi.mock("./api-auth", () => ({
   passwordResetCapabilities: vi.fn(),
@@ -159,6 +201,10 @@ let host: HTMLDivElement;
 let root: Root;
 
 beforeEach(() => {
+  route.addAccount = undefined;
+  route.notificationTarget = undefined;
+  route.target = undefined;
+  vi.mocked(loadSessionToken).mockResolvedValue("");
   route.mode = "in";
   route.waiting = false;
   server.base = "https://example.invalid";
@@ -167,6 +213,9 @@ beforeEach(() => {
   vi.mocked(passwordResetCapabilities).mockResolvedValue(capabilities);
   vi.mocked(passkeysAvailable).mockReset().mockResolvedValue(false);
   vi.mocked(signInWithPasskey).mockReset();
+  vi.mocked(selectNotificationAccount).mockReset().mockResolvedValue("selected");
+  vi.mocked(loadAccountSummaries).mockReset().mockResolvedValue([]);
+  vi.mocked(selectSavedAccount).mockReset().mockResolvedValue(true);
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
@@ -527,4 +576,139 @@ it("returns an existing session to the pending share", async () => {
   vi.mocked(loadSessionToken).mockResolvedValue("fake-session");
   await render();
   expect(route.redirect).toHaveBeenCalledWith("/share");
+});
+
+it("shows the existing sign-in form when adding an account without signing out the current login", async () => {
+  route.addAccount = "1";
+  vi.mocked(loadSessionToken).mockResolvedValue("family-session");
+  await render();
+  expect(route.redirect).not.toHaveBeenCalled();
+  expect(input("Email")).not.toBeNull();
+  expect(button("Cancel")).toBeDefined();
+});
+
+it("opens another saved account without credentials after the primary session is gone", async () => {
+  vi.mocked(loadAccountSummaries).mockResolvedValue([
+    { userId: "work", email: "work@example.test", unread: 0 },
+  ]);
+  await render();
+  await press("work@example.test");
+  expect(selectSavedAccount).toHaveBeenCalledWith("work");
+  expect(router.replace).toHaveBeenCalledWith("/");
+  expect(signIn).not.toHaveBeenCalled();
+  expect(signInWithCode).not.toHaveBeenCalled();
+});
+
+it("keeps credential recovery when a saved account has expired", async () => {
+  vi.mocked(loadAccountSummaries).mockResolvedValue([
+    { userId: "family", email: "family@example.test", unread: 0 },
+  ]);
+  vi.mocked(selectSavedAccount).mockResolvedValue(false);
+  await render();
+  await press("family@example.test");
+  expect(router.replace).not.toHaveBeenCalled();
+  expect(input("Email")?.value).toBe("family@example.test");
+  expect(host.textContent).toContain("Sign in to open this account");
+  expect(signIn).not.toHaveBeenCalled();
+});
+
+it.each(["add", "notification"])(
+  "does not offer unrelated saved accounts during %s recovery",
+  async (flow) => {
+    if (flow === "add") route.addAccount = "1";
+    else route.notificationTarget = "rakazo://thread?userId=work&botId=work-bot";
+    vi.mocked(loadAccountSummaries).mockResolvedValue([
+      { userId: "family", email: "family@example.test", unread: 0 },
+    ]);
+    await render();
+    expect(loadAccountSummaries).not.toHaveBeenCalled();
+    expect(button("family@example.test")).toBeUndefined();
+  },
+);
+
+it("reauthenticates a notification owner before opening its chat", async () => {
+  route.addAccount = "1";
+  route.notificationTarget = "rakazo://thread?userId=work&botId=work-bot";
+  vi.mocked(rpc).mockResolvedValue({ userId: "work" } as never);
+  vi.mocked(signIn).mockResolvedValue({ verificationRequired: false });
+  await render();
+  await type(input("Email")!, "work@example.test");
+  await type(input("Password")!, "fixture-password");
+  await press("Sign in");
+  expect(router.replace).toHaveBeenCalledWith({
+    pathname: "/notification-open",
+    params: { target: route.notificationTarget },
+  });
+  route.target = route.notificationTarget;
+  await act(async () => root.render(<NotificationOpen />));
+  expect(router.replace).toHaveBeenCalledWith({
+    pathname: "/thread",
+    params: { userId: "work", botId: "work-bot" },
+  });
+});
+it("never opens a notification chat after signing into another account", async () => {
+  route.addAccount = "1";
+  route.notificationTarget = "rakazo://thread?userId=work&botId=work-bot";
+  vi.mocked(rpc).mockResolvedValue({ userId: "family" } as never);
+  vi.mocked(signIn).mockResolvedValue({ verificationRequired: false });
+  vi.mocked(selectNotificationAccount).mockResolvedValue("signed-out");
+  await render();
+  await type(input("Email")!, "family@example.test");
+  await type(input("Password")!, "fixture-password");
+  await press("Sign in");
+  expect(router.replace).toHaveBeenLastCalledWith({
+    pathname: "/notification-open",
+    params: { target: route.notificationTarget },
+  });
+  router.replace.mockClear();
+  route.target = route.notificationTarget;
+  await act(async () => root.render(<NotificationOpen />));
+  expect(router.replace).toHaveBeenCalledExactlyOnceWith("/");
+  expect(promptNotificationSignIn).toHaveBeenCalledWith(route.notificationTarget);
+});
+
+it("retries a transient notification lookup without authenticating again", async () => {
+  route.addAccount = "1";
+  route.notificationTarget = "rakazo://thread?userId=work&botId=work-bot";
+  vi.mocked(rpc).mockRejectedValue(new Error("Offline"));
+  vi.mocked(signIn).mockResolvedValue({ verificationRequired: false });
+  vi.mocked(selectNotificationAccount)
+    .mockRejectedValueOnce(new Error("Offline"))
+    .mockResolvedValueOnce("selected");
+  await render();
+  await type(input("Email")!, "work@example.test");
+  await type(input("Password")!, "fixture-password");
+  await press("Sign in");
+  expect(signIn).toHaveBeenCalledOnce();
+  expect(rpc).not.toHaveBeenCalled();
+  expect(router.replace).toHaveBeenLastCalledWith({
+    pathname: "/notification-open",
+    params: { target: route.notificationTarget },
+  });
+  router.replace.mockClear();
+  route.target = route.notificationTarget;
+  await act(async () => root.render(<NotificationOpen />));
+  expect(Alert.alert).toHaveBeenCalledWith("Could not continue", undefined, expect.any(Array));
+  expect(router.replace).not.toHaveBeenCalled();
+  const retry = vi.mocked(Alert.alert).mock.calls[0]?.[2]?.[1];
+  expect(retry?.text).toBe("Try again");
+  await act(async () => retry?.onPress?.());
+  expect(selectNotificationAccount).toHaveBeenCalledTimes(2);
+  expect(selectNotificationAccount).toHaveBeenLastCalledWith("work", undefined);
+  expect(signIn).toHaveBeenCalledOnce();
+  expect(router.replace).toHaveBeenLastCalledWith({
+    pathname: "/thread",
+    params: { userId: "work", botId: "work-bot" },
+  });
+});
+
+it("normalizes an attested notification alias before mounting its thread", async () => {
+  route.target =
+    "rakazo://thread?userId=work&botId=work-bot&apiBase=https%3A%2F%2Fweb.example.test";
+  await act(async () => root.render(<NotificationOpen />));
+  expect(selectNotificationAccount).toHaveBeenCalledWith("work", "https://web.example.test");
+  expect(router.replace).toHaveBeenLastCalledWith({
+    pathname: "/thread",
+    params: { userId: "work", botId: "work-bot", apiBase: server.base },
+  });
 });

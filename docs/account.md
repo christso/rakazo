@@ -24,6 +24,15 @@ trust; those sites are listed under **Trusted sites**, where you can remove them
 Under **Security** you can **Change password** and **Add passkey** to sign in with your device
 instead of a password. Some actions, such as exporting data, ask you to confirm it's you first.
 
+Choose **Switch accounts** from the web account menu or the mobile account settings to open the
+account picker. Choose **Add account** there to keep another login signed in. The picker shows
+the selected account and each account's unread count. Browsers keep up to five accounts.
+
+Notifications arrive for every signed-in account. Receiving one leaves the current account
+displayed; opening it selects the account it belongs to. Browser notifications need Rakazo open
+in a tab. **Log out** signs out the current account; **Log out all
+accounts** signs out every account on that device.
+
 ## Credentials
 
 **Settings → Vault** lists the API keys and website logins your bots can use. Values are never shown.
@@ -55,8 +64,8 @@ In **Settings → General**:
 rakazo.com is free to try; the sidebar shows when your free period ends. To keep going, choose a
 plan:
 
-- **Use my subscription or API key**: works with your ChatGPT or Claude plan, or any
-  [model provider](./models.md) key. You pay the provider for model usage.
+- **Use my subscription or API key**: connect a supported [model subscription](./model-subscriptions.md)
+  or [model provider](./models.md) key. Your provider's allowance and billing apply.
 - **Use Rakazo credits**: model usage is paid from **Monthly credits** included in the plan. Choose
   **Add credits** for more. Monthly credits expire at renewal; credits you add don't.
 

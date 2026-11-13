@@ -197,14 +197,20 @@ async function start(
   callbackURL = `${origin}/app`,
   reauthenticate = false,
   additionalData: Record<string, unknown> = {},
+  headers: Record<string, string> = {},
 ) {
-  const response = await request(link ? "/link-social" : "/sign-in/social", {
-    provider: "oidc",
-    callbackURL,
-    errorCallbackURL: `${origin}/sign-in`,
-    disableRedirect: true,
-    additionalData: { ...additionalData, ...(reauthenticate ? { reauthenticate: true } : {}) },
-  });
+  const response = await request(
+    link ? "/link-social" : "/sign-in/social",
+    {
+      provider: "oidc",
+      callbackURL,
+      errorCallbackURL: `${origin}/sign-in`,
+      disableRedirect: true,
+      additionalData: { ...additionalData, ...(reauthenticate ? { reauthenticate: true } : {}) },
+    },
+    undefined,
+    headers,
+  );
   expect(response.status, await response.clone().text()).toBe(200);
   const url = new URL(((await response.json()) as { url: string }).url);
   const code = `code-${++sequence}`;
@@ -304,6 +310,28 @@ afterEach(() => {
 });
 
 describe("OIDC callbacks", () => {
+  it.each(["ios", "android"])(
+    "keeps the originating %s platform through the browser callback",
+    async (surface) => {
+      setup();
+      const callback = await start(
+        undefined,
+        false,
+        "rakazo://sign-in",
+        false,
+        {
+          serverContext: { signupAttribution: { surface: "desktop" } },
+        },
+        { "x-rakazo-signup-surface": surface },
+      );
+      // The callback's browser has an unrelated web attribution cookie and no native header.
+      cookies += `; rakazo_signup_attribution=${encodeURIComponent(JSON.stringify({ surface: "web", utmSource: "unrelated" }))}`;
+      const returned = await request(callback);
+      expect(new URL(returned.headers.get("location")!).protocol).toBe("rakazo:");
+      expect(rows("user")[0]).toMatchObject({ signupSurface: surface });
+      expect(rows("user")[0]?.signupUtmSource).toBeUndefined();
+    },
+  );
   it.each([true, false, undefined])(
     "preserves email_verified=%s through the real callback",
     async (verified) => {
@@ -1055,7 +1083,8 @@ describe("SSO-only account deletion", () => {
       results.filter((response) => response.headers.get("location") === `${origin}/app`),
     ).toHaveLength(1);
     expect(exchanges() - before).toBe(1);
-    expect(rows("session")).toHaveLength(2);
+    // The multi-session plugin replaces this device's older login for the same account.
+    expect(rows("session")).toHaveLength(1);
     const savedCookies = cookies;
     expect((await request(callback)).headers.get("location")).toContain("error=");
     cookies = savedCookies;

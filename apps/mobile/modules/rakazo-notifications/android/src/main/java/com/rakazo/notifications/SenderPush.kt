@@ -30,8 +30,8 @@ internal object SenderPush {
   private const val MAX_AVATAR_PIXELS = 96
   private const val SILENT_GROUP = "rakazo.silent"
 
-  /** Its own ID per thread, as Expo's had, so the poller's fallback post never replaces it. */
-  fun notificationId(threadId: String) = "push:$threadId".hashCode()
+  /** Sender posts replace only the same owner's thread and stay separate from poller posts. */
+  fun notificationId(apiBase: String, userId: String, threadId: String) = "push:$apiBase:$userId:$threadId".hashCode()
 
   /**
    * Decides a message push without Android calls, so the policy stays unit-testable. A Rakazo
@@ -40,6 +40,7 @@ internal object SenderPush {
    */
   fun disposition(
     data: JSONObject,
+    activeAccount: Boolean,
     hasSession: () -> Boolean,
     openThread: () -> Boolean,
     foreground: () -> Boolean,
@@ -48,18 +49,24 @@ internal object SenderPush {
     if (data.optString("botId").isBlank()) return PushDisposition.EXPO
     if (data.optString("threadId").isBlank()) return PushDisposition.EXPO
     if (!hasSession()) return PushDisposition.DROP
-    if (openThread()) return PushDisposition.DROP
+    if (activeAccount && openThread()) return PushDisposition.DROP
     // Matches the app's foreground handler: finished work is already on screen.
-    if (data.optString("kind") == "completion" && foreground()) return PushDisposition.DROP
+    if (activeAccount && data.optString("kind") == "completion" && foreground()) return PushDisposition.DROP
     return PushDisposition.POST
   }
 
   fun present(context: Context, data: JSONObject): Boolean {
-    val foreground by lazy { inForeground() }
+    val storage = NotificationStorage(context)
+    // Older servers omit ownership; their pushes belong to the active native session.
+    val userId = data.optString("userId").ifBlank { storage.userId }
+    val apiBase = data.optString("apiBase").ifBlank { storage.endpoint }
+    val activeAccount = userId == storage.userId && apiBase == storage.endpoint
+    val foreground by lazy { activeAccount && inForeground() }
     return when (
       disposition(
         data,
-        { NotificationStorage(context).token.isNotBlank() },
+        activeAccount,
+        { storage.token.isNotBlank() },
         { RakazoNotificationService.isOpenThread(data.optString("botId"), data.optString("threadId")) },
         { foreground },
       )
@@ -68,7 +75,7 @@ internal object SenderPush {
       PushDisposition.DROP -> true
       PushDisposition.POST ->
         runCatching {
-            post(context, data, data.optString("notificationTitle"), data.optString("botId"), data.optString("threadId"), foreground)
+            post(context, data, data.optString("notificationTitle"), data.optString("botId"), data.optString("threadId"), userId, apiBase, foreground)
           }
           .onFailure { Log.w("RakazoSenderPush", "Could not post push", it) }
           .isSuccess
@@ -81,6 +88,8 @@ internal object SenderPush {
     title: String,
     botId: String,
     threadId: String,
+    userId: String,
+    apiBase: String,
     foreground: Boolean,
   ) {
     val body = data.optString("notificationBody")
@@ -97,7 +106,7 @@ internal object SenderPush {
       .setContentTitle(title)
       .setContentText(body)
       .setStyle(Notification.BigTextStyle().bigText(body))
-      .setContentIntent(openThread(context, data, botId, threadId))
+      .setContentIntent(openThread(context, data, botId, threadId, userId, apiBase))
       .setAutoCancel(true)
       .setCategory(Notification.CATEGORY_MESSAGE)
       .apply { if (data.has("notificationBadge")) setNumber(data.optInt("notificationBadge")) }
@@ -112,12 +121,15 @@ internal object SenderPush {
       .addExtras(Bundle().apply {
         putString("rakazo.botId", botId)
         putString("rakazo.threadId", threadId)
+        putString("rakazo.userId", userId)
+        putString("rakazo.apiBase", apiBase)
+        putString("rakazo.spaceId", data.optString("spaceId"))
         data.optString("runId").takeIf(String::isNotBlank)?.let { putString(RakazoNotificationService.EXTRA_RUN_ID, it) }
         data.optString("groupId").takeIf(String::isNotBlank)?.let { putString("rakazo.groupId", it) }
       })
     runCatching { addSender(context, builder, data, title, body) }
       .onFailure { Log.w("RakazoSenderPush", "Posting without the sender", it) }
-    context.getSystemService(NotificationManager::class.java).notify(notificationId(threadId), builder.build())
+    context.getSystemService(NotificationManager::class.java).notify(notificationId(apiBase, userId, threadId), builder.build())
   }
 
   private fun addSender(context: Context, builder: Notification.Builder, data: JSONObject, title: String, body: String) {
@@ -147,16 +159,16 @@ internal object SenderPush {
     else BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
   }.getOrNull()
 
-  private fun openThread(context: Context, data: JSONObject, botId: String, threadId: String): PendingIntent {
+  private fun openThread(context: Context, data: JSONObject, botId: String, threadId: String, userId: String, apiBase: String): PendingIntent {
     val groupId = data.optString("groupId")
     val owner = if (groupId.isNotBlank()) "group-thread?groupId=${Uri.encode(groupId)}" else "thread?botId=${Uri.encode(botId)}"
-    val link = "rakazo://$owner&spaceId=${Uri.encode(data.optString("spaceId"))}&threadId=${Uri.encode(threadId)}"
+    val link = "rakazo://$owner&spaceId=${Uri.encode(data.optString("spaceId"))}&threadId=${Uri.encode(threadId)}&userId=${Uri.encode(userId)}&apiBase=${Uri.encode(apiBase)}"
     val intent = Intent(Intent.ACTION_VIEW, Uri.parse(link)).setPackage(context.packageName).apply {
       flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
     }
     return PendingIntent.getActivity(
       context,
-      threadId.hashCode(),
+      notificationId(apiBase, userId, threadId),
       intent,
       PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
     )

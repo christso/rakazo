@@ -43,8 +43,10 @@ init_database() {
   pwfile=$(mktemp)
   printf '%s\n' "$PG_OWNER_PASSWORD" > "$pwfile"
   chown postgres "$pwfile"
+  # The image sets no locale, so name one: initdb would otherwise pick SQL_ASCII, which rejects
+  # characters outside ASCII that migrations and user text rely on.
   as_postgres "$PG_BIN/initdb" -D "$PGDATA" -U rakazo --auth=scram-sha-256 --pwfile="$pwfile" \
-    > /dev/null
+    --encoding=UTF8 --locale=C.UTF-8 > /dev/null
   rm -f "$pwfile"
 }
 
@@ -87,8 +89,16 @@ SQL
 }
 
 shutdown() {
-  kill $(jobs -pr) 2> /dev/null || true
-  wait || true
+  local pid
+  local -a children
+  mapfile -t children < <(jobs -pr)
+  if (( ${#children[@]} )); then
+    kill "${children[@]}" 2> /dev/null || true
+    # Explicit PIDs avoid Bash looping over stale jobs after an interrupted wait -n.
+    for pid in "${children[@]}"; do
+      wait "$pid" || true
+    done
+  fi
   stop_database
 }
 trap shutdown EXIT

@@ -1,3 +1,4 @@
+import { t } from "@lingui/core/macro";
 import type { IncomingBotCall, SpaceBot, SpaceNavigation } from "@rakazo/contracts";
 import type { ringingCall } from "@rakazo/core";
 import {
@@ -5,17 +6,18 @@ import {
   callIsRinging,
   isRetryableError,
   nextIncomingCall,
+  reconnectDelayMs,
   respondToIncomingCall,
   retryDelayMs,
 } from "@rakazo/core";
 import { requireOptionalNativeModule } from "expo-modules-core";
 import * as Notifications from "expo-notifications";
 import { AppState, Platform } from "react-native";
+import { selectNotificationAccount } from "./account-sessions";
 import type { ApiRequestContext } from "./api";
 import { captureApiRequestContext, rpc } from "./api";
 import { subscribeIncomingCallEvents } from "./api-live";
 import { endCall, getSnapshot, startCall, subscribe as subscribeCall } from "./call-session";
-import { t } from "./i18n";
 import { registerCallPushToken } from "./push";
 import { serverHeaders } from "./server-headers";
 import { currentSessionGeneration, loadSessionToken, registerSessionDiskCache } from "./session";
@@ -137,10 +139,12 @@ async function follow(controller: AbortController) {
   let retry = 250;
   let failure: unknown;
   while (!controller.signal.aborted && generation === currentSessionGeneration()) {
+    let opened = false;
     try {
       await subscribeIncomingCallEvents((incoming) => {
         // Ignore events from an aborted feed so a late callback cannot resolve a newer wait.
         if (controller.signal.aborted || feed !== controller) return;
+        opened = true;
         const listed = new Map(
           incoming.map((call) => [
             call.incomingCall.callId,
@@ -165,7 +169,10 @@ async function follow(controller: AbortController) {
       if (controller.signal.aborted || !isRetryableError(error)) return;
       failure = error;
     }
-    await abortableDelay(retryDelayMs(failure, retry), controller.signal).catch(() => undefined);
+    await abortableDelay(
+      opened ? reconnectDelayMs(failure) : retryDelayMs(failure, retry),
+      controller.signal,
+    ).catch(() => undefined);
     retry = Math.min(retry * 2, 5000);
   }
 }
@@ -282,11 +289,11 @@ export async function respondToMobileCall(call: IncomingBotCall, action: "answer
       // The session changed mid-answer: rpc drops the hang-up below locally, because its
       // context belongs to the old generation, so the server keeps the call answered.
       if (generation !== currentSessionGeneration())
-        throw new Error(t("Something went wrong. Try again."));
+        throw new Error(t`Something went wrong. Try again.`);
       const voice = await rpc("voice/status", {}, { requestContext: context });
       if (generation !== currentSessionGeneration())
-        throw new Error(t("Something went wrong. Try again."));
-      if (nativeEnded.has(target.callId)) throw new Error(t("This call is no longer ringing."));
+        throw new Error(t`Something went wrong. Try again.`);
+      if (nativeEnded.has(target.callId)) throw new Error(t`This call is no longer ringing.`);
       // Answering during a call replaces it, like a phone's end-and-accept.
       if (getSnapshot()) endCall();
       activeNativeCall = target.callId;
@@ -369,9 +376,18 @@ async function drainNative() {
   }
 }
 
-const notificationActions = new Set<string>();
-async function notificationResponse(response: Notifications.NotificationResponse | null) {
-  if (!response) return;
+const notificationActions = new Map<string, symbol>();
+async function notificationResponse(
+  response: Notifications.NotificationResponse | null,
+  controller: AbortController,
+) {
+  const generation = currentSessionGeneration();
+  const current = () =>
+    running &&
+    feed === controller &&
+    !controller.signal.aborted &&
+    generation === currentSessionGeneration();
+  if (!response || !current()) return;
   const data = response.notification.request.content.data;
   if (
     data?.kind !== "incoming_call" ||
@@ -384,11 +400,29 @@ async function notificationResponse(response: Notifications.NotificationResponse
   if (response.actionIdentifier !== "answer" && response.actionIdentifier !== "decline") return;
   const key = `${data.callId}:${response.actionIdentifier}`;
   if (notificationActions.has(key)) return;
-  notificationActions.add(key);
+  const attempt = Symbol();
+  notificationActions.set(key, attempt);
+  const release = () => {
+    if (notificationActions.get(key) === attempt) notificationActions.delete(key);
+  };
   try {
+    const userId = typeof data.userId === "string" ? data.userId : undefined;
+    const apiBase = typeof data.apiBase === "string" ? data.apiBase : undefined;
+    if (userId !== undefined || apiBase !== undefined) {
+      const selected = await selectNotificationAccount(userId, apiBase, current);
+      // Selecting a saved account stops this feed. Its replacement replays the response
+      // against the selected session instead of borrowing a caller from the previous one.
+      if (selected !== "selected" || !current()) {
+        release();
+        return;
+      }
+    }
     const bot = await callerFor(data.botId, data.callId);
     // A stale lookup answers nothing and completes no native action: a newer feed owns it.
-    if (bot === undefined) return;
+    if (bot === undefined || !current()) {
+      release();
+      return;
+    }
     if (!bot) throw new Error("Unknown caller");
     await respondToMobileCall(
       {
@@ -398,7 +432,7 @@ async function notificationResponse(response: Notifications.NotificationResponse
       response.actionIdentifier,
     );
   } catch (error) {
-    notificationActions.delete(key);
+    release();
     throw error;
   }
 }
@@ -443,10 +477,10 @@ export function startIncomingCalls() {
   void Notifications.setNotificationCategoryAsync?.("incoming-call", [
     {
       identifier: "decline",
-      buttonTitle: t("Decline"),
+      buttonTitle: t`Decline`,
       options: { opensAppToForeground: true, isDestructive: true },
     },
-    { identifier: "answer", buttonTitle: t("Answer"), options: { opensAppToForeground: true } },
+    { identifier: "answer", buttonTitle: t`Answer`, options: { opensAppToForeground: true } },
   ]).catch(() => undefined);
   const refresh = () => {
     const generation = currentSessionGeneration();
@@ -480,11 +514,12 @@ export function startIncomingCalls() {
       .catch(() => undefined);
   };
   refresh();
-  void notificationResponse(Notifications.getLastNotificationResponse?.() ?? null).catch(
-    () => undefined,
-  );
+  void notificationResponse(
+    Notifications.getLastNotificationResponse?.() ?? null,
+    controller,
+  ).catch(() => undefined);
   const response = Notifications.addNotificationResponseReceivedListener?.((response) => {
-    void notificationResponse(response).catch(() => undefined);
+    void notificationResponse(response, controller).catch(() => undefined);
   });
   const app = AppState.addEventListener("change", (state) => {
     if (state === "active") {

@@ -46,11 +46,17 @@ vi.mock("expo-notifications", () => ({
 import { requireOptionalNativeModule } from "expo-modules-core";
 import * as Notifications from "expo-notifications";
 import { Platform } from "react-native";
-import { rpc } from "./api";
+import { currentApiBase, rpc } from "./api";
 import { signOut } from "./api-auth";
 import { selectInitialSpace } from "./api-server";
 import { resumeLiveNotifications, stopLiveNotifications } from "./live-notifications.js";
+import {
+  pendingSessionTokens,
+  queueSessionRevocation,
+  retryPendingSessionRevocations,
+} from "./pending-session-revocations";
 import { registerPushToken } from "./push";
+import { rememberSavedAccount } from "./saved-accounts";
 import * as session from "./session";
 import { restoreSessionToken } from "./session";
 
@@ -65,7 +71,7 @@ function deferred<T>() {
 const settled = <T>(promise: Promise<T>) =>
   Promise.race([promise, new Promise((done) => setTimeout(done, 100, "still waiting"))]);
 
-const fetch = vi.fn(async (url: string) => {
+const fetch = vi.fn(async (url: string, _init?: RequestInit) => {
   const json = url.endsWith("/rpc/me")
     ? { userId: "user-1", spaceId: "space-1" }
     : url.endsWith("/rpc/spaces/list")
@@ -147,6 +153,101 @@ describe("push registration on Android", () => {
   });
 });
 
+it("registers one device token independently for every saved signed-in account", async () => {
+  for (const userId of ["family", "work"])
+    await rememberSavedAccount(currentApiBase(), {
+      userId,
+      token: `${userId}-token`,
+      email: `${userId}@example.test`,
+    });
+  await restoreSessionToken("family-token");
+  permission.resolve({ granted: true });
+  await registerPushToken();
+  const registrations = fetch.mock.calls.filter(([url]) =>
+    url.endsWith("/rpc/notifications/registerPush"),
+  );
+  expect(registrations).toHaveLength(2);
+  expect(
+    registrations
+      .map(([, init]) => (init as RequestInit).headers)
+      .map((headers) => (headers as Record<string, string>).authorization)
+      .sort(),
+  ).toEqual(["Bearer family-token", "Bearer work-token"]);
+});
+
+it("does not register a locally signed-out credential while its revocation retry is failing", async () => {
+  await queueSessionRevocation(currentApiBase(), "fake-session");
+  // The fixture's generic successful HTTP reply is not an acknowledged auth sign-out.
+  permission.resolve({ granted: true });
+  await registerPushToken();
+  expect(fetch.mock.calls.some(([url]) => url.endsWith("/api/auth/sign-out"))).toBe(true);
+  expect(fetch.mock.calls.some(([url]) => url.endsWith("/notifications/registerPush"))).toBe(false);
+});
+
+it.each([false, true])(
+  "cleans up a registration after local sign-out, retaining retries when cleanup is offline (%s)",
+  async (cleanupOffline) => {
+    const apiBase = currentApiBase();
+    for (const userId of ["family", "work"]) {
+      await rememberSavedAccount(apiBase, {
+        userId,
+        token: `${userId}-token`,
+        email: `${userId}@example.test`,
+      });
+    }
+    await restoreSessionToken("family-token");
+    const started = deferred<void>();
+    const late = deferred<void>();
+    const bindings = new Set(["family-token", "work-token"]);
+    const unregisters: string[] = [];
+    let offline = true;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const credential = (new Headers(init?.headers).get("authorization") ?? "").replace(
+          /^Bearer /,
+          "",
+        );
+        if (url.endsWith("/notifications/registerPush")) {
+          if (credential === "family-token") {
+            started.resolve();
+            await late.promise;
+          }
+          bindings.add(credential);
+        }
+        if (url.endsWith("/notifications/unregisterPush")) {
+          unregisters.push(credential);
+          if (cleanupOffline) throw new Error("offline cleanup");
+          bindings.delete(credential);
+        }
+        if (url.endsWith("/api/auth/sign-out")) {
+          if (offline) throw new Error("offline revocation");
+          bindings.delete(credential);
+          return Response.json({ success: true });
+        }
+        return Response.json({ json: {} });
+      }),
+    );
+    permission.resolve({ granted: true });
+    const registering = registerPushToken();
+    await started.promise;
+    await signOut();
+    expect(native.store.has("rakazo.session_token")).toBe(false);
+    await restoreSessionToken("work-token");
+    late.resolve();
+    await registering;
+    expect(bindings).toEqual(
+      new Set(cleanupOffline ? ["family-token", "work-token"] : ["work-token"]),
+    );
+    expect(unregisters).toEqual(["family-token"]);
+    expect(await pendingSessionTokens(apiBase)).toEqual(new Set(["family-token"]));
+    offline = false;
+    await retryPendingSessionRevocations(apiBase);
+    expect(bindings).toEqual(new Set(["work-token"]));
+    expect(await pendingSessionTokens(apiBase)).toEqual(new Set());
+  },
+);
 it("syncs the native session before the server can push", async () => {
   Platform.OS = "android";
   vi.mocked(Notifications.getPermissionsAsync).mockResolvedValue({ granted: true } as never);
@@ -243,6 +344,51 @@ it("registers native sender delivery only when the installed Android module supp
   const options = (call as unknown as [string, RequestInit])[1];
   expect(JSON.parse(String(options.body)).json).toMatchObject({ presentation: "android_sender" });
 });
+
+it.each([
+  { accountScoped: false, signedOutSecond: false, sender: false },
+  { accountScoped: true, signedOutSecond: false, sender: true },
+  { accountScoped: false, signedOutSecond: true, sender: true },
+])(
+  "keeps multi-account sender delivery compatible with installed Android builds ($accountScoped, $signedOutSecond)",
+  async ({ accountScoped, signedOutSecond, sender }) => {
+    Platform.OS = "android";
+    vi.mocked(Notifications.getPermissionsAsync).mockResolvedValue({ granted: true } as never);
+    // Older released binaries already advertise avatars, but cannot route or clear
+    // sender notifications by owner. Only the new capability makes that safe.
+    vi.mocked(requireOptionalNativeModule).mockReturnValue({
+      supportsSenderAvatars: true,
+      ...(accountScoped ? { supportsAccountScopedSenderNotifications: true } : {}),
+    });
+    for (const userId of ["family", "work"])
+      await rememberSavedAccount(currentApiBase(), {
+        userId,
+        token: `${userId}-token`,
+        email: `${userId}@example.test`,
+      });
+    await restoreSessionToken("family-token");
+    if (signedOutSecond) await queueSessionRevocation(currentApiBase(), "work-token");
+
+    await registerPushToken();
+
+    const registrations = fetch.mock.calls
+      .filter(([url]) => url.endsWith("/rpc/notifications/registerPush"))
+      .map(([, init]) => ({
+        credential: new Headers(init?.headers).get("authorization"),
+        payload: JSON.parse(String(init?.body)).json,
+      }));
+    const active = registrations.find(({ credential }) => credential === "Bearer family-token");
+    expect(active).toBeDefined();
+    if (sender) expect(active?.payload).toHaveProperty("presentation", "android_sender");
+    else expect(active?.payload).not.toHaveProperty("presentation");
+    const other = registrations.find(({ credential }) => credential === "Bearer work-token");
+    if (signedOutSecond) expect(other).toBeUndefined();
+    else {
+      expect(other).toBeDefined();
+      expect(other?.payload).not.toHaveProperty("presentation");
+    }
+  },
+);
 
 it("registers plain delivery when the native module does not keep the session", async () => {
   Platform.OS = "android";
