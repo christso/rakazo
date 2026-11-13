@@ -667,15 +667,17 @@ async function request(
   const requestSpaceId = requestHeaders["x-rakazo-space-id"];
   try {
     if (
-      consentContext?.sessionGeneration !== undefined &&
-      consentContext.sessionGeneration !== currentSessionGeneration()
+      requestSessionGeneration !== currentSessionGeneration() ||
+      requestApiBase !== currentApiBase() ||
+      (consentContext?.sessionGeneration !== undefined &&
+        consentContext.sessionGeneration !== currentSessionGeneration())
     )
       throw new Error(t`Something went wrong. Try again.`);
     let res: Response;
     const correlation = clientCorrelationHeaders();
     try {
       res = await fetchServer(
-        `${consentContext?.apiBase ?? currentApiBase()}/rpc/${proc}`,
+        `${requestApiBase}/rpc/${proc}`,
         {
           method: "POST",
           headers: {
@@ -687,7 +689,7 @@ async function request(
           body: JSON.stringify({ json: body }),
           signal: controller.signal,
         },
-        consentContext?.apiBase ?? currentApiBase(),
+        requestApiBase,
       );
     } catch (error) {
       // The native fetch reports an aborted request with an implementation detail

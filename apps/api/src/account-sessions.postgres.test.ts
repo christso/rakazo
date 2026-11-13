@@ -6,8 +6,7 @@ import { Hono } from "hono";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { mountAccountIdentityGuard, mountAccountSessions } from "./account-sessions.js";
 
-const suite =
-  process.env.VERIFY_DATABASE && process.env.DATABASE_URL ? describe : describe.skip;
+const suite = process.env.VERIFY_DATABASE && process.env.DATABASE_URL ? describe : describe.skip;
 suite("saved account sessions and notifications (PostgreSQL)", () => {
   const stamp = randomUUID();
   const ids = { family: `family-${stamp}`, work: `work-${stamp}` };
@@ -172,6 +171,56 @@ suite("saved account sessions and notifications (PostgreSQL)", () => {
     expect(body.accounts.find((account) => account.userId === ids.work)?.unread).toBe(1);
     for (const token of Object.values(tokens)) expect(text).not.toContain(token);
     expect(response.headers.get("set-cookie")).toBeNull();
+  });
+
+  it("marks snoozed completions silent while retaining urgent alerts and event IDs", async () => {
+    const userId = ids.family;
+    const threadId = `thread-${userId}-0`;
+    const data = { userId, threadId, botId: `bot-${userId}-0`, spaceId: `space-${userId}` };
+    const eventId = `snoozed-failure-${stamp}`;
+    await runAsSystem("seed snoozed notification fixtures", async () => {
+      await db.prisma.threadRead.update({
+        where: { threadId_userId: { threadId, userId } },
+        data: { snoozedUntil: new Date(Date.now() + 60_000) },
+      });
+      const task = await db.prisma.task.create({
+        data: { ...data, prompt: "Fixture", status: "failed" },
+      });
+      const run = await db.prisma.run.create({
+        data: { ...data, taskId: task.id, trigger: "user", status: "failed" },
+      });
+      await db.prisma.event.create({
+        data: {
+          spaceId: data.spaceId,
+          botId: data.botId,
+          threadId,
+          id: eventId,
+          runId: run.id,
+          type: "run.failed",
+          seq: 99,
+          payload: { error: "Needs attention" },
+        },
+      });
+    });
+    try {
+      const body = (await (
+        await request("/api/accounts", { headers: { cookie: cookie() } })
+      ).json()) as AccountSessions;
+      const notices = body.accounts.find((account) => account.userId === userId)!.notifications;
+      expect(notices.find((item) => item.id === `event-${userId}-0`)).toMatchObject({
+        suppressed: true,
+      });
+      expect(notices.find((item) => item.id === eventId)).toMatchObject({ kind: "failure" });
+      expect(notices.find((item) => item.id === eventId)?.suppressed).not.toBe(true);
+    } finally {
+      await runAsSystem("clear snoozed notification fixtures", async () => {
+        await db.prisma.threadRead.update({
+          where: { threadId_userId: { threadId, userId } },
+          data: { snoozedUntil: null },
+        });
+        await db.prisma.event.delete({ where: { id: eventId } });
+      });
+    }
   });
 
   it("keeps internal background failures out of account notifications", async () => {

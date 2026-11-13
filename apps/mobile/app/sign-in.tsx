@@ -181,6 +181,7 @@ export default function SignIn() {
     setError(null);
     try {
       const selected = await selectSavedAccount(account.userId);
+      if (selected === null) return;
       if (apiBase !== currentApiBase()) return;
       if (selected) {
         if (currentSessionGeneration() > generation + 1) return;

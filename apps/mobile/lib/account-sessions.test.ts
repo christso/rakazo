@@ -25,6 +25,8 @@ const state = vi.hoisted(() => ({
   notifications: vi.fn(),
   push: vi.fn(),
   alert: vi.fn(),
+  confirmLoss: vi.fn(),
+  hangUp: vi.fn(),
 }));
 vi.mock("expo-secure-store", () => ({
   deleteItemAsync: vi.fn(async (key: string) => {
@@ -52,7 +54,11 @@ vi.mock("./api", () => ({
   signOut: state.signOut,
 }));
 vi.mock("./api-auth", () => ({ signOut: state.signOut }));
-vi.mock("./api-server", () => ({ clearSpace: async () => true }));
+vi.mock("./api-server", () => ({
+  clearSpace: async () => true,
+  hangUpBeforeSessionEnd: state.hangUp,
+}));
+vi.mock("./unsent-send-warning", () => ({ confirmUnsentSendLoss: state.confirmLoss }));
 vi.mock("./session", () => ({
   currentSessionGeneration: () => state.generation,
   loadSessionToken: async () => state.token,
@@ -78,6 +84,8 @@ const userFor = (init?: RequestInit) =>
 
 beforeEach(async () => {
   state.disk.clear();
+  state.confirmLoss.mockReset().mockResolvedValue(true);
+  state.hangUp.mockReset().mockResolvedValue(undefined);
   state.token = "family-token";
   state.generation = 0;
   state.apiBase = apiBase;
@@ -424,4 +432,18 @@ it("sign-out-all clears local logins even when remote revocation is offline", as
   expect((await loadSavedAccounts(apiBase)).map((row) => row.userId)).toEqual(["family"]);
   expect(await pendingSessionTokens(apiBase)).toEqual(new Set(["work-token"]));
   expect(state.signOut).toHaveBeenCalledOnce();
+});
+
+it("keeps the outgoing account and messages when switching is cancelled", async () => {
+  state.confirmLoss.mockResolvedValueOnce(false);
+  await expect(selectSavedAccount("work")).resolves.toBeNull();
+  expect(state.token).toBe("family-token");
+  expect(state.save).not.toHaveBeenCalled();
+  expect(state.hangUp).not.toHaveBeenCalled();
+});
+
+it("does not prompt for sign-in when a notification account switch is cancelled", async () => {
+  state.confirmLoss.mockResolvedValueOnce(false);
+  await expect(selectNotificationAccount("work", apiBase)).resolves.toBe("cancelled");
+  expect(state.token).toBe("family-token");
 });

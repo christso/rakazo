@@ -11,7 +11,11 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import Account from "../app/(settings)/account";
 import General from "../app/(settings)/general";
 import Profile from "../app/(settings)/profile";
-import { refreshAccountSummaries, selectSavedAccount } from "./account-sessions";
+import {
+  refreshAccountSummaries,
+  selectSavedAccount,
+  signOutAllAccounts,
+} from "./account-sessions";
 import type * as Api from "./api";
 import { rpc } from "./api";
 import type * as ApiAuth from "./api-auth";
@@ -1044,4 +1048,51 @@ it("shows subscription allowances and credits only for members who have them", a
   expect(titles).toContain("Session");
   expect(view.button("Session")!.dataset.value).toBe("38% used");
   expect(view.button("Credits")!.dataset.value).toBe("$12.50 left");
+});
+
+it("keeps unsent messages when cancelling sign-out of all saved accounts", async () => {
+  vi.mocked(refreshAccountSummaries).mockResolvedValue([
+    { userId: "user-1", email: "one@example.test", unread: 0 },
+    { userId: "user-2", email: "two@example.test", unread: 0 },
+  ]);
+  vi.mocked(hasUnsentSends).mockReturnValue(true);
+  try {
+    const view = await renderAccount();
+    await view.press("Sign out all");
+    const first = vi.mocked(Alert.alert).mock.calls[0]![2]!;
+    await act(async () => {
+      void first[1]!.onPress?.();
+    });
+    expect(Alert.alert).toHaveBeenCalledTimes(2);
+    const loss = vi.mocked(Alert.alert).mock.calls[1]![2]!;
+    await act(async () => {
+      loss[0]!.onPress?.();
+    });
+    expect(signOutAllAccounts).not.toHaveBeenCalled();
+    expect(endCallBeforeSessionEnd).not.toHaveBeenCalled();
+    expect(replaceWithSignIn).not.toHaveBeenCalled();
+  } finally {
+    vi.mocked(hasUnsentSends).mockReturnValue(false);
+  }
+});
+
+it("hangs up before signing out every saved account", async () => {
+  vi.mocked(refreshAccountSummaries).mockResolvedValue([
+    { userId: "user-1", email: "one@example.test", unread: 0 },
+    { userId: "user-2", email: "two@example.test", unread: 0 },
+  ]);
+  const order: string[] = [];
+  vi.mocked(endCallBeforeSessionEnd).mockImplementationOnce(async () => {
+    order.push("hang-up");
+  });
+  vi.mocked(signOutAllAccounts).mockImplementationOnce(async () => {
+    order.push("sign-out");
+  });
+  const view = await renderAccount();
+  await view.press("Sign out all");
+  const buttons = vi.mocked(Alert.alert).mock.calls[0]![2]!;
+  await act(async () => {
+    await buttons[1]!.onPress?.();
+  });
+  expect(order).toEqual(["hang-up", "sign-out"]);
 });

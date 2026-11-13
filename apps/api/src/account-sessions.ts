@@ -90,6 +90,10 @@ async function accountActivity(prisma: PrismaClient, userId: string) {
         include: {
           thread: {
             select: {
+              reads: {
+                where: { userId, snoozedUntil: { gt: new Date() } },
+                select: { userId: true },
+              },
               bot: { select: { name: true, archivedAt: true, notifyOnFinish: true } },
               group: {
                 select: {
@@ -190,6 +194,7 @@ async function accountActivity(prisma: PrismaClient, userId: string) {
         notifications.push({
           id: event.id,
           kind,
+          ...(kind === "completion" && event.thread.reads.length > 0 ? { suppressed: true } : {}),
           title: group?.name ?? bot?.name ?? "",
           body: completionNotificationPreview(
             memberMessage

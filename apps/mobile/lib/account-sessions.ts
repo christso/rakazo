@@ -2,7 +2,7 @@ import { t } from "@lingui/core/macro";
 import { readBoundedJsonResponse } from "@rakazo/core";
 import { currentApiBase } from "./api";
 import { signOut } from "./api-auth";
-import { clearSpace } from "./api-server";
+import { clearSpace, hangUpBeforeSessionEnd } from "./api-server";
 import { appBadgeGeneration, syncAppBadge } from "./app-badge";
 import { getLiveNotificationSettings, stopLiveNotifications } from "./live-notifications";
 import {
@@ -21,6 +21,7 @@ import {
 } from "./saved-accounts";
 import { fetchServer } from "./server-headers";
 import { currentSessionGeneration, loadSessionToken, saveSessionToken } from "./session";
+import { confirmUnsentSendLoss } from "./unsent-send-warning";
 
 export type AccountSummary = { userId: string; email: string; unread: number };
 const unreadCounts = new Map<string, number>();
@@ -140,7 +141,7 @@ export async function refreshAppBadge(): Promise<void> {
 export async function selectSavedAccount(
   userId: string,
   stillCurrent: () => boolean = () => true,
-): Promise<boolean> {
+): Promise<boolean | null> {
   const generation = currentSessionGeneration();
   const apiBase = currentApiBase();
   const current = () =>
@@ -156,6 +157,10 @@ export async function selectSavedAccount(
   const active = await loadSessionToken();
   if (!current()) return false;
   if (active === account.token) return true;
+  if (!(await confirmUnsentSendLoss("account-switch"))) return null;
+  if (!current()) return false;
+  await hangUpBeforeSessionEnd();
+  if (!current()) return false;
   if (!(await clearSpace())) throw new Error(t`Could not clear the local session`);
   if (!current()) return false;
   await stopLiveNotifications(false).catch(() => undefined);
@@ -171,7 +176,7 @@ export async function selectNotificationAccount(
   userId?: string,
   apiBase?: string,
   stillCurrent: () => boolean = () => true,
-): Promise<"selected" | "signed-out" | "other-server"> {
+): Promise<"selected" | "signed-out" | "other-server" | "cancelled"> {
   const server = currentApiBase();
   if (apiBase !== undefined && !(await isSavedServer(server, apiBase))) {
     // The server's own name for itself is learned from its account summary.
@@ -182,10 +187,10 @@ export async function selectNotificationAccount(
   const rows = await loadSavedAccounts(server);
   // Older deliveries have no account. They are safe only with one saved login.
   const target = userId ?? (rows.length === 1 ? rows[0]?.userId : undefined);
-  return target &&
-    (await selectSavedAccount(target, () => stillCurrent() && server === currentApiBase()))
-    ? "selected"
-    : "signed-out";
+  const selected = target
+    ? await selectSavedAccount(target, () => stillCurrent() && server === currentApiBase())
+    : false;
+  return selected === null ? "cancelled" : selected ? "selected" : "signed-out";
 }
 
 /** Removes every saved login locally; remote failures are reported after that. */

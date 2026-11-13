@@ -11,12 +11,13 @@ import {
   signOutAllAccounts,
 } from "../lib/account-sessions";
 import { replaceWithSignIn } from "../lib/auth-routing";
+import { endCallBeforeSessionEnd } from "../lib/call-session";
 import { useResolvedAppearance } from "../lib/native";
 import { closeSettingsSheet } from "../lib/settings-sheet";
+import { confirmUnsentSendLoss } from "../lib/unsent-send-warning";
 import { errorText } from "../lib/user-error";
 import { SettingsGroup, SettingsRow } from "./settings-group";
 
-/** Saved identities stay separate from the upstream settings hub. */
 export function SavedAccountSettings({
   userId,
   pending,
@@ -51,7 +52,12 @@ export function SavedAccountSettings({
     onPendingChange(true);
     onError(null);
     try {
-      if (!(await selectSavedAccount(nextUserId))) throw new Error(t`Sign in to open this account`);
+      const selected = await selectSavedAccount(nextUserId);
+      if (selected === null) {
+        onPendingChange(false);
+        return;
+      }
+      if (!selected) throw new Error(t`Sign in to open this account`);
       closeSettingsSheet();
       router.dismissTo("/");
     } catch (error) {
@@ -76,11 +82,23 @@ export function SavedAccountSettings({
       {
         text: t`Sign out all`,
         style: "destructive",
-        onPress: () => {
+        onPress: async () => {
+          if (!(await confirmUnsentSendLoss("sign-out"))) return;
           onPendingChange(true);
-          void signOutAllAccounts()
-            .catch((error) => Alert.alert(errorText(error, t`Could not sign out`)))
-            .finally(() => replaceWithSignIn());
+          try {
+            await endCallBeforeSessionEnd();
+          } catch (error) {
+            onError(errorText(error, t`Could not sign out`));
+            onPendingChange(false);
+            return;
+          }
+          try {
+            await signOutAllAccounts();
+          } catch (error) {
+            Alert.alert(errorText(error, t`Could not sign out`));
+          } finally {
+            replaceWithSignIn();
+          }
         },
       },
     ]);

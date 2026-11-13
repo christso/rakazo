@@ -2,6 +2,8 @@
 export type AccountNotification = {
   id: string;
   kind: "completion" | "failure" | "help" | "takeover";
+  /** Remember the occurrence without alerting, so waking a chat cannot replay it. */
+  suppressed?: boolean;
   title: string;
   body: string;
   botId: string;

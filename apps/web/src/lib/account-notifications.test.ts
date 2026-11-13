@@ -53,3 +53,22 @@ it("discards removed accounts and opens group targets instead of a bot in the gr
   expect(seen.size).toBe(0);
   expect(accountNotificationPath({ ...notice, groupId: "group" })).toBe("/app/g/group");
 });
+
+it("remembers snoozed occurrences without alerting or replaying them after wake", () => {
+  const seen = new Map<string, Set<string>>();
+  accountNotificationChanges([account], seen);
+  const snoozed = { ...notice, id: "delivery-snoozed", suppressed: true };
+  expect(accountNotificationChanges([{ ...account, notifications: [snoozed] }], seen)).toEqual([]);
+  expect(
+    accountNotificationChanges(
+      [{ ...account, notifications: [{ ...snoozed, suppressed: false }] }],
+      seen,
+    ),
+  ).toEqual([]);
+  expect(
+    accountNotificationChanges(
+      [{ ...account, notifications: [{ ...notice, id: "delivery-after-wake" }] }],
+      seen,
+    ),
+  ).toHaveLength(1);
+});

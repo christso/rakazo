@@ -15,7 +15,8 @@ export function accountNotificationChanges(
   for (const account of accounts) {
     const previous = seen.get(account.userId);
     for (const notification of account.notifications) {
-      if (previous && !previous.has(notification.id)) changes.push({ account, notification });
+      if (previous && !previous.has(notification.id) && !notification.suppressed)
+        changes.push({ account, notification });
     }
     // Retain recent IDs through bounded feed changes, without accumulating account history.
     seen.set(

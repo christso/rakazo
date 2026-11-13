@@ -275,6 +275,10 @@ let hangUpBeforeCredentialsCleared: (() => Promise<void>) | undefined;
 export function configureSessionEndHangUp(hangUp: (() => Promise<void>) | undefined): void {
   hangUpBeforeCredentialsCleared = hangUp;
 }
+/** Runs the registered call cleanup before any account or endpoint loses its bearer. */
+export async function hangUpBeforeSessionEnd(): Promise<void> {
+  await hangUpBeforeCredentialsCleared?.();
+}
 type ClearedCredentials = {
   previousToken: string;
   previousSpace: string;
@@ -291,7 +295,7 @@ async function clearCredentialsForEndpointChange(
   previousHeaders: Record<string, string>,
 ): Promise<({ ok: true } & ClearedCredentials) | { ok: false; result: EndpointResult }> {
   // The old server's session authorizes the call's hang-up; send it while it still exists.
-  await hangUpBeforeCredentialsCleared?.().catch(() => undefined);
+  await hangUpBeforeSessionEnd().catch(() => undefined);
   const generation = currentSessionGeneration();
   // A save still running reads as no session; its token may land before the clear.
   const previousToken = sessionSaveInProgress()

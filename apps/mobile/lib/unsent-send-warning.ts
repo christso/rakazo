@@ -4,7 +4,7 @@ import { hasUnsentSends } from "./thread-feedback";
 import { unsentSendsRestored } from "./unsent-sends";
 
 /** What is about to clear the queue of unsent messages. */
-export type UnsentSendLossAction = "sign-out" | "server-switch";
+export type UnsentSendLossAction = "sign-out" | "server-switch" | "account-switch";
 
 /**
  * Confirms an action that deletes this device's unsent messages. Resolves false when
@@ -18,7 +18,9 @@ export async function confirmUnsentSendLoss(action: UnsentSendLossAction): Promi
   const message =
     action === "sign-out"
       ? t`Signing out deletes unsent messages.`
-      : t`Switching servers deletes unsent messages.`;
+      : action === "account-switch"
+        ? t`Switching accounts deletes unsent messages.`
+        : t`Switching servers deletes unsent messages.`;
   return new Promise((resolve) => {
     Alert.alert(t`Unsent messages`, message, [
       { text: t`Cancel`, style: "cancel", onPress: () => resolve(false) },
