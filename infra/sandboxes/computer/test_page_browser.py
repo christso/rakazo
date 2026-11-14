@@ -493,6 +493,8 @@ class FakePurchases:
         return {"url": "https://shop.example.test/pay", "title": "Pay"}
 
     def click(self, box, scrolled):
+        if box is None:
+            return FakePurchases.shows
         if box.get("ref") in FakePurchases.offscreen and not scrolled:
             raise helper.Offscreen()
         return box.get("pay")
@@ -611,8 +613,26 @@ class PurchaseTest(unittest.TestCase):
     def test_a_control_out_of_view_is_scrolled_to_before_it_is_checked(self):
         browser = pays(FakeAgentBrowser())
         FakePurchases.offscreen = {"e8"}
+        FakePurchases.shows = PAY
         self.assertEqual(self.act([{"kind": "click", "ref": "e8"}], browser)["error"], helper.PURCHASE_REFUSED)
         self.assertEqual(browser.actions(), [["scrollintoview", "@e8"]])
+
+    def test_a_batch_shares_one_scroll_wait_budget_when_targets_remain_out_of_view(self):
+        browser = FakeAgentBrowser()
+        browser.boxes["e8"] = {"ref": "e8"}
+        FakePurchases.offscreen = {"e8"}
+        now = [0.0]
+
+        def sleep(seconds):
+            now[0] += seconds
+
+        with patch.object(helper.time, "monotonic", side_effect=lambda: now[0]), \
+                patch.object(helper.time, "sleep", side_effect=sleep):
+            result = page(browser).purchase_check({"actions": [{"kind": "click", "ref": "e8"}] * 24})
+        self.assertIsNone(result["purchase"])
+        self.assertLessEqual(now[0], 8.01)
+        self.assertLessEqual(len(browser.actions()), 4)
+        self.assertFalse(any(command[0] == "click" for command in browser.actions()))
 
     def test_purchase_check_names_the_clicks_that_would_buy_and_presses_nothing(self):
         browser = pays(FakeAgentBrowser(), "e7")
