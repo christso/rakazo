@@ -312,6 +312,136 @@ test("live page helper reads a checkout's order lines for the pay approval", asy
   }
 });
 
+for (const container of ["document", "nested"] as const) {
+  test(`live page helper checks the intended control after smooth scrolling in ${container}`, async () => {
+    const profile = await mkdtemp(path.join(os.tmpdir(), "page-browser-scroll-"));
+    const server = http.createServer((_req, res) => {
+      res.setHeader("content-type", "text/html");
+      res.end(`<!doctype html><title>Checkout</title>
+      <style>html { scroll-behavior: smooth } #payment { position: fixed; top: 10px; right: 10px }
+        #note { margin-top: 1500px } footer { height: 1000px }
+        section { height: 420px; overflow: auto; scroll-behavior: smooth }</style>
+      <div id="payment"><p>Total: $5.00</p><button type="button">Pay using Gift Card</button></div>
+      ${container === "nested" ? "<section>" : ""}
+      <button id="note" type="button" onclick="window.notes++">Add shopper note</button>
+      <form onsubmit="event.preventDefault(); window.orders++"><button>Place order</button></form>
+      <footer></footer>${container === "nested" ? "</section>" : ""}
+      <script>window.notes = 0; window.orders = 0;</script>`);
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("No fixture server");
+    let context: Awaited<ReturnType<typeof chromium.launchPersistentContext>> | undefined;
+    try {
+      context = await chromium.launchPersistentContext(profile, {
+        ...BROWSER,
+        args: ["--remote-debugging-port=0"],
+        viewport: { width: 1280, height: 713 },
+      });
+      const port = (await readFile(path.join(profile, "DevToolsActivePort"), "utf8")).split(
+        "\n",
+      )[0]!;
+      async function command(name: string, args: Record<string, unknown> = {}) {
+        const { stdout } = await execute("python3", [helper, name, JSON.stringify(args)], {
+          env: { ...process.env, RAKAZO_CDP_PORT: port },
+          timeout: 30_000,
+        });
+        return JSON.parse(stdout);
+      }
+      const page = context.pages()[0]!;
+      const ref = (snapshot: { elements: { name: string; ref: string }[] }, name: string) =>
+        snapshot.elements.find((element) => element.name === name)!.ref;
+      await page.goto(`http://127.0.0.1:${address.port}/checkout`);
+      const snapshot = await command("snapshot");
+      const note = ref(snapshot, "Add shopper note");
+      expect((await page.locator("#note").boundingBox())!.y).toBeGreaterThan(713);
+      expect(
+        await command("purchase_check", { actions: [{ kind: "click", ref: note }] }),
+      ).toMatchObject({ ok: true, purchase: null });
+      expect(await page.evaluate(() => (window as unknown as { notes: number }).notes)).toBe(0);
+      // Execution has its own purchase check and must also handle an offscreen control.
+      await page.evaluate(() => {
+        window.scrollTo({ top: 0, behavior: "instant" });
+        document.querySelector("section")?.scrollTo({ top: 0, behavior: "instant" });
+      });
+      expect(await command("act", { actions: [{ kind: "click", ref: note }] })).toMatchObject({
+        ok: true,
+        completed: 1,
+      });
+      expect(await page.evaluate(() => (window as unknown as { notes: number }).notes)).toBe(1);
+      const final = ref(await command("snapshot"), "Place order");
+      const actions = [{ kind: "click", ref: final }];
+      const checked = await command("purchase_check", { actions });
+      expect(checked.purchase).toMatchObject({ label: "Place order", amount: "$5.00", steps: [0] });
+      expect(await command("act", { actions })).toMatchObject({ ok: false, completed: 0 });
+      expect(await page.evaluate(() => (window as unknown as { orders: number }).orders)).toBe(0);
+      const approved = {
+        ...actions[0],
+        approved: true,
+        site: checked.site,
+        label: "Place order",
+        amount: "$5.00",
+      };
+      // A changed total cannot execute under the old approval.
+      await page.locator("#payment p").evaluate((el) => {
+        el.textContent = "Total: $9.00";
+      });
+      expect(await command("act", { actions: [approved] })).toMatchObject({
+        ok: false,
+        completed: 0,
+      });
+      expect(await page.evaluate(() => (window as unknown as { orders: number }).orders)).toBe(0);
+      await page.locator("#payment p").evaluate((el) => {
+        el.textContent = "Total: $5.00";
+      });
+      expect(await command("act", { actions: [approved] })).toMatchObject({
+        ok: true,
+        completed: 1,
+      });
+      expect(await page.evaluate(() => (window as unknown as { orders: number }).orders)).toBe(1);
+      // Replacing the intended control while scrolling cannot redirect the original ref's click.
+      await page.reload();
+      await page.evaluate(() => {
+        window.scrollTo({ top: 0, behavior: "instant" });
+        document.querySelector("section")?.scrollTo({ top: 0, behavior: "instant" });
+      });
+      const oldNote = ref(await command("snapshot"), "Add shopper note");
+      expect((await page.locator("#note").boundingBox())!.y).toBeGreaterThan(713);
+      await page.evaluate(() => {
+        document.addEventListener(
+          "scroll",
+          () => {
+            document.querySelector("#note")!.outerHTML =
+              '<button id="note" onclick="window.orders++">Place order</button>';
+          },
+          { once: true, capture: true },
+        );
+      });
+      expect(await command("act", { actions: [{ kind: "click", ref: oldNote }] })).toMatchObject({
+        ok: false,
+        completed: 0,
+      });
+      expect(await page.evaluate(() => (window as unknown as { orders: number }).orders)).toBe(0);
+      // Scrolling cannot bring a fixed offscreen control into view: retain the conservative guard.
+      await page.reload();
+      await page.locator("#note").evaluate((el) => {
+        el.style.cssText = "position:fixed; top:1500px; margin-top:0";
+      });
+      const unreachable = ref(await command("snapshot"), "Add shopper note");
+      expect(
+        await command("act", { actions: [{ kind: "click", ref: unreachable }] }),
+      ).toMatchObject({ ok: false, completed: 0 });
+      expect(await page.evaluate(() => (window as unknown as { notes: number }).notes)).toBe(0);
+      expect(await page.evaluate(() => (window as unknown as { orders: number }).orders)).toBe(0);
+    } finally {
+      await context?.close();
+      await rm(profile, { recursive: true, force: true });
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+}
+
 test("live page helper reaches a form past the control limit by query or by scrolling to it", async () => {
   const profile = await mkdtemp(path.join(os.tmpdir(), "page-browser-long-"));
   const stories = Array.from(
