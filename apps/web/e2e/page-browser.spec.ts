@@ -319,7 +319,7 @@ for (const container of ["document", "nested"] as const) {
       res.setHeader("content-type", "text/html");
       res.end(`<!doctype html><title>Checkout</title>
       <style>html { scroll-behavior: smooth } #payment { position: fixed; top: 10px; right: 10px }
-        #note { margin-top: 1500px } footer { height: 1000px }
+        #note { display: block; margin-top: 1500px } footer { height: 1000px }
         section { height: 420px; overflow: auto; scroll-behavior: smooth }</style>
       <div id="payment"><p>Total: $5.00</p><button type="button">Pay using Gift Card</button></div>
       ${container === "nested" ? "<section>" : ""}
@@ -369,6 +369,43 @@ for (const container of ["document", "nested"] as const) {
         completed: 1,
       });
       expect(await page.evaluate(() => (window as unknown as { notes: number }).notes)).toBe(1);
+      // The reported checkout run had four note clicks: later targets need their own scroll time.
+      await page.locator("#note").evaluate((el) => {
+        for (let i = 1; i < 4; i++) {
+          const next = el.cloneNode(true) as HTMLElement;
+          next.id = `note-${i}`;
+          next.style.marginTop = "2000px";
+          next.style.display = "block";
+          el.parentElement!.insertBefore(next, el.parentElement!.querySelector("form"));
+        }
+      });
+      const noteClicks = (await command("snapshot")).elements
+        .filter((element: { name: string }) => element.name === "Add shopper note")
+        .map((element: { ref: string }) => ({ kind: "click", ref: element.ref }));
+      expect(noteClicks).toHaveLength(4);
+      const positions = await page
+        .locator('button[id^="note"]')
+        .evaluateAll((buttons) => buttons.map((button) => button.getBoundingClientRect().y));
+      for (let i = 1; i < positions.length; i++) {
+        expect(positions[i]! - positions[i - 1]!).toBeGreaterThan(713);
+      }
+      const reset = async () =>
+        page.evaluate(() => {
+          window.scrollTo({ top: 0, behavior: "instant" });
+          document.querySelector("section")?.scrollTo({ top: 0, behavior: "instant" });
+          (window as unknown as { notes: number }).notes = 0;
+        });
+      await reset();
+      expect(await command("purchase_check", { actions: noteClicks })).toMatchObject({
+        purchase: null,
+      });
+      await reset();
+      expect(await command("act", { actions: noteClicks })).toMatchObject({
+        ok: true,
+        completed: 4,
+      });
+      expect(await page.evaluate(() => (window as unknown as { notes: number }).notes)).toBe(4);
+      await page.reload();
       const final = ref(await command("snapshot"), "Place order");
       const actions = [{ kind: "click", ref: final }];
       const checked = await command("purchase_check", { actions });

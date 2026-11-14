@@ -630,8 +630,8 @@ class PurchaseTest(unittest.TestCase):
                 patch.object(helper.time, "sleep", side_effect=sleep):
             result = page(browser).purchase_check({"actions": [{"kind": "click", "ref": "e8"}] * 24})
         self.assertIsNone(result["purchase"])
-        self.assertLessEqual(now[0], 2.01)
-        self.assertEqual(browser.actions(), [["scrollintoview", "@e8"]])
+        self.assertLessEqual(now[0], 8.01)
+        self.assertLessEqual(len(browser.actions()), 4)
         self.assertFalse(any(command[0] == "click" for command in browser.actions()))
 
     def test_purchase_check_names_the_clicks_that_would_buy_and_presses_nothing(self):
