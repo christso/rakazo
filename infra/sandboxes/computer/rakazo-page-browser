@@ -68,6 +68,9 @@ ACTION_WAIT_SECONDS = 2.0
 QUIET_SECONDS = 0.15
 # How often a wait reads the page again.
 POLL_SECONDS = 0.05
+# One target's scroll wait, and the total scroll wait budget across an action batch.
+SCROLL_SETTLE_SECONDS = 2.0
+SCROLL_CALL_SECONDS = 8.0
 # A search box or autocomplete sends its request a moment after typing stops (a debounce), so an act
 # that ends by typing starts its quiet wait this long after the last key.
 TYPING_PAUSE_SECONDS = 0.35
@@ -756,6 +759,7 @@ class PageBrowser:
         # times out, and agent-browser then stops answering for the tab, dialog commands included.
         self.dialog_opened = False
         self._purchases: Purchases | None = None
+        self._scroll_deadline: float | None = None
 
     # -- reading the page -------------------------------------------------------------------------
 
@@ -991,8 +995,32 @@ class PageBrowser:
         for scrolled in (False, True):
             try:
                 if scrolled:
-                    self.ab.batch([["scrollintoview", f"@{ref}"]])
-                (box,) = self.ab.batch([["get", "box", f"@{ref}"]])
+                    if self._scroll_deadline is None:
+                        self._scroll_deadline = time.monotonic() + SCROLL_CALL_SECONDS
+                    deadline = min(self._scroll_deadline, time.monotonic() + SCROLL_SETTLE_SECONDS)
+                    if time.monotonic() >= deadline:
+                        raise Deadline()
+                    self.ab.batch([["scrollintoview", f"@{ref}"]],
+                                  timeout=max(0.001, deadline - time.monotonic()))
+                (box,) = self.ab.batch([["get", "box", f"@{ref}"]],
+                                      timeout=max(0.001, deadline - time.monotonic()) if scrolled else 20.0)
+                if scrolled:
+                    while time.monotonic() < deadline:
+                        previous = box
+                        time.sleep(min(POLL_SECONDS, max(0.0, deadline - time.monotonic())))
+                        if time.monotonic() >= deadline:
+                            break
+                        (box,) = self.ab.batch([["get", "box", f"@{ref}"]],
+                                              timeout=max(0.001, deadline - time.monotonic()))
+                        if box == previous:
+                            try:
+                                # A stable box outside the viewport may be the beginning of the animation.
+                                # Keep waiting; only an in-view target can avoid the page-wide fallback.
+                                return site, purchases.click(box, False)
+                            except Offscreen:
+                                pass
+                    # No stable visible target was established within the call's scroll budget.
+                    box = None
             except Exception:  # noqa: BLE001
                 box = None
             try:
@@ -1218,6 +1246,8 @@ class PageBrowser:
                     refused = purchase_refusal(step, *self.click_purchase(ref, node), completed)  # type: ignore[arg-type]
                     if refused:
                         return refused
+                    # Scrolling and its purchase check may outlive the original element.
+                    node = self.control(ref)
                     # agent-browser scrolls an element into view inside its frame, not the frame into view
                     # on the page, so a click on a frame below the fold would land on whatever is there.
                     frame = node.frame  # type: ignore[union-attr]
