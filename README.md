@@ -15,10 +15,9 @@ slower with measured timestamps; the replay executes no note or payment click.
 The already-visible comparison uses the same unfixed code. This clip documents
 the symptom rather than the deployed fix.
 
-Product rows, quantities, prices, totals and delivery details are covered in the
-public export. The source recording is retained privately. The visible native
-card label and shopper-note control are original application/merchant pixels;
-privacy masks and explanatory captions do not replace an outcome.
+Dummy products, quantities, prices and totals remain visible. The recorded
+checkout excerpt excludes address, payment-instrument and login details. The
+native card, shopper-note control and measured results are unchanged.
 
 ## Synthetic reproduction and fix
 
