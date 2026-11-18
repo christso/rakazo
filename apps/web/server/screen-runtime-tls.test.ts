@@ -38,22 +38,30 @@ async function listen(server: http.Server) {
   return (server.address() as AddressInfo).port;
 }
 
-async function proxy(pin: string, runtimePath = "/embed.html") {
+async function proxy(pin: string, runtimePath = "/embed.html", serverName?: string) {
   const received: { transport: string; authorization?: string }[] = [];
+  const hosts: (string | undefined)[] = [];
+  const origins: (string | undefined)[] = [];
+  const serverNames: (string | false | null)[] = [];
   const runtime = https.createServer(
     { key: TEST_TLS_KEY, cert: TEST_TLS_CERTIFICATE },
     (request, response) => {
+      hosts.push(request.headers.host);
+      origins.push(request.headers.origin);
       received.push({ transport: "http", authorization: request.headers.authorization });
       response.setHeader("content-type", "text/plain");
       response.end("runtime");
     },
   );
   runtime.on("upgrade", (request, socket) => {
+    hosts.push(request.headers.host);
+    origins.push(request.headers.origin);
     received.push({ transport: "websocket", authorization: request.headers.authorization });
     socket.end(
       "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n",
     );
   });
+  runtime.on("secureConnection", (socket) => serverNames.push(socket.servername));
   const runtimePort = await listen(runtime);
   const secret = "synthetic-screen-proxy-secret";
   const capability = new URL(
@@ -71,6 +79,7 @@ async function proxy(pin: string, runtimePath = "/embed.html") {
       undefined,
       { authorization: "Bearer synthetic-runtime-token" },
       pin,
+      serverName,
     ),
   );
   const capabilityPath = `${capability.pathname}${capability.search}`;
@@ -108,16 +117,32 @@ async function proxy(pin: string, runtimePath = "/embed.html") {
       createLogger({ service: "test", sinks: [] }),
     ),
   );
-  return { port: await listen(web), received, capabilityPath };
+  return {
+    port: await listen(web),
+    received,
+    capabilityPath,
+    hosts,
+    origins,
+    serverNames,
+    runtimePort,
+  };
 }
 
 function page(port: number, capabilityPath: string) {
   return new Promise<number | undefined>((resolve, reject) => {
     http
-      .get({ host: "127.0.0.1", port, path: capabilityPath }, (response) => {
-        response.resume();
-        response.once("end", () => resolve(response.statusCode));
-      })
+      .get(
+        {
+          host: "127.0.0.1",
+          port,
+          path: capabilityPath,
+          headers: { origin: "https://app.example" },
+        },
+        (response) => {
+          response.resume();
+          response.once("end", () => resolve(response.statusCode));
+        },
+      )
       .on("error", reject);
   });
 }
@@ -128,7 +153,7 @@ function websocket(port: number, capabilityPath: string) {
       host: "127.0.0.1",
       port,
       path: capabilityPath,
-      headers: { connection: "Upgrade", upgrade: "websocket" },
+      headers: { connection: "Upgrade", upgrade: "websocket", origin: "https://app.example" },
     });
     request.once("upgrade", (response, socket) => {
       socket.destroy();
@@ -143,6 +168,20 @@ function websocket(port: number, capabilityPath: string) {
 }
 
 describe("cloud runtime screen transport", () => {
+  it("preserves sealed host identity for HTTP and WebSockets while dialing the numeric target", async () => {
+    const server = await proxy(fingerprint, "/embed.html", "runtime.example.test");
+    expect(await page(server.port, server.capabilityPath)).toBe(200);
+    expect(await websocket(server.port, server.capabilityPath)).toBe(101);
+    expect(server.hosts).toEqual([
+      `runtime.example.test:${server.runtimePort}`,
+      `runtime.example.test:${server.runtimePort}`,
+    ]);
+    expect(server.serverNames.every((name) => name === "runtime.example.test")).toBe(true);
+    expect(server.origins).toEqual([
+      `https://runtime.example.test:${server.runtimePort}`,
+      `https://runtime.example.test:${server.runtimePort}`,
+    ]);
+  });
   it("passes authorized HTTP and WebSocket traffic through a matching pin", async () => {
     const server = await proxy(fingerprint);
     expect(await page(server.port, server.capabilityPath)).toBe(200);

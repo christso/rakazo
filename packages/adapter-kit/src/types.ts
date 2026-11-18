@@ -164,6 +164,7 @@ export interface TerminalRequest {
 export interface ScreenSession {
   /** Certificate fingerprint for the authenticated server proxy only. */
   tlsCertificateSha256?: string;
+  tlsServerName?: string;
   /** Provider credentials for the server proxy only; never return these to clients. */
   headers?: Record<string, string>;
   url: string | null;

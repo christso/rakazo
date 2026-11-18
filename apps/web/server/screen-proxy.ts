@@ -156,7 +156,7 @@ export type ScreenTargetFailure =
  */
 export function safeProxyHeaders(
   headers: IncomingHttpHeaders,
-  target?: Pick<ScreenProxyTarget, "protocol" | "hostname" | "port" | "headers">,
+  target?: Pick<ScreenProxyTarget, "protocol" | "hostname" | "port" | "headers" | "tlsServerName">,
 ) {
   const forwarded: IncomingHttpHeaders = Object.fromEntries(
     Object.entries(headers).filter(([key, value]) => {
@@ -167,9 +167,14 @@ export function safeProxyHeaders(
   return { ...forwarded, ...target?.headers };
 }
 
-function screenTargetOrigin(target: Pick<ScreenProxyTarget, "protocol" | "hostname" | "port">) {
+function screenTargetOrigin(
+  target: Pick<ScreenProxyTarget, "protocol" | "hostname" | "port" | "tlsServerName">,
+) {
   const defaultPort = target.protocol === "https:" ? 443 : 80;
-  return `${target.protocol}//${target.hostname}${target.port === defaultPort ? "" : `:${target.port}`}`;
+  const host =
+    target.tlsServerName ??
+    (target.hostname.includes(":") ? `[${target.hostname}]` : target.hostname);
+  return `${target.protocol}//${host}${target.port === defaultPort ? "" : `:${target.port}`}`;
 }
 
 /** What a recheck of an open screen found. */

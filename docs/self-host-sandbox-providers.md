@@ -36,6 +36,13 @@ for desktop and fake deployments.
 The account form offers only providers that declare support for account-owned computers.
 Team Computers follow their owner's account choice; Private Computers use the deployment choice. See [Wuying setup](./wuying-computers.md) for that adapter's fields and requirements.
 
+### An existing runtime host for a Space
+
+A Space can also select **Remote computer** to use an operator-prepared Linux host with dedicated
+Rakazo desktop containers. This connection creates no VM and never controls the host's logged-in
+desktop. See [existing-host setup](./remote-computers.md) for pinned TLS, private-network approvals,
+installation and persistence.
+
 ### Cloud connections for a Space
 
 With computer settings enabled, the Space owner or an organization admin can configure a cloud

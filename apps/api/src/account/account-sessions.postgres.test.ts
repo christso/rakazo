@@ -149,6 +149,18 @@ suite("saved account sessions and notifications (PostgreSQL)", () => {
     await db.pool.end();
   });
 
+  it("keeps anonymous account discovery empty when other accounts exist", async () => {
+    const response = await request("/api/accounts");
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(await response.json()).toEqual({ activeUserId: null, accounts: [] });
+
+    const head = await request("/api/accounts", { method: "HEAD" });
+    expect(head.status).toBe(200);
+    expect(head.headers.get("cache-control")).toBe("no-store");
+    expect(await head.text()).toBe("");
+  });
+
   it("reads both accounts without changing selection and respects each notification preference", async () => {
     const response = await request("/api/accounts", { headers: { cookie: cookie() } });
     expect(response.status).toBe(200);

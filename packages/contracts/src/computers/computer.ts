@@ -82,6 +82,7 @@ export const ComputerProviderDescriptorSchema = z.object({
   capabilities: z.object({
     perAccount: z.boolean(),
     requiresSpendingApproval: z.boolean().optional(),
+    spaceOnly: z.boolean().optional(),
   }),
 });
 export type ComputerProviderDescriptor = z.infer<typeof ComputerProviderDescriptorSchema>;

@@ -12,7 +12,7 @@ export const ProviderSettingsFieldSchema = z.object({
   kind: z.enum(["text", "secret", "url", "select", "toggle", "list"]),
   required: z.boolean(),
   options: z.array(z.object({ value: z.string(), label: z.string() })).optional(),
-  validation: z.enum(["public-https"]).optional(),
+  validation: z.enum(["public-https", "operator-https"]).optional(),
   /** A saved credential must be re-entered when its destination changes. */
   destination: z.string().optional(),
   /** What a select or toggle holds until it is changed. */

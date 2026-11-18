@@ -44,11 +44,11 @@ jobs:
       - id: areas
         run: bash .github/scripts/changed-areas.sh >> "$GITHUB_OUTPUT"
 
-  # Pull requests run these on Depot (.depot/workflows/ci.yml calls the same file), which leaves
-  # GitHub's runners for Web E2E, native computer, publishing and deploys.
+  # Upstream pull requests use Depot (.depot/workflows/ci.yml calls the same file).
+  # Fork pull requests also run here so checks do not depend on a Depot connection.
   tests:
     name: Tests
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' || github.event.repository.fork == true
     uses: ./.github/workflows/test-suites.yml
     with:
       runner: ubuntu-latest

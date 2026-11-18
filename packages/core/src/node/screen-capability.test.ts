@@ -28,6 +28,43 @@ const path = (url: string, interactive = false) =>
     ),
   ).pathname;
 describe("sealed screen capabilities", () => {
+  it("seals the approved TLS hostname beside a pinned numeric screen target", () => {
+    const url = new URL(
+      sealScreenCapability(
+        "https://100.64.10.8/desktop/32123/embed.html",
+        "secret",
+        "https://app.example",
+        scope,
+        100,
+        undefined,
+        "A".repeat(43),
+        "runtime.example.test",
+      ),
+    );
+    expect(url.toString()).not.toContain("runtime.example.test");
+    expect(openScreenCapability(url.pathname, "secret", 101)?.target).toMatchObject({
+      hostname: "100.64.10.8",
+      tlsServerName: "runtime.example.test",
+    });
+  });
+  it.each([
+    [undefined, "runtime.example.test"],
+    ["A".repeat(43), "runtime.example.test\r\nx-forged: yes"],
+    ["A".repeat(43), "runtime.example.test:8443"],
+  ])("refuses invalid or unpinned TLS host metadata", (pin, serverName) => {
+    expect(() =>
+      sealScreenCapability(
+        "https://100.64.10.8/embed.html",
+        "secret",
+        "https://app.example",
+        scope,
+        100,
+        undefined,
+        pin,
+        serverName,
+      ),
+    ).toThrow("TLS server name");
+  });
   it("seals the certificate pin with the provider credentials for every resource", () => {
     const pin = "A".repeat(43);
     const url = new URL(

@@ -1,4 +1,5 @@
 import type { SettingsComputerProvider } from "../../../computers/computer-provider-descriptor.js";
+import { pinRuntimeEndpoint } from "../../../computers/sandbox/supervisor/gateway-endpoint.js";
 
 export const computerProviderRegistry: readonly SettingsComputerProvider[] = [
   {
@@ -42,6 +43,37 @@ export const computerProviderRegistry: readonly SettingsComputerProvider[] = [
     verify(values) {
       if (!values.apiKey) throw new Error("Missing API key");
       return {};
+    },
+  },
+  {
+    id: "test-runtime",
+    displayName: "Test runtime",
+    capabilities: { perAccount: false, spaceOnly: true },
+    fields: [
+      {
+        key: "apiUrl",
+        label: "Runtime URL",
+        kind: "url",
+        required: true,
+        validation: "operator-https",
+      },
+      {
+        key: "apiToken",
+        label: "Access token",
+        kind: "secret",
+        required: true,
+        destination: "apiUrl",
+      },
+      { key: "certificateSha256", label: "Certificate fingerprint", kind: "text", required: true },
+    ],
+    verify(values) {
+      for (const field of this.fields) {
+        if (field.required && !values[field.key]?.trim()) throw new Error("Missing setting");
+      }
+      return {};
+    },
+    async verifyEndpoint(value, signal, resolveHostname) {
+      await pinRuntimeEndpoint(value, { signal, resolveHostname });
     },
   },
 ];

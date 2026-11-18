@@ -5,6 +5,7 @@ import type {
   UnreferencedMachineRecords,
 } from "@rakazo/adapter-kit";
 import type { ComputerProviderDescriptor, ComputerProviderField } from "@rakazo/contracts";
+import type { ResolveHostname } from "../network/network-address.js";
 import type { KubernetesSandboxOptions } from "../providers/computer/kubernetes/kubernetes-sandbox.js";
 
 export interface SandboxProviderOptions {
@@ -114,11 +115,18 @@ export interface ComputerProviderDefinition {
     displayName: string;
     perAccount?: boolean;
     requiresSpendingApproval?: boolean;
+    spaceOnly?: boolean;
     spendingApprovalMessage?: string;
     fields: readonly ComputerSettingsField[];
     /** Checks beyond each field's own. */
     validate?(values: Record<string, string>): void;
     verifyConnection?(values: Record<string, string>, signal: AbortSignal): Promise<void>;
+    /** Operator-authorized endpoint policy, checked before credentials are stored or used. */
+    verifyEndpoint?(
+      value: string,
+      signal: AbortSignal,
+      resolveHostname?: ResolveHostname,
+    ): Promise<void>;
   };
   /** Whether the environment leaves the provider unable to run beyond a missing required option. */
   unavailable?(source: NodeJS.ProcessEnv): boolean;
@@ -129,6 +137,11 @@ export interface ComputerProviderDefinition {
 export interface SettingsComputerProvider extends ComputerProviderDescriptor {
   verify(values: Record<string, string>): SandboxProviderOptions;
   verifyConnection?(values: Record<string, string>, signal: AbortSignal): Promise<void>;
+  verifyEndpoint?(
+    value: string,
+    signal: AbortSignal,
+    resolveHostname?: ResolveHostname,
+  ): Promise<void>;
 }
 
 export function envBindings({ env = {} }: ComputerProviderDefinition) {

@@ -5,7 +5,7 @@ import {
   isPrivateNetworkAddress,
 } from "@rakazo/contracts/network-host";
 
-import { isTlsCertificateSha256 } from "@rakazo/core/node/pinned-https";
+import { isTlsCertificateSha256, isTlsServerName } from "@rakazo/core/node/pinned-https";
 
 export const SCREEN_PROXY_TTL_MS = 60 * 60_000;
 export const SCREEN_TARGET_ENDPOINT = "/api/internal/screen-target";
@@ -41,6 +41,8 @@ export interface ScreenProxyTarget {
   headers?: Record<string, string>;
   /** Authenticated certificate pin for a private runtime; never sent to browsers. */
   tlsCertificateSha256?: string;
+  /** Original approved hostname for SNI and HTTP Host; the dial address stays numeric. */
+  tlsServerName?: string;
 }
 
 export function isScreenProxyTarget(value: unknown): value is ScreenProxyTarget {
@@ -58,6 +60,8 @@ export function isScreenProxyTarget(value: unknown): value is ScreenProxyTarget 
     isScreenProxyHeaders(target.headers) &&
     (target.tlsCertificateSha256 === undefined ||
       (target.protocol === "https:" && isTlsCertificateSha256(target.tlsCertificateSha256))) &&
+    (target.tlsServerName === undefined ||
+      (target.tlsCertificateSha256 !== undefined && isTlsServerName(target.tlsServerName))) &&
     typeof target.path === "string" &&
     target.path.startsWith("/") &&
     !/[\r\n]/.test(target.path) &&
@@ -92,6 +96,7 @@ export function sealScreenCapability(
   now = Date.now(),
   headers?: Record<string, string>,
   tlsCertificateSha256?: string,
+  tlsServerName?: string,
 ) {
   return seal(
     url,
@@ -102,6 +107,7 @@ export function sealScreenCapability(
     headers,
     false,
     tlsCertificateSha256,
+    tlsServerName,
   );
 }
 
@@ -114,6 +120,7 @@ function seal(
   headers: Record<string, string> | undefined,
   repeatable: boolean,
   tlsCertificateSha256?: string,
+  tlsServerName?: string,
 ) {
   if (!isScreenProxyHeaders(headers)) throw new Error("Invalid screen authentication headers");
   const target = new URL(url);
@@ -124,10 +131,15 @@ function seal(
     (target.protocol !== "https:" || !isTlsCertificateSha256(tlsCertificateSha256))
   )
     throw new Error("Invalid screen TLS certificate fingerprint");
+  if (
+    tlsServerName !== undefined &&
+    (tlsCertificateSha256 === undefined || !isTlsServerName(tlsServerName))
+  )
+    throw new Error("Invalid screen TLS server name");
   const policy = target.searchParams.get("view_only") === "false" ? "control" : "view";
   const key = createHash("sha256").update(secret).digest();
   const aad = `${policy}:${expiresAt}`;
-  const plaintext = JSON.stringify({ url, scope, headers, tlsCertificateSha256 });
+  const plaintext = JSON.stringify({ url, scope, headers, tlsCertificateSha256, tlsServerName });
   // A repeatable seal derives its nonce from what it seals, so equal inputs give the same
   // link on every server and different inputs never share a nonce.
   const iv = repeatable
@@ -175,13 +187,33 @@ export function issueScreenCapability(
   now = Date.now(),
   headers?: Record<string, string>,
   tlsCertificateSha256?: string,
+  tlsServerName?: string,
 ) {
   if (isLoopbackScreenTarget(url))
-    return sealScreenCapability(url, secret, origin, scope, now, headers, tlsCertificateSha256);
+    return sealScreenCapability(
+      url,
+      secret,
+      origin,
+      scope,
+      now,
+      headers,
+      tlsCertificateSha256,
+      tlsServerName,
+    );
   const expiresAt =
     (Math.floor(now / REMOTE_SCREEN_SEAL_WINDOW_MS) + 1) * REMOTE_SCREEN_SEAL_WINDOW_MS +
     REMOTE_SCREEN_CAPABILITY_MIN_REMAINING_MS;
-  return seal(url, secret, origin, scope, expiresAt, headers, true, tlsCertificateSha256);
+  return seal(
+    url,
+    secret,
+    origin,
+    scope,
+    expiresAt,
+    headers,
+    true,
+    tlsCertificateSha256,
+    tlsServerName,
+  );
 }
 
 export function addScreenProxyCapability(
@@ -192,12 +224,22 @@ export function addScreenProxyCapability(
   now = Date.now(),
   headers?: Record<string, string>,
   tlsCertificateSha256?: string,
+  tlsServerName?: string,
 ) {
   // Local/desktop providers return non-http schemes (e.g. desktop://). Those never
   // traverse the web proxy, so seal only http(s) upstream URLs.
   const protocol = new URL(url).protocol;
   if (protocol !== "http:" && protocol !== "https:") return url;
-  return issueScreenCapability(url, secret, origin, scope, now, headers, tlsCertificateSha256);
+  return issueScreenCapability(
+    url,
+    secret,
+    origin,
+    scope,
+    now,
+    headers,
+    tlsCertificateSha256,
+    tlsServerName,
+  );
 }
 
 export function openScreenCapability(
@@ -243,6 +285,11 @@ export function openScreenCapability(
       (target.protocol !== "https:" || !isTlsCertificateSha256(payload.tlsCertificateSha256))
     )
       return null;
+    if (
+      payload.tlsServerName !== undefined &&
+      (payload.tlsCertificateSha256 === undefined || !isTlsServerName(payload.tlsServerName))
+    )
+      return null;
     const port = Number(target.port || (target.protocol === "https:" ? 443 : 80));
     if (
       target.protocol === "http:" &&
@@ -263,6 +310,7 @@ export function openScreenCapability(
         path: screenPolicyPath(resourcePath, interactive),
         interactive,
         ...(payload.headers ? { headers: payload.headers } : {}),
+        ...(payload.tlsServerName ? { tlsServerName: payload.tlsServerName } : {}),
         ...(payload.tlsCertificateSha256
           ? { tlsCertificateSha256: payload.tlsCertificateSha256 }
           : {}),

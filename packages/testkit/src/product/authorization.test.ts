@@ -1108,7 +1108,7 @@ describeWithDatabase("API authorization and resource isolation", () => {
     expect(await a.me()).toBe(200);
   });
 
-  it("ends already-open thread and board streams after their browser session signs out", async () => {
+  it("ends already-open thread and notification streams after their browser session signs out", async () => {
     const cookie = await signup(app, `stream-revocation-${stamp}@example.test`, "Stream Owner");
     const { userId } = await rpc<Actor>(app, cookie, "me");
     const bot = await rpc<{ id: string }>(app, cookie, "bots/create", botInput("Stream Bot"));
@@ -1118,7 +1118,7 @@ describeWithDatabase("API authorization and resource isolation", () => {
       const streams = await Promise.all(
         [
           ["threads/subscribe", { botId: bot.id, cursor: -1 }],
-          ["boards/subscribe", {}],
+          ["notifications/subscribe", undefined],
         ].map(([procedure, input]) =>
           app.request(`/rpc/${procedure}`, {
             method: "POST",

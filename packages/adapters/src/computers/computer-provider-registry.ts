@@ -46,22 +46,28 @@ function settingsProvider(
     displayName,
     perAccount = false,
     requiresSpendingApproval,
+    spaceOnly,
     spendingApprovalMessage,
     fields,
     validate,
     verifyConnection,
+    verifyEndpoint,
   } = settings!;
   const options = new Map(fields.map((field) => [field.key, field.option]));
   const publicFields: ComputerProviderField[] = fields.map(({ option, ...field }) => ({
     ...field,
     required: field.required ?? (option ? env[option]?.required : false) ?? false,
-    ...(field.kind === "url" ? { validation: "public-https" as const } : {}),
+    ...(field.kind === "url" ? { validation: field.validation ?? ("public-https" as const) } : {}),
   }));
   return {
     id,
     displayName,
     ...(spendingApprovalMessage ? { spendingApprovalMessage } : {}),
-    capabilities: { perAccount, ...(requiresSpendingApproval ? { requiresSpendingApproval } : {}) },
+    capabilities: {
+      perAccount,
+      ...(requiresSpendingApproval ? { requiresSpendingApproval } : {}),
+      ...(spaceOnly ? { spaceOnly } : {}),
+    },
     fields: publicFields,
     verify(values) {
       validate?.(values);
@@ -76,7 +82,8 @@ function settingsProvider(
         const value = values[field.key]?.trim() ?? "";
         if (field.required && !value) throw new Error(`${field.label} is required`);
         if (value.length > 4096) throw new Error(`${field.label} is too long`);
-        if (value && field.kind === "url") assertPublicHttps(value, field.label);
+        if (value && field.kind === "url")
+          assertPublicHttps(value, field.label, field.validation === "operator-https");
         if (
           field.kind === "select" &&
           value &&
@@ -93,18 +100,20 @@ function settingsProvider(
       return verified as SandboxProviderOptions;
     },
     ...(verifyConnection ? { verifyConnection } : {}),
+    ...(verifyEndpoint ? { verifyEndpoint } : {}),
   };
 }
 
-function assertPublicHttps(value: string, label: string) {
+function assertPublicHttps(value: string, label: string, operatorPolicy = false) {
   const url = new URL(value);
   if (url.protocol !== "https:" || url.username || url.password || url.hash)
     throw new Error(`${label} must be an HTTPS URL without credentials or fragment`);
   const host = url.hostname.replace(/^\[|\]$/g, "");
   if (
-    isInternalHostname(host) ||
-    isCloudMetadataHost(host) ||
-    (ipVersion(host) && isNonPublicAddress(host))
+    !operatorPolicy &&
+    (isInternalHostname(host) ||
+      isCloudMetadataHost(host) ||
+      (ipVersion(host) && isNonPublicAddress(host)))
   )
     throw new Error(`${label} must use a public address`);
 }

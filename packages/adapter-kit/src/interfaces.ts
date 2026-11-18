@@ -206,7 +206,12 @@ export interface SandboxProvider {
     computer: ComputerRef,
     request: TerminalRequest,
     context: AdapterContext,
-  ): Promise<{ url: string; headers?: Record<string, string>; tlsCertificateSha256?: string }>;
+  ): Promise<{
+    url: string;
+    headers?: Record<string, string>;
+    tlsCertificateSha256?: string;
+    tlsServerName?: string;
+  }>;
   setScreenControl?(
     computer: ComputerRef,
     interactive: boolean,

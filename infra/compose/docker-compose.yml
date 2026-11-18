@@ -258,6 +258,7 @@ x-app-environment: &app-environment # Runtime
   MCP_MAX_TOOLS:
   MCP_MAX_PAGES:
   MCP_PACKAGES_DIR:
+  COMPUTER_RUNTIME_PRIVATE_ORIGINS:
   MCP_ALLOW_PRIVATE_ENDPOINT:
   # Messaging (outbound delivery runs in the worker)
   MESSAGING_OPEN_SIGNUP:
