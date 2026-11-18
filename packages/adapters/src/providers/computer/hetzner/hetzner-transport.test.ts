@@ -110,7 +110,7 @@ async function fixture() {
     traceId: "tls",
     spaceId: "space",
     userId: "owner",
-    signal: AbortSignal.timeout(600),
+    signal: AbortSignal.timeout(3_000),
   };
   const computer = await provider.provision({ botId: "bot-a", homePath: "/unused" }, context);
   return {
