@@ -50,6 +50,40 @@ comments; published-images installer uses 32 bytes of hex (64 hex chars) via
 `openssl rand -hex 32`. Prefer long independent random values either way.
 Do not reuse one string across keys.
 
+Outside development, tests and explicit image-build contexts, API and worker
+startup rejects an `ENCRYPTION_KEY` shorter than 32 characters or equal to a
+known development/example placeholder. Length is only a minimum check: use an
+independently generated random value. Existing installer-generated keys meet
+this requirement. Valid existing keys keep their exact bytes and encryption
+formats; the server never rotates a key automatically.
+
+### Existing deployments with a weak key
+
+This startup check replaces the previous warning. Keep the upgrade stopped if
+your existing key fails it. **Do not fix startup by changing the key in `.env`**:
+existing credentials, default content master keys and other encrypted material
+would become unreadable.
+
+1. Stop API and worker, then back up the original configuration, database and
+   artifact/push-token volumes together. Protect the configuration backup as
+   secret material; verify recovery on an isolated copy first.
+2. Keep the original key available to the offline `content-encryption`,
+   `secrets:infisical` and `shared-storage` migration commands. These commands
+   explicitly retain the old read path, including legacy credential ciphertext
+   and the original derived content master key. Do not enable development
+   secrets to start a production server with the old key.
+3. Use [content encryption](content-encryption.md) for status, export and
+   content-key rewrapping, and [Infisical migration](infisical-secrets.md) for
+   credential migration. Review every remaining local encrypted holder before
+   planning a key replacement, including push tokens and temporary OAuth/OTP
+   state. Preserve the old key with backups that still require it.
+
+There is no single command that rotates `ENCRYPTION_KEY` across all of those
+holders. `content-encryption migrate` upgrades credential ciphertext and moves
+vault content; it does not replace the deployment key. Complete and verify a
+deployment-specific migration or restore/export plan before changing that key
+and bringing API and worker back online.
+
 ## Distinctness rules
 
 These must be **independent** random values (do not copy-paste the same

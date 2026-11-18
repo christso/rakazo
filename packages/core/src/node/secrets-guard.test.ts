@@ -4,11 +4,11 @@ import {
   DEV_ENCRYPTION_KEY_PLACEHOLDER,
   DEV_SCREEN_PROXY_SECRET_PLACEHOLDER,
   DEV_SUPERVISOR_TOKEN_PLACEHOLDER,
-  encryptionKeyWarning,
   hasValidBearerToken,
   resolveAuthSecret,
   resolveContentEncryption,
   resolveEncryptionKey,
+  resolveEncryptionKeyForRecovery,
   resolveScreenProxySecret,
   resolveSupervisorToken,
   resolveUpdaterToken,
@@ -16,6 +16,15 @@ import {
 } from "./secrets-guard.js";
 
 describe("secrets-guard", () => {
+  it.each(["weak", "replace-with-64-random-hex-characters", "dev-encryption-key"])(
+    "rejects unsafe production encryption key %s",
+    (key) => {
+      expect(() => resolveEncryptionKey({ NODE_ENV: "production", ENCRYPTION_KEY: key })).toThrow(
+        /ENCRYPTION_KEY/,
+      );
+    },
+  );
+
   it("allows placeholders in test mode", () => {
     expect(resolveAuthSecret({ NODE_ENV: "test" })).toBe(DEV_AUTH_SECRET_PLACEHOLDER);
     expect(resolveEncryptionKey({ NODE_ENV: "test" })).toBe(DEV_ENCRYPTION_KEY_PLACEHOLDER);
@@ -142,26 +151,31 @@ describe("secrets-guard", () => {
     ).toBe("prod-encryption-key-with-enough-entropy");
   });
 
-  it("keeps an existing non-placeholder encryption key usable during upgrades", () => {
-    expect(resolveEncryptionKey({ NODE_ENV: "production", ENCRYPTION_KEY: "existing-key" })).toBe(
-      "existing-key",
+  it("keeps the exact old key available only to explicit recovery commands", () => {
+    const key = " weak old key ";
+    expect(resolveEncryptionKeyForRecovery({ NODE_ENV: "production", ENCRYPTION_KEY: key })).toBe(
+      key,
     );
+    expect(() => resolveEncryptionKey({ NODE_ENV: "production", ENCRYPTION_KEY: key })).toThrow(
+      /Do not replace/,
+    );
+    expect(
+      resolveEncryptionKeyForRecovery({
+        NODE_ENV: "production",
+        ENCRYPTION_KEY: DEV_ENCRYPTION_KEY_PLACEHOLDER,
+      }),
+    ).toBe(DEV_ENCRYPTION_KEY_PLACEHOLDER);
+    expect(() =>
+      resolveEncryptionKeyForRecovery({ NODE_ENV: "production", ENCRYPTION_KEY: " " }),
+    ).toThrow(/ENCRYPTION_KEY/);
   });
 
-  it("warns about a weak production encryption key without rejecting it", () => {
-    expect(
-      encryptionKeyWarning({ NODE_ENV: "production", ENCRYPTION_KEY: "existing-key" }),
-    ).toMatch(/ENCRYPTION_KEY/);
-    expect(
-      encryptionKeyWarning({
-        NODE_ENV: "production",
-        ENCRYPTION_KEY: "replace-with-64-random-hex-characters",
-      }),
-    ).toMatch(/ENCRYPTION_KEY/);
-    expect(
-      encryptionKeyWarning({ NODE_ENV: "production", ENCRYPTION_KEY: "a".repeat(64) }),
-    ).toBeUndefined();
-    expect(encryptionKeyWarning({ NODE_ENV: "development" })).toBeUndefined();
+  it("does not normalize an accepted runtime key or require a new encoding", () => {
+    const key = " opaque-random-key-material-at-least-32-chars ";
+    expect(resolveEncryptionKey({ NODE_ENV: "production", ENCRYPTION_KEY: key })).toBe(key);
+    expect(resolveEncryptionKey({ NODE_ENV: "production", ENCRYPTION_KEY: "97".repeat(32) })).toBe(
+      "97".repeat(32),
+    );
   });
 
   it("requires dedicated supervisor and screen-proxy credentials", () => {

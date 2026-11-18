@@ -31,15 +31,23 @@ export function keyManagerFromEnv(env: NodeJS.ProcessEnv = process.env): KeyProv
 /**
  * `MASTER_KEY_PROVIDER` picks who wraps space keys. Undefined keeps createDb's default,
  * the local master keys. A key manager wraps new keys while local ones keep unwrapping.
+ * Only offline migration commands pass an explicit recovery key to read older data.
  */
 export function contentKeyProviderFromEnv(
   env: NodeJS.ProcessEnv = process.env,
+  recoveryEncryptionKey?: string,
 ): KeyProvider | undefined {
   // Configuration errors surface at startup; local master keys are read on first use.
   const external = keyManagerFromEnv(env);
-  if (!external) return undefined;
+  if (!external)
+    return recoveryEncryptionKey === undefined
+      ? undefined
+      : lazyKeyProvider(() => new LocalKeyProvider(masterKeysFromEnv(env, recoveryEncryptionKey)));
   return lazyKeyProvider(() =>
-    withLocalMasterKeys(external, new LocalKeyProvider(masterKeysFromEnv(env))),
+    withLocalMasterKeys(
+      external,
+      new LocalKeyProvider(masterKeysFromEnv(env, recoveryEncryptionKey)),
+    ),
   );
 }
 

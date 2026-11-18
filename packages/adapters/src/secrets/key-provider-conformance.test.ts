@@ -3,7 +3,8 @@ import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { KMSClient } from "@aws-sdk/client-kms";
 import type { KeyProvider } from "@rakazo/adapter-kit";
-import { LocalKeyProvider, withLocalMasterKeys } from "@rakazo/db";
+import { resolveEncryptionKeyForRecovery } from "@rakazo/core/node/secrets-guard";
+import { LocalKeyProvider, masterKeysFromEnv, withLocalMasterKeys } from "@rakazo/db";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   AwsKmsKeyProvider,
@@ -256,5 +257,18 @@ describe("moving space keys to a key manager", () => {
       ENCRYPTION_KEY: "fake-encryption-key-for-tests-0000000000000000000000000000",
     });
     expect(provider?.activeKeyId()).toBe("aws-kms:1234abcd-12ab-34cd-56ef-1234567890ab");
+  });
+
+  it("lets offline recovery unwrap old content without accepting its weak server key", async () => {
+    const encryptionKey = " old weak key\n";
+    const env = { NODE_ENV: "production", ENCRYPTION_KEY: encryptionKey };
+    const original = new LocalKeyProvider(masterKeysFromEnv({ ...env, NODE_ENV: "test" }));
+    const context = { spaceId: "space-1", version: 1 };
+    const dataKey = randomBytes(32);
+    const wrapped = await original.wrap(dataKey, context);
+    expect(() => masterKeysFromEnv(env)).toThrow(/ENCRYPTION_KEY/);
+    const recovery = contentKeyProviderFromEnv(env, resolveEncryptionKeyForRecovery(env))!;
+    expect(Buffer.from(await recovery.unwrap(wrapped, context))).toEqual(dataKey);
+    await expect(recovery.unwrap(wrapped, { ...context, spaceId: "other" })).rejects.toThrow();
   });
 });

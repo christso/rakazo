@@ -28,14 +28,19 @@ function parseKeyMaterial(value: string): Buffer {
  * keys, the rest only unwrap. A key derived from ENCRYPTION_KEY is always
  * available for unwrap so deployments that never set master keys keep working,
  * and it is the active key when none are set.
+ * Offline migration commands may pass the original recovery key explicitly;
+ * normal server callers always validate the runtime key.
  */
-export function masterKeysFromEnv(env: NodeJS.ProcessEnv = process.env): MasterKey[] {
+export function masterKeysFromEnv(
+  env: NodeJS.ProcessEnv = process.env,
+  recoveryEncryptionKey?: string,
+): MasterKey[] {
   const derived: MasterKey = {
     id: DERIVED_MASTER_KEY_ID,
     key: Buffer.from(
       hkdfSync(
         "sha256",
-        Buffer.from(resolveEncryptionKey(env), "utf8"),
+        Buffer.from(recoveryEncryptionKey ?? resolveEncryptionKey(env), "utf8"),
         Buffer.from("rakazo"),
         "rakazo/content-master-key/v1",
         32,

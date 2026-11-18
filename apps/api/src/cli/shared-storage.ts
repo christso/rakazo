@@ -9,7 +9,7 @@ import {
   unwrapEnvFromKeyManager,
 } from "@rakazo/adapters";
 import { loadRootEnv } from "@rakazo/core/node/load-root-env";
-import { resolveEncryptionKey } from "@rakazo/core/node/secrets-guard";
+import { resolveEncryptionKeyForRecovery } from "@rakazo/core/node/secrets-guard";
 import { createDb } from "@rakazo/db";
 
 loadRootEnv();
@@ -25,7 +25,7 @@ if (positionals.length !== 1 || !["artifacts", "push-tokens"].includes(positiona
 if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is required");
 const { prisma, pool, contentKeys } = createDb(process.env.DATABASE_URL, {
   applicationName: "rakazo-storage-migration",
-  keyProvider: contentKeyProviderFromEnv(),
+  keyProvider: contentKeyProviderFromEnv(process.env, resolveEncryptionKeyForRecovery(process.env)),
 });
 const dataDir = process.env.DATA_DIR ?? "./data";
 try {
@@ -39,7 +39,7 @@ try {
         )
       : await migrateLocalPushTokens(
           dataDir,
-          new PrismaPushTokenStore(prisma, resolveEncryptionKey(process.env)),
+          new PrismaPushTokenStore(prisma, resolveEncryptionKeyForRecovery(process.env)),
           values["dry-run"],
         );
   // Counts only: never print registrations, object paths, or account identifiers.

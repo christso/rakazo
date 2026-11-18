@@ -9,7 +9,7 @@ import {
   unwrapEnvFromKeyManager,
 } from "@rakazo/adapters";
 import { loadRootEnv } from "@rakazo/core/node/load-root-env";
-import { resolveEncryptionKey } from "@rakazo/core/node/secrets-guard";
+import { resolveEncryptionKeyForRecovery } from "@rakazo/core/node/secrets-guard";
 import { createDb, runAsSystem } from "@rakazo/db";
 import { bestEffort } from "@rakazo/logging";
 import { createSecretMigrationRepository } from "../auth/secret-migration.js";
@@ -24,9 +24,9 @@ const options = secretStoreOptionsFromEnv({ ...process.env, SECRET_STORE: "infis
 if (!options || !process.env.DATABASE_URL)
   throw new Error("Secret storage and database configuration are required");
 const { prisma, pool } = createDb(process.env.DATABASE_URL, {
-  keyProvider: contentKeyProviderFromEnv(),
+  keyProvider: contentKeyProviderFromEnv(process.env, resolveEncryptionKeyForRecovery(process.env)),
 });
-const encryptionKey = resolveEncryptionKey(process.env);
+const encryptionKey = resolveEncryptionKeyForRecovery(process.env);
 const realtime = new PostgresRealtimeFanout({
   connectionString: process.env.REALTIME_DATABASE_URL ?? process.env.DATABASE_URL,
   publisher: pool,

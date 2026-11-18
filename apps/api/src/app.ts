@@ -99,7 +99,6 @@ import {
   PLUGIN_SUBMISSIONS_PATH,
   SERVER_BUILD_HEADER,
 } from "@rakazo/contracts";
-import { encryptionKeyWarning } from "@rakazo/core/node/secrets-guard";
 import type { Pool, PrismaClient } from "@rakazo/db";
 import {
   configureProviderTransactionPool,
@@ -315,8 +314,6 @@ async function buildApp(overrides: CreateAppOverrides): Promise<AppHandles> {
   if (rowSecurity) logger.warn(rowSecurity);
   const timeZone = await bestEffort("database time zone check", timeZoneWarning(prisma));
   if (timeZone) logger.warn(timeZone);
-  const weakEncryptionKey = encryptionKeyWarning(process.env);
-  if (weakEncryptionKey) logger.warn(weakEncryptionKey);
   // Set once push delivery is configured below; thread changes before then have no cards.
   let workActivities: WorkActivities | undefined;
   // Every thread change this process commits also updates its users' live status cards.

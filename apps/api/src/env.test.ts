@@ -11,6 +11,17 @@ const base = {
 };
 
 describe("loadEnv", () => {
+  it("refuses a weak production encryption key before starting the API", () => {
+    expect(() =>
+      loadEnv({
+        ...base,
+        NODE_ENV: "production",
+        BETTER_AUTH_SECRET: "independent-auth-secret-with-sufficient-length",
+        ENCRYPTION_KEY: "weak",
+      }),
+    ).toThrow(/ENCRYPTION_KEY/);
+  });
+
   it("defaults the attachment count to four and accepts configured bounds", () => {
     expect(loadEnv(base).maxAttachmentsPerMessage).toBe(4);
     expect(loadEnv({ ...base, MAX_ATTACHMENTS_PER_MESSAGE: " " }).maxAttachmentsPerMessage).toBe(4);

@@ -1,5 +1,9 @@
 import { createCipheriv, createHash, randomBytes } from "node:crypto";
 import type { AdapterContext } from "@rakazo/adapter-kit";
+import {
+  resolveEncryptionKey,
+  resolveEncryptionKeyForRecovery,
+} from "@rakazo/core/node/secrets-guard";
 import { describe, expect, it, vi } from "vitest";
 import { InfisicalSecretStore } from "../providers/secret-store/infisical/infisical-secret-store.js";
 import type { SecretMigrationRepository, SecretMigrationRow } from "./secret-migration.js";
@@ -235,7 +239,9 @@ describe("vault values under the envelope keys", () => {
 
 describe("legacy credential upgrade", () => {
   it("rewrites pre-v2 ciphertext as v2 bound to the record id, once", async () => {
-    const encrypted = new EncryptedSecretStore("key");
+    const env = { NODE_ENV: "production", ENCRYPTION_KEY: "key" };
+    expect(() => resolveEncryptionKey(env)).toThrow(/ENCRYPTION_KEY/);
+    const encrypted = new EncryptedSecretStore(resolveEncryptionKeyForRecovery(env));
     const current = await encrypted.put("already v2", context, { recordId: "new" });
     const rows: SecretMigrationRow[] = [
       {

@@ -15,7 +15,10 @@ import {
   withSecretPersistence,
 } from "@rakazo/adapters";
 import { loadRootEnv } from "@rakazo/core/node/load-root-env";
-import { resolveContentEncryption, resolveEncryptionKey } from "@rakazo/core/node/secrets-guard";
+import {
+  resolveContentEncryption,
+  resolveEncryptionKeyForRecovery,
+} from "@rakazo/core/node/secrets-guard";
 import type { ContentMigrationMode } from "@rakazo/db";
 import {
   contentEncryptionStatus,
@@ -97,7 +100,7 @@ if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is required");
 const encrypting = ["migrate", "rotate", "reencrypt"].includes(command);
 const { prisma, pool, contentKeys } = createDb(process.env.DATABASE_URL, {
   applicationName: "rakazo-content-encryption",
-  keyProvider: contentKeyProviderFromEnv(),
+  keyProvider: contentKeyProviderFromEnv(process.env, resolveEncryptionKeyForRecovery(process.env)),
   ...(encrypting ? { encryptContent: true } : {}),
 });
 const artifacts = new LocalArtifactStore(process.env.DATA_DIR ?? "./data", contentKeys);
@@ -164,7 +167,7 @@ async function rewriteContent(mode: ContentMigrationMode) {
 async function upgradeCredentials() {
   const counts = await upgradeLegacySecrets(
     createSecretMigrationRepository(prisma),
-    new EncryptedSecretStore(resolveEncryptionKey(process.env)),
+    new EncryptedSecretStore(resolveEncryptionKeyForRecovery(process.env)),
     {
       operationId: "content-encryption",
       traceId: "content-encryption",
@@ -183,7 +186,7 @@ async function upgradeCredentials() {
 async function rewriteVaultValues(mode: "encrypt" | "reencrypt" | "decrypt") {
   const counts = await migrateVaultValues(
     prisma,
-    new EncryptedSecretStore(resolveEncryptionKey(process.env)),
+    new EncryptedSecretStore(resolveEncryptionKeyForRecovery(process.env)),
     {
       operationId: "content-encryption",
       traceId: "content-encryption",
@@ -207,7 +210,7 @@ async function rewriteVaultValues(mode: "encrypt" | "reencrypt" | "decrypt") {
 }
 
 async function moveMcpArgs() {
-  const secrets = createSecretStore(resolveEncryptionKey(process.env));
+  const secrets = createSecretStore(resolveEncryptionKeyForRecovery(process.env));
   await secrets.start();
   try {
     const counts = await moveMcpArgsIntoSecrets(withSecretPersistence(prisma, secrets), secrets, {

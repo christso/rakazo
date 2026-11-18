@@ -53,28 +53,32 @@ export function resolveAuthSecret(env: NodeJS.ProcessEnv = process.env): string 
   return value;
 }
 
+/** Normal server processes must not continue writing credentials under an unsafe key. */
 export function resolveEncryptionKey(env: NodeJS.ProcessEnv = process.env): string {
+  const value = resolveEncryptionKeyForRecovery(env);
+  const normalized = value.trim();
+  if (
+    !isDevSecretAllowed(env) &&
+    (normalized.length < 32 ||
+      normalized === DEV_ENCRYPTION_KEY_PLACEHOLDER ||
+      normalized === EXAMPLE_ENCRYPTION_KEY_PLACEHOLDER)
+  ) {
+    throw new Error(
+      "ENCRYPTION_KEY must be a long independently generated random key (at least 32 characters). The server has not started. Do not replace an existing key in place: back up its configuration and data, then follow the offline recovery and migration procedure in docs/self-host-secrets.md.",
+    );
+  }
+  return value;
+}
+
+/** Only offline recovery/migration commands may read data encrypted under an older weak key. */
+export function resolveEncryptionKeyForRecovery(env: NodeJS.ProcessEnv = process.env): string {
   const value = env.ENCRYPTION_KEY;
   if (value === undefined || !value.trim()) {
     if (isDevSecretAllowed(env)) return DEV_ENCRYPTION_KEY_PLACEHOLDER;
     throw new Error(RUNTIME_SECRETS_ERROR);
   }
-  const normalized = value.trim();
-  if (!isDevSecretAllowed(env) && normalized === DEV_ENCRYPTION_KEY_PLACEHOLDER) {
-    throw new Error(RUNTIME_SECRETS_ERROR);
-  }
+  // Keep the exact bytes: trimming an existing key would make its ciphertext unreadable.
   return value;
-}
-
-/**
- * Short or example keys stay accepted so existing installs keep decrypting their data,
- * but production startup says so; changing the key strands stored ciphertext.
- */
-export function encryptionKeyWarning(env: NodeJS.ProcessEnv = process.env): string | undefined {
-  if (isDevSecretAllowed(env)) return undefined;
-  const value = env.ENCRYPTION_KEY?.trim() ?? "";
-  if (value.length >= 32 && value !== EXAMPLE_ENCRYPTION_KEY_PLACEHOLDER) return undefined;
-  return "ENCRYPTION_KEY is shorter than 32 characters or still the example value, so stored credentials are weakly protected. It is still used because changing it makes them unreadable; new installs should use `openssl rand -hex 32` (docs/self-host-secrets.md).";
 }
 
 function resolveDedicatedSecret(
