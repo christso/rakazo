@@ -1,0 +1,267 @@
+diff --git a/lib/parse.js b/lib/parse.js
+index caa2b86aa5a567df33cef4bda3c7a97794f439f8..00417d7a83b7847f657fba64d1480b54396ea023 100644
+--- a/lib/parse.js
++++ b/lib/parse.js
+@@ -139,25 +139,43 @@
+   return value.replace(/\\(.)/g, '$1');
+ };
+ 
+-const hasRepeatedCharPrefixOverlap = branches => {
+-  const values = branches.map(normalizeSimpleBranch).filter(Boolean);
+-
+-  for (let i = 0; i < values.length; i++) {
+-    for (let j = i + 1; j < values.length; j++) {
+-      const a = values[i];
+-      const b = values[j];
+-      const char = a[0];
+-
+-      if (!char || a !== char.repeat(a.length) || b !== char.repeat(b.length)) {
+-        continue;
+-      }
+-
+-      if (a === b || a.startsWith(b) || b.startsWith(a)) {
+-        return true;
+-      }
+-    }
+-  }
+-
++const hasRepeatedCharPrefixOverlap = (branches, options) => {
++  const flags = options.flags || (options.nocase ? 'i' : '');
++  const insensitive = flags.includes('i');
++  const values = branches.map(normalizeSimpleBranch).filter(Boolean).map(value => {
++    if (!insensitive) return value;
++    // ECMAScript's non-Unicode IgnoreCase Canonicalize operates on code units.
++    return value.replace(/[\s\S]/g, ch => {
++      const upper = ch.toUpperCase();
++      return upper.length !== 1 || (ch.charCodeAt(0) >= 128 && upper.charCodeAt(0) < 128)
++        ? ch : upper;
++    });
++  });
++  // Unicode case folding has extra equivalences. Treat those complex repeated
++  // alternatives conservatively rather than applying the legacy folding rule.
++  if (insensitive && /[uv]/.test(flags) && values.some(value => /[^\x00-\x7f]/.test(value))) {
++    return true;
++  }
++  const initials = new Set(values.map(value => value[0]));
++  const trie = { children: new Map(), end: false };
++  for (const value of values) {
++    let node = trie;
++    for (const ch of value.split('')) {
++      if (!node.children.has(ch)) node.children.set(ch, { children: new Map(), end: false });
++      node = node.children.get(ch);
++    }
++    if (node.end) return true;
++    node.end = true;
++  }
++  for (const value of values) {
++    let node = trie;
++    for (const ch of value.split('')) {
++      // A shared prefix is ambiguous only if its remainder can begin another
++      // branch. Preserve common uniquely-decodable alternatives like js|jsx.
++      if (node.end && initials.has(ch)) return true;
++      node = node.children.get(ch);
++    }
++  }
+   return false;
+ };
+ 
+@@ -280,6 +298,141 @@
+   return depth;
+ };
+ 
++// A single branch of literals, question marks and wildcard stars is closed
++// under concatenation: one star can absorb the intervening repetitions.
++const classifyWildcardBranch = (body, options) => {
++  let star = false;
++  let simple = true;
++  let quoted = false;
++  let bracket = 0;
++
++  for (let i = 0; i < body.length; i++) {
++    const ch = body[i];
++    if (ch === '\\') {
++      simple = false;
++      i++;
++      continue;
++    }
++    if (ch === '"' && bracket === 0) {
++      simple = false;
++      quoted = !quoted;
++      continue;
++    }
++    if (quoted) continue;
++    if (ch === '[') {
++      bracket++;
++      simple = false;
++      continue;
++    }
++    if (ch === ']' && bracket > 0) {
++      bracket--;
++      continue;
++    }
++    if (bracket > 0) continue;
++    if (ch === '*' && body[i + 1] !== '(') {
++      star = true;
++      continue;
++    }
++    if (/[/(){}|!+@^$\n\r\u2028\u2029]/.test(ch) || (options.bash === true && ch === '?')) {
++      simple = false;
++    }
++  }
++  return star ? (simple ? 'collapse' : 'literal') : 'none';
++};
++
++const hasNestedWildcardRepeat = source => {
++  const frame = look => ({ wild: false, wildRepeat: false, look });
++  const stack = [frame(false)];
++  let i = 0;
++
++  // Reads the quantifier at `i`, if any; returns [repeats, length].
++  const quantifier = () => {
++    const ch = source[i];
++    let len = 0;
++    let unbounded = false;
++
++    if (ch === '*' || ch === '+') {
++      unbounded = true;
++      len = 1;
++    } else if (ch === '?') {
++      len = 1;
++    } else if (ch === '{') {
++      let j = i + 1;
++      while (source[j] >= '0' && source[j] <= '9') j++;
++
++      // A bounded count above 2 nests just as badly in practice: `{1,30}`
++      // backtracks like a 30-deep nesting.
++      if (j > i + 1 && source[j] === '}') {
++        len = j + 1 - i;
++        unbounded = Number(source.slice(i + 1, j)) > 2;
++      } else if (j > i + 1 && source[j] === ',') {
++        let k = j + 1;
++        while (source[k] >= '0' && source[k] <= '9') k++;
++        if (source[k] === '}') {
++          len = k + 1 - i;
++          unbounded = k === j + 1 || Number(source.slice(j + 1, k)) > 2;
++        }
++      }
++    }
++
++    if (len > 0 && source[i + len] === '?') len++;
++    return [unbounded, len];
++  };
++
++  while (i < source.length) {
++    const ch = source[i];
++    let atomWild = false;
++    let group;
++
++    if (ch === '(') {
++      stack.push(frame(/^\(\?<?[=!]/.test(source.slice(i, i + 4))));
++      i++;
++      continue;
++    }
++
++    if (ch === '\\') {
++      atomWild = /[sSwWdD]/.test(source[i + 1] || '');
++      i += 2;
++    } else if (ch === '[') {
++      atomWild = true;
++      i++;
++      if (source[i] === '^') i++;
++      if (source[i] === ']') i++;
++      while (i < source.length && source[i] !== ']') {
++        if (source[i] === '\\') {
++          if (/[sSwWdD]/.test(source[i + 1] || '')) atomWild = true;
++          i++;
++        }
++        i++;
++      }
++      i++;
++    } else if (ch === ')') {
++      if (stack.length > 1) group = stack.pop();
++      i++;
++    } else {
++      atomWild = ch === '.';
++      i++;
++    }
++
++    const [repeated, len] = quantifier();
++    i += len;
++
++    const parent = stack[stack.length - 1];
++
++    if (group) {
++      if (group.look) continue;
++      if (repeated && group.wildRepeat) return true;
++      if (group.wild) parent.wild = true;
++      if (group.wildRepeat || (repeated && group.wild)) parent.wildRepeat = true;
++    } else if (atomWild) {
++      parent.wild = true;
++      if (repeated) parent.wildRepeat = true;
++    }
++  }
++
++  return false;
++};
++
+ const analyzeRepeatedExtglob = (body, options) => {
+   if (options.maxExtglobRecursion === false) {
+     return { risky: false };
+@@ -292,11 +445,17 @@
+ 
+   const branches = splitTopLevel(body).map(branch => branch.trim());
+ 
++  if (branches.length === 1) {
++    const kind = classifyWildcardBranch(body, options);
++    if (kind === 'collapse') return { risky: false, collapse: true };
++    if (kind === 'literal') return { risky: true };
++  }
++
+   if (branches.length > 1) {
+     if (
+       branches.some(branch => branch === '') ||
+       branches.some(branch => /^[*?]+$/.test(branch)) ||
+-      hasRepeatedCharPrefixOverlap(branches)
++      hasRepeatedCharPrefixOverlap(branches, options)
+     ) {
+       return { risky: true };
+     }
+@@ -311,6 +470,14 @@
+     if (repeatedExtglobRecursion(branch) > max) {
+       return { risky: true };
+     }
++  }
++
++  // A finite wildcard branch can still overlap its neighbours (a?|a??),
++  // including alternatives nested inside a single @(...) branch. Unless the
++  // existing single-character rewrite proved it safe, fail closed on complex
++  // alternatives instead of trying to decide arbitrary regex languages.
++  if (body.includes('|') && branches.some(branch => branch.includes('"') || !normalizeSimpleBranch(branch))) {
++    return { risky: true };
+   }
+ 
+   return { risky: false };
+@@ -536,6 +703,10 @@
+       return;
+     }
+ 
++    if ((token.type === 'plus' || token.type === 'star') && analysis.collapse === true) {
++      token.close = token.type === 'plus' ? ')' : ')?';
++    }
++
+     let output = token.close + (opts.capture ? ')' : '');
+     let rest;
+ 
+@@ -1291,6 +1462,12 @@
+         state.output += token.suffix;
+       }
+     }
++  }
++
++  // Repaired parentheses and regex group quantifiers can bypass extglobClose.
++  // Fail closed on any remaining repeat around an unbounded wildcard repeat.
++  if (opts.maxExtglobRecursion !== false && hasNestedWildcardRepeat(state.output)) {
++    state.output = (opts.prepend || '') + utils.escapeRegex(input.slice(state.start));
+   }
+ 
+   return state;
