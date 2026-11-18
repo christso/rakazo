@@ -4,6 +4,10 @@
 default; Private Computers are optional. See [computer runtime and isolation](./computer-runtime.md)
 for the sharing and persistence contract.
 
+Set `COMPUTER_DEFAULT_MODE=dedicated` on the API and worker to give each new bot a Private
+Computer when its request does not choose one. An explicit choice still wins, and existing bots
+keep their computer. Private Computers count toward `SANDBOX_MAX_COMPUTERS_PER_USER`.
+
 ## Quick pick
 
 | Goal                                                    | Set                                                                      | Also need                                                                                                                             |
@@ -31,6 +35,42 @@ for desktop and fake deployments.
 
 The account form offers only providers that declare support for account-owned computers.
 Team Computers follow their owner's account choice; Private Computers use the deployment choice. See [Wuying setup](./wuying-computers.md) for that adapter's fields and requirements.
+
+### Cloud connections for a Space
+
+With computer settings enabled, the Space owner or an organization admin can configure a cloud
+connection in **Space settings → Computers** and explicitly allow paid computers. Choose a region
+and machine type, enter the provider API token and a separate random computer secret, and supply
+anonymously accessible app and desktop image references pinned as `registry/image@sha256:<digest>`.
+Use matching published app/computer releases: the app image includes the computer supervisor and
+the host egress installer. No provider-specific environment variables or Terraform deployment is
+required. The API, worker and web server must reach the VM's public IPv4 address on HTTPS port 443.
+
+Opening a new computer creates a Debian VM, installs Docker and the desktop runtime, applies host
+and metadata network restrictions, then waits for the authenticated supervisor and desktop to be
+ready. Initial setup can take up to 15 minutes. Per-machine TLS certificate pins and encrypted
+connection credentials protect shell, file, screen and terminal traffic. Pi stays in the API/worker;
+the VM runs the existing Linux desktop image with Chromium, Xvfb, Fluxbox and noVNC. The normal
+Computer panel and takeover controls use that desktop, independently of anyone's personal desktop.
+
+The connection applies to new computers. Existing computers retain their recorded connection until
+an explicit reset or move. **Default** uses the deployment's configured choice. Team and Private
+Computer modes still apply; select Private Computers, or set `COMPUTER_DEFAULT_MODE=dedicated`,
+to give each bot its own VM.
+
+Stop and idle shutdown power off the VM while retaining its disk, files and browser profiles.
+Stopped VMs remain billable; destroying the VM removes its disk and ends server charges. There is
+no automatic disk-expiry policy. Reset can destroy the old VM and provision another paid VM.
+A missing VM or unavailable connection is reported instead of silently using a different host.
+
+Space and account deletion retain connections while provisioning or machine cleanup is pending.
+Retry deletion after cleanup finishes; an exhausted cleanup job must be resolved before those
+credentials can be removed. During rolling upgrades, older processes cannot operate these
+connection-backed computers. Finish upgrading the API and workers before using the connection.
+
+Deterministic tests exercise provisioning reconciliation, the supervisor protocol, bootstrap shell,
+TLS pinning and screen proxy boundaries. Live VM creation, image pulls and desktop readiness still
+need an operator-approved cloud smoke test; the offline suite is not live-provider evidence.
 
 ## Choosing a provider
 
@@ -131,6 +171,9 @@ Browser identity is only one input to bot-check challenges; the host's IP reputa
 matters more.
 
 ## `kubernetes`
+
+For a staged single-node installation with storage, scoped permissions and network policies,
+see [Kubernetes / k3s installation](./self-host-kubernetes.md) ([한국어](./ko-KR/self-host-kubernetes.md)).
 
 Each computer is one pod in a namespace you choose, created from the published computer image.
 The API and worker talk to the Kubernetes API with their own service account (or the kubeconfig in
@@ -542,7 +585,7 @@ rechecks each selected PID's marker descriptors before signaling it.
 E2B computers start from the `rakazo-computer` template: E2B's stock desktop at
 2 vCPU and 4 GB instead of its 8 vCPU and 8 GB. Build it once in the E2B team that
 owns `E2B_API_KEY`, and again whenever its definition in
-`packages/adapters/src/e2b-template.ts` changes:
+`packages/adapters/src/providers/computer/e2b/e2b-template.ts` changes:
 
 ```bash
 E2B_API_KEY=<deployment key> pnpm sandbox:e2b-template
@@ -588,7 +631,7 @@ or network error does not authorize replacing an existing computer.
 ### Boat computer snapshot
 
 Boat computers start from a named snapshot, `rakazo-computer-<hash>`, that already has the
-desktop tools installed. The hash follows the setup in `packages/adapters/src/boat-sandbox.ts`,
+desktop tools installed. The hash follows the setup in `packages/adapters/src/providers/computer/boat/boat-sandbox.ts`,
 so changing it produces a new name and existing computers keep the one they started from.
 
 No setup is needed: when the snapshot for the current setup is missing, the API or worker
@@ -649,3 +692,22 @@ Confirm `sandbox` equals the intended provider (`e2b`, `novita`, `daytona`, `boa
 HTTP 200 alone does not verify a remote provider: a missing API key falls back to `sandbox: "none"`.
 A present but invalid key still reports the selected provider. Open a bot's computer to verify
 provisioning and desktop access.
+
+## Browser proxy on Railway computers
+
+Set `RAKAZO_COMPUTER_PROXY` on the API and worker to send the browser on every Railway computer
+through an upstream proxy, for example `http://user:pass@proxy.example.com:8080` or
+`socks5://user:pass@proxy.example.com:1080`. Chrome cannot send proxy credentials from policy, so
+when a computer is prepared Rakazo installs `tinyproxy`, writes its config (credentials included)
+to a root-only file, starts it on `127.0.0.1:18080`, and adds a managed Chrome policy that points
+the browser there. Loopback stays direct so the bot's page tools still reach the browser.
+
+The credentials are not secret from the people using your bots. Bot commands run as root on the
+computer, so a user can ask a bot to read the config, and any program on the computer can send
+traffic through the loopback proxy. Set it only when you trust everyone who can use a bot on this
+deployment, and give Rakazo its own proxy login with a usage cap so a leak is limited and easy to
+revoke.
+
+The setting applies to every bot. It covers the browser only: terminal commands go direct. The
+username cannot contain spaces, control characters, `:`, `@`, `"` or `#`, and the password cannot
+contain spaces, control characters, `@`, `"` or `#`. Changing or clearing the variable takes effect the next time each computer starts.

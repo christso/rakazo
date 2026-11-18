@@ -2,12 +2,12 @@ import { useLingui } from "@lingui/react/macro";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import { ActivityIndicator, Alert, StyleSheet, View } from "react-native";
-import { selectNotificationAccount } from "../lib/account-sessions";
-import { currentApiBase } from "../lib/api";
-import { mobileTokens } from "../lib/appearance";
-import { useMobileTokens, useThemedStyles } from "../lib/native";
-import { notificationOpenTargetFromLink } from "../lib/notification-open";
-import { promptNotificationSignIn } from "../lib/open-notification";
+import { currentApiBase } from "../lib/api/api";
+import { mobileTokens } from "../lib/appearance/appearance";
+import { selectNotificationAccount } from "../lib/auth/account-sessions";
+import { useMobileTokens, useThemedStyles } from "../lib/native/native";
+import { notificationOpenTargetFromLink } from "../lib/notifications/notification-open";
+import { promptNotificationSignIn } from "../lib/notifications/open-notification";
 
 /** Android and external notification links resolve identity before mounting a private screen. */
 export default function NotificationOpen() {

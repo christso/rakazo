@@ -4,29 +4,29 @@ import { isRetryableError } from "@rakazo/core";
 import { useIsFocused, useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { ActivityIndicator, Alert, StyleSheet, Text, View } from "react-native";
-import { NativeActionButton } from "../components/native-action-button";
+import { NativeActionButton } from "../components/native/native-action-button";
 import { Thread } from "../components/thread/thread-screen";
-import { currentApiBase, selectedSpaceId } from "../lib/api";
-import { mobileTokens } from "../lib/appearance";
-import { normalizeApiBase } from "../lib/endpoint";
+import { currentApiBase, selectedSpaceId } from "../lib/api/api";
+import { normalizeApiBase } from "../lib/api/endpoint";
+import {
+  currentReadySessionGeneration,
+  currentSessionGeneration,
+  loadVerifiedIntegrationsScope,
+  subscribeSessionGeneration,
+} from "../lib/api/session";
+import { errorText } from "../lib/api/user-error";
+import { mobileTokens } from "../lib/appearance/appearance";
 
-import { integrationsCacheScope } from "../lib/integrations-cache";
-import { useMobileTokens, useThemedStyles } from "../lib/native";
+import { integrationsCacheScope } from "../lib/integrations/integrations-cache";
+import { useMobileTokens, useThemedStyles } from "../lib/native/native";
 import {
   notificationOpenTarget,
   notificationTargetLink,
   threadRouteSpaceOnFocus,
   threadSpaceRequest,
   threadSpaceSwitchResult,
-} from "../lib/notification-open";
-import { selectSpaceAcrossOrganizations } from "../lib/organizations";
-import {
-  currentReadySessionGeneration,
-  currentSessionGeneration,
-  loadVerifiedIntegrationsScope,
-  subscribeSessionGeneration,
-} from "../lib/session";
-import { errorText } from "../lib/user-error";
+} from "../lib/notifications/notification-open";
+import { selectSpaceAcrossOrganizations } from "../lib/spaces/organizations";
 
 export default function ThreadRoute() {
   const generation = useSyncExternalStore(subscribeSessionGeneration, currentSessionGeneration);

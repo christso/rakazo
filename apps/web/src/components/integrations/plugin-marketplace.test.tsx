@@ -22,14 +22,14 @@ vi.mock("./space-availability", () => ({
   useOwnSpaces: () => [],
 }));
 
-vi.mock("../../lib/rpc", () => ({
+vi.mock("../../lib/query/rpc", () => ({
   rpc: {
     capabilities: { pluginPreview: api.preview, install: api.install, pluginParts: api.parts },
     mcp: { assignments: { approve: api.approve } },
     agentSkills: { list: api.skills, get: api.skill },
   },
 }));
-vi.mock("../../lib/mcp-connect", () => ({ connectMcpOauth: api.connect }));
+vi.mock("../../lib/integrations/mcp-connect", () => ({ connectMcpOauth: api.connect }));
 vi.mock("@rakazo/chat-ui/web", () => ({
   useLinkFavicon: () => ({ icon: null, unusable: () => undefined }),
 }));
@@ -58,7 +58,11 @@ vi.mock("@rakazo/ui-web", () => {
   };
 });
 
-import { PluginDetail } from "./plugin-marketplace";
+import { ConnectorDetail } from "../../pages/plugins/connector-detail";
+import { ConnectorIcon } from "../../pages/plugins/parts";
+import type { PluginConnections } from "../../pages/plugins/use-plugin-connections";
+
+import { PluginDetail, PluginLogo } from "./plugin-marketplace";
 
 const source = "https://github.com/example/notes";
 const preview = {
@@ -161,6 +165,32 @@ afterEach(() => {
 });
 
 describe("plugin detail", () => {
+  it.each([
+    "javascript:alert(1)",
+    "JaVaScRiPt:alert(1)",
+    "java\nscript:alert(1)",
+    "data:text/html,<script>alert(1)</script>",
+    "file:///tmp/plugin",
+    "http://example.test/plugins",
+    "https://user:password@example.test/plugins",
+    "https://example.test/plugins?token=credential",
+  ])("does not render a source link for unsafe pasted source %s", async (pasted) => {
+    api.preview.mockRejectedValue(new Error("Invalid plugin source"));
+    await render({ pasted });
+    expect(
+      [...container.querySelectorAll("a")].some((link) =>
+        link.textContent?.includes("View source"),
+      ),
+    ).toBe(false);
+  });
+
+  it("links a plugin subdirectory to the previewed revision", async () => {
+    await render({ pasted: `${source}#skills/notes` });
+    expect(container.querySelector("a")?.getAttribute("href")).toBe(
+      `${source}/tree/${preview.resolvedSha}/skills/notes`,
+    );
+  });
+
   it("previews what a plugin adds and confirms the previewed digest", async () => {
     await render();
     expect(api.preview).toHaveBeenCalledWith({ source });
@@ -340,4 +370,77 @@ describe("plugin detail", () => {
       expect(signIn).toEqual(actions);
     },
   );
+});
+
+describe("integration fallback icons", () => {
+  it.each([
+    ["🦞 OpenClaw", "🦞", "🦞"],
+    ["𠮷野", "𠮷", "𠮷"],
+    ["中文", "中", "中"],
+    ["notes", "N", "n"],
+    ["", "", ""],
+  ])("preserves the first code point of %s", async (name, pluginInitial, connectorInitial) => {
+    const item = {
+      connectorId: "test",
+      slug: "test",
+      name,
+      logo: null,
+      connected: false,
+      noAuth: false,
+    };
+    const state = {
+      connections: [],
+      pending: null,
+      tools: [],
+      labelDrafts: {},
+    } as unknown as PluginConnections;
+    await act(async () =>
+      root.render(
+        <>
+          <section data-icon="plugin">
+            <PluginLogo name={name} />
+          </section>
+          <section data-icon="connector">
+            <ConnectorIcon name={name} />
+          </section>
+          <ConnectorDetail item={item} state={state} onBack={() => undefined} />
+        </>,
+      ),
+    );
+    expect(container.querySelector('[data-icon="plugin"]')?.textContent).toBe(pluginInitial);
+    expect(container.querySelector('[data-icon="connector"]')?.textContent).toBe(connectorInitial);
+    expect(
+      container.querySelector('[data-testid="connection-detail"] .place-items-center')?.textContent,
+    ).toBe(connectorInitial);
+  });
+
+  it("keeps explicit image logos instead of initials", async () => {
+    const logo = "https://example.test/logo.png";
+    const item = {
+      connectorId: "test",
+      slug: "test",
+      name: "🦞 OpenClaw",
+      logo,
+      connected: false,
+      noAuth: false,
+    };
+    const state = {
+      connections: [],
+      pending: null,
+      tools: [],
+      labelDrafts: {},
+    } as unknown as PluginConnections;
+    await act(async () =>
+      root.render(
+        <>
+          <PluginLogo name={item.name} logo={logo} />
+          <ConnectorIcon name={item.name} logo={logo} />
+          <ConnectorDetail item={item} state={state} onBack={() => undefined} />
+        </>,
+      ),
+    );
+    expect(
+      [...container.querySelectorAll("img")].map((image) => image.getAttribute("src")),
+    ).toEqual([logo, logo, logo]);
+  });
 });

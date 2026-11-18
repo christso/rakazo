@@ -8,7 +8,6 @@ import {
   formatFileSize,
   isApprovalAskBlock,
   isQuestionAskBlock,
-  memberName,
   messagingProviderLabel,
   resolveAskChoice,
   selectedAskActionLabel,
@@ -18,45 +17,45 @@ import type { ComponentProps } from "react";
 import { memo, useContext, useMemo, useState } from "react";
 import type { TextProps } from "react-native";
 import { Alert, Pressable, Text, View } from "react-native";
-import { mobileTokens } from "../../lib/appearance";
-import type { MobileArtifactTarget } from "../../lib/artifact-open";
-import { openMobileArtifact } from "../../lib/artifact-open";
-import { allowsSpace } from "../../lib/ask-action-label";
-import { plainAskTitle } from "../../lib/ask-title";
-import { isInlineImageBlock } from "../../lib/inline-image";
+import type { MobileBot, MobileMessage, MobileSnapshot } from "../../lib/api/mobile-types";
+import { blockText } from "../../lib/api/mobile-types";
+import { errorText } from "../../lib/api/user-error";
+import { mobileTokens } from "../../lib/appearance/appearance";
+import type { MobileArtifactTarget } from "../../lib/artifacts/artifact-open";
+import { openMobileArtifact } from "../../lib/artifacts/artifact-open";
+import { allowsSpace } from "../../lib/cards/ask-action-label";
+import { plainAskTitle } from "../../lib/cards/ask-title";
+import { isInlineImageBlock } from "../../lib/messages/inline-image";
 import {
   mentionedBots,
   textWithMentions,
   UserMentionsContext,
   userMentionTargets,
-} from "../../lib/message-mentions";
-import { messagePresentationSegments } from "../../lib/message-presentation";
-import type { MobileBot, MobileMessage, MobileSnapshot } from "../../lib/mobile-types";
-import { blockText } from "../../lib/mobile-types";
-import { useResolvedAppearance } from "../../lib/native";
-import { speakerColorFor } from "../../lib/thread-message-text";
-import type { UserBubble } from "../../lib/user-bubble";
-import { withUserBubble } from "../../lib/user-bubble";
-import { errorText } from "../../lib/user-error";
-import { AppConnectCard } from "../AppConnectCard";
-import { AskActions } from "../AskActions";
-import { AskReceiptView } from "../ask-receipt";
-import { AudioAttachment } from "../audio-attachment";
-import { MessageMentions } from "../bot-mention";
-import { ChoiceCard } from "../ChoiceCard";
-import { ComputerCard } from "../ComputerCard";
-import { ChangeUndo, isUndoableChange } from "../change-undo";
-import { ImportSetupCard } from "../ImportSetupCard";
-import type { ImageArtifactPreviewTarget } from "../image-artifact-viewer";
-import { InlineImageAttachment } from "../inline-image-attachment";
-import { McpApprovalCard } from "../McpApprovalCard";
-import { MessageCaption } from "../message-caption";
-import { NativeSymbol } from "../native-symbol";
-import { PageCard } from "../pages/page-card";
-import { PeerReceiptLine } from "../peer-receipt-line";
+} from "../../lib/messages/message-mentions";
+import { messagePresentationSegments } from "../../lib/messages/message-presentation";
+import type { UserBubble } from "../../lib/messages/user-bubble";
+import { withUserBubble } from "../../lib/messages/user-bubble";
+import { useResolvedAppearance } from "../../lib/native/native";
+import { PageCard } from "../../lib/pages/page-card";
+import { botDisplayName, speakerColorFor } from "../../lib/thread/thread-message-text";
+import { AppConnectCard } from "../cards/AppConnectCard";
+import { AskActions } from "../cards/AskActions";
+import { AskReceiptView } from "../cards/ask-receipt";
+import { ChoiceCard } from "../cards/ChoiceCard";
+import { ComputerCard } from "../cards/ComputerCard";
+import { ChangeUndo, isUndoableChange } from "../cards/change-undo";
+import { ImportSetupCard } from "../cards/ImportSetupCard";
+import { McpApprovalCard } from "../cards/McpApprovalCard";
+import { AudioAttachment } from "../media/audio-attachment";
+import type { ImageArtifactPreviewTarget } from "../media/image-artifact-viewer";
+import { InlineImageAttachment } from "../media/inline-image-attachment";
+import { MessageMentions } from "../messages/bot-mention";
+import { MessageCaption } from "../messages/message-caption";
+import { NativeSymbol } from "../native/native-symbol";
 import { AskBlock } from "./ask-block";
 import { McpAppCard } from "./mcp-app-card";
 import type { MessageRowActions } from "./message-row";
+import { PeerReceiptLine } from "./peer-receipt-line";
 import { isSpecialMessageBlock, SpecialMessageCard } from "./special-message-card";
 
 type AskAction = NonNullable<Extract<MessageBlock, { kind: "ask" }>["actions"]>[number];
@@ -91,8 +90,11 @@ export const MessageBubble = memo(function MessageBubble({
 }) {
   const { members, onOpenBot } = props;
   const userMentions = useMemo(
-    () => (members?.length ? { targets: userMentionTargets(members), onOpenBot } : undefined),
-    [members, onOpenBot],
+    () =>
+      members?.length
+        ? { targets: userMentionTargets(members, blockText(props.message)), onOpenBot }
+        : undefined,
+    [members, onOpenBot, props.message],
   );
   const body = (
     <MarkdownLongPressContext.Provider value={props.actionProps.onLongPress}>
@@ -321,8 +323,8 @@ const MessageBubbleContent = memo(function MessageBubbleContent({
   }
   const handoff = message.blocks.find((block) => block.kind === "handoff");
   if (handoff) {
-    const from = memberName(members, handoff.fromBotId) ?? t`bot`;
-    const to = memberName(members, handoff.toBotId) ?? t`bot`;
+    const from = botDisplayName(members, bots, handoff.fromBotId) ?? t`bot`;
+    const to = botDisplayName(members, bots, handoff.toBotId) ?? t`bot`;
     return (
       <AgentEventLabel
         actionProps={actionProps}
@@ -565,7 +567,9 @@ const MessageBubbleContent = memo(function MessageBubbleContent({
     .join("\n");
   if (attachments.length > 0) {
     const speaker =
-      message.role === "bot" ? (memberName(members, message.botId) ?? botName) : authorName;
+      message.role === "bot"
+        ? (botDisplayName(members, bots, message.botId) ?? botName)
+        : authorName;
     const speakerColor =
       message.role === "bot" ? speakerColorFor(bots, members, message.botId) : undefined;
     const hasInlineImages = attachments.some(isInlineImageBlock);
@@ -724,7 +728,7 @@ const MessageBubbleContent = memo(function MessageBubbleContent({
   }
   const segments = messagePresentationSegments(message.blocks);
   const speaker =
-    message.role === "bot" ? (memberName(members, message.botId) ?? botName) : authorName;
+    message.role === "bot" ? (botDisplayName(members, bots, message.botId) ?? botName) : authorName;
   const speakerColor =
     message.role === "bot" ? speakerColorFor(bots, members, message.botId) : undefined;
   const showSpeaker = showBotSenderName || Boolean(authorName);

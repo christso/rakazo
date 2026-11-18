@@ -1,0 +1,747 @@
+{
+  "packages": [
+    {
+      "name": "resolve-workspace-root",
+      "version": "2.0.1",
+      "files": [
+        {
+          "file": "build/index.js",
+          "originalSha256": "ee3be37ce5bce6f0de05ee538653d13f8cbf6a7ec8c8f4ed24466025e5e34f2e",
+          "sha256": "07f25671e20d2ca50a760a068ef565a5069e0b14a42d47bf1678b3f63438d509",
+          "factory": "2139",
+          "picomatch": "2.3.2",
+          "modules": [
+            {
+              "name": "6099",
+              "start": 64034,
+              "end": 66723,
+              "declarator": false
+            },
+            {
+              "name": "2139",
+              "start": 66729,
+              "end": 66794,
+              "declarator": false
+            },
+            {
+              "name": "3322",
+              "start": 66800,
+              "end": 69550,
+              "declarator": false
+            },
+            {
+              "name": "2429",
+              "start": 69556,
+              "end": 73076,
+              "declarator": false
+            },
+            {
+              "name": "479",
+              "start": 73081,
+              "end": 74184,
+              "declarator": false
+            },
+            {
+              "name": "9411",
+              "start": 82167,
+              "end": 82202,
+              "declarator": false
+            },
+            {
+              "name": "1017",
+              "start": 82252,
+              "end": 82282,
+              "declarator": false
+            }
+          ],
+          "parserFactory": {
+            "name": "2139",
+            "start": 66738,
+            "end": 66794
+          },
+          "helpers": [],
+          "entry": "3322",
+          "webpack": true
+        }
+      ],
+      "patch": "patches/resolve-workspace-root@2.0.1.patch",
+      "patchSha256": "8aa92ca40d9e38fab340febb6a9d6758c3000fe55361d9594c8586cdac000073"
+    },
+    {
+      "name": "playwright",
+      "version": "1.64.1",
+      "files": [
+        {
+          "file": "lib/matchers/expect.js",
+          "originalSha256": "0e5d49c2c2b2fb2a20f60726153cb0bd109d0124394029035f43497a82b05eed",
+          "sha256": "ebae25332fac7a0a37d125bc51da0c05e5411dd90c6d297d9536e10a250b8897",
+          "factory": "require_parse",
+          "picomatch": "4.0.7",
+          "modules": [
+            {
+              "name": "require_constants",
+              "start": 296768,
+              "end": 302140,
+              "declarator": true
+            },
+            {
+              "name": "require_utils",
+              "start": 302186,
+              "end": 304489,
+              "declarator": true
+            },
+            {
+              "name": "require_scan",
+              "start": 304534,
+              "end": 314289,
+              "declarator": true
+            },
+            {
+              "name": "require_parse",
+              "start": 314335,
+              "end": 314488,
+              "declarator": true
+            },
+            {
+              "name": "require_picomatch",
+              "start": 314538,
+              "end": 319895,
+              "declarator": true
+            },
+            {
+              "name": "require_picomatch2",
+              "start": 319937,
+              "end": 320457,
+              "declarator": true
+            }
+          ],
+          "parserFactory": {
+            "name": "require_parse",
+            "start": 314423,
+            "end": 314485
+          },
+          "helpers": ["__commonJS"],
+          "entry": "require_picomatch"
+        }
+      ],
+      "patch": "patches/playwright@1.64.1.patch",
+      "patchSha256": "830bc8b60e0b259de58688893fa1339ea4556dc054f336da8849b9a4d06e5846"
+    },
+    {
+      "name": "prisma",
+      "version": "7.10.1",
+      "files": [
+        {
+          "file": "build/cli.js",
+          "originalSha256": "4ab8a95f0072dfa7c3db869a5ff8f775499f22c346a4556991c0ae28eb1220fd",
+          "sha256": "e47b03b5d3560d03dcd3ace4abd500787176f7a7bd21d86bd34bbbf3e4585d35",
+          "factory": "Obe",
+          "picomatch": "2.3.2",
+          "modules": [
+            {
+              "name": "GT",
+              "start": 95510,
+              "end": 98282,
+              "declarator": true
+            },
+            {
+              "name": "HT",
+              "start": 98287,
+              "end": 99346,
+              "declarator": true
+            },
+            {
+              "name": "Dbe",
+              "start": 99351,
+              "end": 102438,
+              "declarator": true
+            },
+            {
+              "name": "Obe",
+              "start": 102443,
+              "end": 102519,
+              "declarator": true
+            },
+            {
+              "name": "Fbe",
+              "start": 102524,
+              "end": 104783,
+              "declarator": true
+            }
+          ],
+          "parserFactory": {
+            "name": "Obe",
+            "start": 102460,
+            "end": 102518
+          },
+          "helpers": ["P"],
+          "entry": "Fbe"
+        }
+      ],
+      "patch": "patches/prisma@7.10.1.patch",
+      "patchSha256": "95497d21412a170b2072ebe11d0f0b711ddaf65cac4e9facde9f7943819a2aa8"
+    },
+    {
+      "name": "sentry",
+      "version": "0.45.0",
+      "files": [
+        {
+          "file": "dist/index.cjs",
+          "originalSha256": "d507219025959b3a2b3301a740bb88d90a06c3dad9220e28a913fa94b38b9493",
+          "sha256": "46d30395e328d88dd93d05765825826484edd984d91af0cc03a154039a3f9d2c",
+          "factory": "eSe",
+          "picomatch": "4.0.7",
+          "modules": [
+            {
+              "name": "iA",
+              "start": 458740,
+              "end": 461440,
+              "declarator": true
+            },
+            {
+              "name": "oA",
+              "start": 461445,
+              "end": 462562,
+              "declarator": true
+            },
+            {
+              "name": "QEe",
+              "start": 462567,
+              "end": 465697,
+              "declarator": true
+            },
+            {
+              "name": "eSe",
+              "start": 465702,
+              "end": 465778,
+              "declarator": true
+            },
+            {
+              "name": "rSe",
+              "start": 465783,
+              "end": 468031,
+              "declarator": true
+            }
+          ],
+          "parserFactory": {
+            "name": "eSe",
+            "start": 465719,
+            "end": 465777
+          },
+          "helpers": ["Z"],
+          "entry": "rSe"
+        },
+        {
+          "file": "dist/index.mjs",
+          "originalSha256": "bbe0e3b31183bf896a71c998c7a780d3171ad8a2c2a0d66be41a77335569998b",
+          "sha256": "d6bc7aa4f940c8d930c477d30717e9e0021b6977780fcd528326416578910f7d",
+          "factory": "_be",
+          "picomatch": "4.0.7",
+          "modules": [
+            {
+              "name": "g0",
+              "start": 459544,
+              "end": 462240,
+              "declarator": true
+            },
+            {
+              "name": "f0",
+              "start": 462245,
+              "end": 463358,
+              "declarator": true
+            },
+            {
+              "name": "gbe",
+              "start": 463363,
+              "end": 466472,
+              "declarator": true
+            },
+            {
+              "name": "_be",
+              "start": 466477,
+              "end": 466553,
+              "declarator": true
+            },
+            {
+              "name": "Ebe",
+              "start": 466558,
+              "end": 468802,
+              "declarator": true
+            }
+          ],
+          "parserFactory": {
+            "name": "_be",
+            "start": 466494,
+            "end": 466552
+          },
+          "helpers": ["Q"],
+          "entry": "Ebe"
+        }
+      ],
+      "patch": "patches/sentry@0.45.0.patch",
+      "patchSha256": "1590fb52bd51136a7dd08c9c016ce11576129f9e1fa3ba8b6b1ff27c59e7c8a1"
+    },
+    {
+      "name": "rolldown",
+      "version": "1.3.0",
+      "files": [
+        {
+          "file": "dist/utils-index.mjs",
+          "originalSha256": "a6087f5f721e1d4b9f2b6d1ba41b11f00435a214fc46d2153504528e668ccb2d",
+          "sha256": "519f20057ca5573ff99f798b0d9f81761e171b9106ed68d13f753ad674ac0ad9",
+          "factory": "require_parse",
+          "picomatch": "4.0.7",
+          "modules": [
+            {
+              "name": "require_constants",
+              "start": 4295,
+              "end": 8306,
+              "declarator": true
+            },
+            {
+              "name": "require_utils",
+              "start": 8392,
+              "end": 10337,
+              "declarator": true
+            },
+            {
+              "name": "require_scan",
+              "start": 10422,
+              "end": 18781,
+              "declarator": true
+            },
+            {
+              "name": "require_parse",
+              "start": 18867,
+              "end": 19014,
+              "declarator": true
+            },
+            {
+              "name": "require_picomatch$1",
+              "start": 19104,
+              "end": 29725,
+              "declarator": true
+            }
+          ],
+          "parserFactory": {
+            "name": "require_parse",
+            "start": 18935,
+            "end": 19012
+          },
+          "helpers": ["__commonJSMin"],
+          "entry": "require_picomatch$1"
+        }
+      ],
+      "patch": "patches/rolldown@1.3.0.patch",
+      "patchSha256": "c8b63d79f7a57350805805656a44d992ee3a77abebc74607080be53831d3317f"
+    },
+    {
+      "name": "react-email",
+      "version": "6.11.8",
+      "files": [
+        {
+          "file": "dist/cli/index.mjs",
+          "originalSha256": "01cf3fcfe0acbded06ebf222ddbb2e7cfcc0cff86d50c19453519f4e15e96908",
+          "sha256": "7219366ddf14af9bf2fb5b38b354a648d5f9b9c669d79adc9f577d3ecbea9cd2",
+          "factory": "require_parse$1",
+          "picomatch": "4.0.7",
+          "modules": [
+            {
+              "name": "require_constants",
+              "start": 21856,
+              "end": 25802,
+              "declarator": true
+            },
+            {
+              "name": "require_utils$1",
+              "start": 25908,
+              "end": 27855,
+              "declarator": true
+            },
+            {
+              "name": "require_scan",
+              "start": 27960,
+              "end": 36058,
+              "declarator": true
+            },
+            {
+              "name": "require_parse$1",
+              "start": 36164,
+              "end": 36313,
+              "declarator": true
+            },
+            {
+              "name": "require_picomatch$1",
+              "start": 36423,
+              "end": 46407,
+              "declarator": true
+            }
+          ],
+          "parserFactory": {
+            "name": "require_parse$1",
+            "start": 36234,
+            "end": 36311
+          },
+          "helpers": ["__commonJSMin"],
+          "entry": "require_picomatch$1"
+        }
+      ],
+      "patch": "patches/react-email@6.11.8.patch",
+      "patchSha256": "8abfac78e731361f87fb44e3e8354ff867e5e3cf57cda25203e8f7cc2d796496"
+    },
+    {
+      "name": "@prisma/fetch-engine",
+      "version": "7.10.1",
+      "files": [
+        {
+          "file": "dist/chunk-HWBBHXY6.js",
+          "originalSha256": "07e74e372d988f77be471587dd6ab8dce83d5b4827c516eb3084434f6b9e55b1",
+          "sha256": "ad415ee6d7f26cced90eafbaca0959b7503ae20b9a967d425ba980ffd1990c6b",
+          "factory": "require_parse2",
+          "picomatch": "2.3.2",
+          "modules": [
+            {
+              "name": "require_constants2",
+              "start": 68004,
+              "end": 73481,
+              "declarator": true
+            },
+            {
+              "name": "require_utils2",
+              "start": 73487,
+              "end": 75775,
+              "declarator": true
+            },
+            {
+              "name": "require_scan",
+              "start": 75781,
+              "end": 85602,
+              "declarator": true
+            },
+            {
+              "name": "require_parse2",
+              "start": 85608,
+              "end": 85829,
+              "declarator": true
+            },
+            {
+              "name": "require_picomatch",
+              "start": 85835,
+              "end": 91365,
+              "declarator": true
+            },
+            {
+              "name": "require_picomatch2",
+              "start": 91371,
+              "end": 91596,
+              "declarator": true
+            }
+          ],
+          "parserFactory": {
+            "name": "require_parse2",
+            "start": 85764,
+            "end": 85826
+          },
+          "helpers": [],
+          "entry": "require_picomatch"
+        },
+        {
+          "file": "dist/chunk-PPPJF3PE.js",
+          "originalSha256": "11c4f16d51b726ad654ebc199e61d3fb8009df3affdc36d08452ae4c8cf9fde9",
+          "sha256": "3d50624591f3c60f66a2c8e2e0c8da31496cb3ea572280a5dfd990c8c587f562",
+          "factory": "require_parse2",
+          "picomatch": "2.3.2",
+          "modules": [
+            {
+              "name": "require_constants2",
+              "start": 68004,
+              "end": 73481,
+              "declarator": true
+            },
+            {
+              "name": "require_utils2",
+              "start": 73487,
+              "end": 75775,
+              "declarator": true
+            },
+            {
+              "name": "require_scan",
+              "start": 75781,
+              "end": 85602,
+              "declarator": true
+            },
+            {
+              "name": "require_parse2",
+              "start": 85608,
+              "end": 85829,
+              "declarator": true
+            },
+            {
+              "name": "require_picomatch",
+              "start": 85835,
+              "end": 91365,
+              "declarator": true
+            },
+            {
+              "name": "require_picomatch2",
+              "start": 91371,
+              "end": 91596,
+              "declarator": true
+            }
+          ],
+          "parserFactory": {
+            "name": "require_parse2",
+            "start": 85764,
+            "end": 85826
+          },
+          "helpers": [],
+          "entry": "require_picomatch"
+        }
+      ],
+      "patch": "patches/@prisma__fetch-engine@7.10.1.patch",
+      "patchSha256": "7e5b57ae68ea5dbf3e96f0608e2dd64303faa8ad5d5b68c3fa124d77e9862380"
+    },
+    {
+      "name": "@prisma/get-platform",
+      "version": "7.10.1",
+      "files": [
+        {
+          "file": "dist/chunk-IL63DMPY.js",
+          "originalSha256": "a22af5757f6897868dafa07e21e489da4c26776b15431e63609e73e6c8bdf2be",
+          "sha256": "7e86bd4b291dbedb6fa17a12dc634bf67e70382d81299570e8087b47a2e11201",
+          "factory": "require_parse3",
+          "picomatch": "2.3.2",
+          "modules": [
+            {
+              "name": "require_constants2",
+              "start": 180904,
+              "end": 186381,
+              "declarator": true
+            },
+            {
+              "name": "require_utils2",
+              "start": 186387,
+              "end": 188675,
+              "declarator": true
+            },
+            {
+              "name": "require_scan",
+              "start": 188681,
+              "end": 198502,
+              "declarator": true
+            },
+            {
+              "name": "require_parse3",
+              "start": 198508,
+              "end": 198729,
+              "declarator": true
+            },
+            {
+              "name": "require_picomatch",
+              "start": 198735,
+              "end": 204267,
+              "declarator": true
+            },
+            {
+              "name": "require_picomatch2",
+              "start": 204273,
+              "end": 204498,
+              "declarator": true
+            }
+          ],
+          "parserFactory": {
+            "name": "require_parse3",
+            "start": 198664,
+            "end": 198726
+          },
+          "helpers": [],
+          "entry": "require_picomatch"
+        }
+      ],
+      "patch": "patches/@prisma__get-platform@7.10.1.patch",
+      "patchSha256": "af7ab822ceb255e86f0ad624dba0e39584fbba6d48bc02807df5dc372d6cbff5"
+    },
+    {
+      "name": "@prisma/get-platform",
+      "version": "7.2.0",
+      "files": [
+        {
+          "file": "dist/chunk-3UEKS5W6.js",
+          "originalSha256": "e3296c06512dd5dcd95a932b152c00e4ca8e6b71c3d4b87a2bee90bf66c66ae7",
+          "sha256": "c646644bdb09b9256c305de4155371de59eb7d555195319620c46242ee4857fb",
+          "factory": "require_parse3",
+          "picomatch": "2.3.2",
+          "modules": [
+            {
+              "name": "require_constants2",
+              "start": 180904,
+              "end": 186253,
+              "declarator": true
+            },
+            {
+              "name": "require_utils2",
+              "start": 186259,
+              "end": 188547,
+              "declarator": true
+            },
+            {
+              "name": "require_scan",
+              "start": 188553,
+              "end": 198374,
+              "declarator": true
+            },
+            {
+              "name": "require_parse3",
+              "start": 198380,
+              "end": 198601,
+              "declarator": true
+            },
+            {
+              "name": "require_picomatch",
+              "start": 198607,
+              "end": 204139,
+              "declarator": true
+            },
+            {
+              "name": "require_picomatch2",
+              "start": 204145,
+              "end": 204370,
+              "declarator": true
+            }
+          ],
+          "parserFactory": {
+            "name": "require_parse3",
+            "start": 198536,
+            "end": 198598
+          },
+          "helpers": [],
+          "entry": "require_picomatch"
+        }
+      ],
+      "patch": "patches/@prisma__get-platform@7.2.0.patch",
+      "patchSha256": "dabdaad788cc3e9322ad1c453b3414e18a7c31bcb1ddb06f4a8f525bc16c11be"
+    },
+    {
+      "name": "prettier",
+      "version": "3.9.6",
+      "files": [
+        {
+          "file": "index.mjs",
+          "originalSha256": "ceb7b3ba2306d8696d3bd37f226c18cbf2b5b365266ffaf600c667727184d24f",
+          "sha256": "c4c2a89c6d05d1b5ec7e78bb1476655ae0ffc12fc00666b3d556362eeef5dfbb",
+          "factory": "require_parse2",
+          "picomatch": "2.3.2",
+          "modules": [
+            {
+              "name": "require_constants2",
+              "start": 48344,
+              "end": 53750,
+              "declarator": true
+            },
+            {
+              "name": "require_utils2",
+              "start": 53820,
+              "end": 56049,
+              "declarator": true
+            },
+            {
+              "name": "require_scan",
+              "start": 56118,
+              "end": 65938,
+              "declarator": true
+            },
+            {
+              "name": "require_parse2",
+              "start": 66008,
+              "end": 66183,
+              "declarator": true
+            },
+            {
+              "name": "require_picomatch",
+              "start": 66257,
+              "end": 71825,
+              "declarator": true
+            },
+            {
+              "name": "require_picomatch2",
+              "start": 71891,
+              "end": 72070,
+              "declarator": true
+            }
+          ],
+          "parserFactory": {
+            "name": "require_parse2",
+            "start": 66119,
+            "end": 66180
+          },
+          "helpers": ["__commonJS"],
+          "entry": "require_picomatch"
+        }
+      ],
+      "patch": "patches/prettier@3.9.6.patch",
+      "patchSha256": "cbdd53c43161747d1ce9c981fff161e38ea8ed8cabfa495fd61a8b911fcccb8e"
+    },
+    {
+      "name": "tsx",
+      "version": "4.23.15",
+      "files": [
+        {
+          "file": "dist/cli.mjs",
+          "originalSha256": "8690135061bc49d187143493b82d26a09b7fb71d6dd817d2242cc9dc52506de9",
+          "sha256": "122064fcad0e02f28444cb930b3d24873be30d706a82a439b20654d75144c508",
+          "factory": "ls",
+          "picomatch": "2.3.2",
+          "modules": [
+            {
+              "name": "We",
+              "start": 45406,
+              "end": 47996,
+              "declarator": false
+            },
+            {
+              "name": "ft",
+              "start": 48030,
+              "end": 49081,
+              "declarator": false
+            },
+            {
+              "name": "Ds",
+              "start": 49114,
+              "end": 52224,
+              "declarator": false
+            },
+            {
+              "name": "ls",
+              "start": 52254,
+              "end": 52304,
+              "declarator": false
+            },
+            {
+              "name": "cs",
+              "start": 52337,
+              "end": 54648,
+              "declarator": false
+            },
+            {
+              "name": "$u",
+              "start": 54685,
+              "end": 54728,
+              "declarator": false
+            }
+          ],
+          "parserFactory": {
+            "name": "ls",
+            "start": 52267,
+            "end": 52304
+          },
+          "helpers": [],
+          "entry": "$u",
+          "globals": ["vu", "ct", "bu", "lt", "Bu", "ht", "Su", "dt", "xu", "pt", "Tu", "Et"],
+          "objects": ["lt"]
+        }
+      ],
+      "patch": "patches/tsx@4.23.15.patch",
+      "patchSha256": "cb56cbe0a5d67234f0344ff2054f0bef29f0b1ecb43b69b8c9bdeac83253a661"
+    }
+  ]
+}

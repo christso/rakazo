@@ -1,0 +1,20 @@
+{
+  "advisory": "GHSA-fc5q-39xc-vjpf",
+  "reviewBy": "2026-12-18",
+  "upstream": [
+    "https://github.com/micromatch/picomatch/pull/264",
+    "https://github.com/micromatch/picomatch/pull/266"
+  ],
+  "packages": {
+    "2.3.2": {
+      "patch": "patches/picomatch@2.3.2.patch",
+      "patchSha256": "c8eda24bd6ca4385b3164c7608eac593c9287f1f2fcd144a72bb36469c376119",
+      "parserSha256": "f389d9b89fb3e86fbfe62984dd03d18f7a3a475c0217e8c27d7ac5295ff0bc2f"
+    },
+    "4.0.7": {
+      "patch": "patches/picomatch@4.0.7.patch",
+      "patchSha256": "e51e50211b45f6c4919f5cea4b9781b5856c2a6b2a3f8d0e9761421a55d191f7",
+      "parserSha256": "90caa1dc8324c4404273d5786d8dbbd9f17095fe048e8f19d91fee87ac7a63c4"
+    }
+  }
+}

@@ -4,13 +4,13 @@ import type { Actor } from "@rakazo/contracts";
 import type { Prisma, PrismaClient } from "@rakazo/db";
 import { IsolationError, recordSecurityEvent } from "@rakazo/db";
 import { getLogger } from "@rakazo/logging";
+import { connectionCreatedEvent } from "../auth/security-audit.js";
 import {
   beginConnection,
   completeConnection,
   connectionContext,
   revokeConnection,
-} from "../connection-flows.js";
-import { connectionCreatedEvent } from "../security-audit.js";
+} from "../integrations/connection-flows.js";
 import type { RouterContext } from "./context.js";
 
 async function reconcileConnections(
@@ -196,7 +196,7 @@ export function connectionsRoutes(ctx: RouterContext) {
         });
         if (!row) return [];
         try {
-          const tools = await connector.discoverTools({
+          const adapterContext = {
             ...connectionContext(context.actor, "connections.tools", context.signal),
             connectedConnections: [
               {
@@ -208,7 +208,10 @@ export function connectionsRoutes(ctx: RouterContext) {
               },
             ],
             connectedProviders: [input.provider],
-          });
+          };
+          const tools = connector.listAppTools
+            ? await connector.listAppTools(adapterContext, input.provider)
+            : await connector.discoverTools(adapterContext);
           return tools.map((tool) => ({
             name: tool.name,
             description: tool.description,

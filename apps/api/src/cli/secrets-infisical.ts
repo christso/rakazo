@@ -8,10 +8,11 @@ import {
   secretStoreOptionsFromEnv,
   unwrapEnvFromKeyManager,
 } from "@rakazo/adapters";
-import { resolveEncryptionKey } from "@rakazo/core";
 import { loadRootEnv } from "@rakazo/core/node/load-root-env";
+import { resolveEncryptionKeyForRecovery } from "@rakazo/core/node/secrets-guard";
 import { createDb, runAsSystem } from "@rakazo/db";
-import { createSecretMigrationRepository } from "../secret-migration.js";
+import { bestEffort } from "@rakazo/logging";
+import { createSecretMigrationRepository } from "../auth/secret-migration.js";
 
 loadRootEnv();
 await unwrapEnvFromKeyManager();
@@ -23,9 +24,9 @@ const options = secretStoreOptionsFromEnv({ ...process.env, SECRET_STORE: "infis
 if (!options || !process.env.DATABASE_URL)
   throw new Error("Secret storage and database configuration are required");
 const { prisma, pool } = createDb(process.env.DATABASE_URL, {
-  keyProvider: contentKeyProviderFromEnv(),
+  keyProvider: contentKeyProviderFromEnv(process.env, resolveEncryptionKeyForRecovery(process.env)),
 });
-const encryptionKey = resolveEncryptionKey(process.env);
+const encryptionKey = resolveEncryptionKeyForRecovery(process.env);
 const realtime = new PostgresRealtimeFanout({
   connectionString: process.env.REALTIME_DATABASE_URL ?? process.env.DATABASE_URL,
   publisher: pool,
@@ -74,7 +75,7 @@ try {
 } finally {
   await infisical.close();
   await encrypted.close();
-  await realtime.close().catch(() => undefined);
-  await prisma.$disconnect().catch(() => undefined);
-  await pool.end().catch(() => undefined);
+  await bestEffort("close realtime connection", realtime.close());
+  await bestEffort("disconnect database client", prisma.$disconnect());
+  await bestEffort("close database pool", pool.end());
 }

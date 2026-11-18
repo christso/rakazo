@@ -3,7 +3,11 @@ import {
   getComputerProviderSettings,
   updateAccountComputerSettings,
   updateComputerProviderSettings,
-} from "../computer-provider-config.js";
+} from "../computers/computer-provider-config.js";
+import {
+  getSpaceComputerSettings,
+  updateSpaceComputerSettings,
+} from "../computers/space-computer-provider-config.js";
 import type { RouterContext } from "./context.js";
 
 export function computerProviderRoutes(ctx: RouterContext) {
@@ -16,6 +20,14 @@ export function computerProviderRoutes(ctx: RouterContext) {
       update: authed.computerProvider.update.handler(({ context, input }) =>
         updateComputerProviderSettings(deps, context.actor, input),
       ),
+      space: {
+        get: authed.computerProvider.space.get.handler(({ context }) =>
+          getSpaceComputerSettings(deps, context.actor),
+        ),
+        update: authed.computerProvider.space.update.handler(({ context, input }) =>
+          updateSpaceComputerSettings(deps, context.actor, input),
+        ),
+      },
       account: {
         get: authed.computerProvider.account.get.handler(({ context }) =>
           getAccountComputerSettings(deps, context.actor),

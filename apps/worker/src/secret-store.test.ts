@@ -1,6 +1,6 @@
 import { InMemoryRealtimeFanout } from "@rakazo/adapters";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { infisicalFake } from "../../../packages/adapters/src/secret-store-fake.js";
+import { infisicalFake } from "../../../packages/adapters/src/secrets/secret-store-fake.js";
 import { createWorkerSecretStore } from "./secret-store.js";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -12,6 +12,12 @@ const context = {
   signal: new AbortController().signal,
 };
 describe("worker secret storage startup", () => {
+  it("refuses a weak production encryption key before creating secret storage", async () => {
+    await expect(
+      createWorkerSecretStore({ NODE_ENV: "production", ENCRYPTION_KEY: "weak" }),
+    ).rejects.toThrow(/ENCRYPTION_KEY/);
+  });
+
   it("starts degraded without blocking encrypted credentials and retries the configured remote later", async () => {
     const fake = infisicalFake();
     fake.offline = true;
