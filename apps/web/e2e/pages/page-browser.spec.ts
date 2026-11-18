@@ -208,13 +208,13 @@ test("live page helper waits for a site's sign-in check, or says the page is sti
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("No fixture server");
-  for (const delay of ["-1", "30001", "NaN", "Infinity"]) {
-    const invalid = await fetch(`http://127.0.0.1:${address.port}/api/me?delay=${delay}`);
-    expect(invalid.status).toBe(400);
-    expect(await invalid.text()).toBe("Invalid delay");
-  }
   let context: Awaited<ReturnType<typeof chromium.launchPersistentContext>> | undefined;
   try {
+    for (const delay of ["-1", "30001", "NaN", "Infinity"]) {
+      const invalid = await fetch(`http://127.0.0.1:${address.port}/api/me?delay=${delay}`);
+      expect(invalid.status).toBe(400);
+      expect(await invalid.text()).toBe("Invalid delay");
+    }
     context = await chromium.launchPersistentContext(profile, {
       ...BROWSER,
       args: ["--remote-debugging-port=0"],
