@@ -65,12 +65,17 @@ it.skipIf(!databaseUrl)(
       const stored = await system.session.findFirstOrThrow({ where: { userId: user.id } });
       expect(stored.expiresAt.getTime()).toBeGreaterThan(aged.getTime() + DAY_MS);
 
-      // The desktop app sends its device token beside the window's cookie.
+      // A rejected native bearer must never fall back to a saved browser cookie.
       await system.session.updateMany({
         where: { userId: user.id },
         data: { expiresAt: aged },
       });
-      const desktop = await me({ cookie, authorization: "Bearer device-token" });
+      const rejected = await me({ cookie, authorization: "Bearer device-token" });
+      expect(rejected.status).toBe(401);
+      expect(sessionCookies(rejected)).toEqual([]);
+
+      // Desktop proxy headers are separate from Rakazo's bearer credentials.
+      const desktop = await me({ cookie, "x-access-token": "proxy-token" });
       expect(desktop.status).toBe(200);
       expect(sessionCookies(desktop)).toHaveLength(1);
 
