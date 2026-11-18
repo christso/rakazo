@@ -184,13 +184,18 @@ test("live page helper waits for a site's sign-in check, or says the page is sti
   const server = http.createServer((req, res) => {
     const url = new URL(req.url ?? "/", "http://fixture.test");
     if (url.pathname === "/api/me") {
-      setTimeout(
-        () => {
-          res.setHeader("content-type", "application/json");
-          res.end('{"name":"test-user"}');
-        },
-        Number(url.searchParams.get("delay")),
-      );
+      const delay = Number(url.searchParams.get("delay"));
+      if (!Number.isFinite(delay) || delay < 0 || delay > 30_000) {
+        res.writeHead(400, { "content-type": "text/plain" });
+        res.end("Invalid delay");
+        return;
+      }
+      const pending = setTimeout(() => {
+        res.setHeader("content-type", "application/json");
+        res.end('{"name":"test-user"}');
+      }, delay);
+      pending.unref();
+      res.once("close", () => clearTimeout(pending));
       return;
     }
     res.setHeader("content-type", "text/html");
@@ -203,6 +208,11 @@ test("live page helper waits for a site's sign-in check, or says the page is sti
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("No fixture server");
+  for (const delay of ["-1", "30001", "NaN", "Infinity"]) {
+    const invalid = await fetch(`http://127.0.0.1:${address.port}/api/me?delay=${delay}`);
+    expect(invalid.status).toBe(400);
+    expect(await invalid.text()).toBe("Invalid delay");
+  }
   let context: Awaited<ReturnType<typeof chromium.launchPersistentContext>> | undefined;
   try {
     context = await chromium.launchPersistentContext(profile, {

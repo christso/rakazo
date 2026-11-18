@@ -237,7 +237,7 @@ describe("purchase detection in the page helper", () => {
     "Place order",
   ])("takes %s for a final step", (label) => {
     const { intent } = page(`<button type="button">${label}</button>`);
-    expect(intent(label.replace(/^🔒 /, "🔒 "))?.reason).toBe("final_step");
+    expect(intent(label)?.reason).toBe("final_step");
   });
 
   it.each([

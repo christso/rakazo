@@ -85,9 +85,10 @@ export class PageBrowserSession {
     return this.dom.window.document.title || "";
   }
 
-  load(url: string, html: string): BrowserNavigateResult {
+  load(url: string, html: string, title?: string): BrowserNavigateResult {
     this.dom.window.close();
     this.dom = new JSDOM(html, { url, contentType: "text/html", pretendToBeVisual: true });
+    if (title !== undefined) this.dom.window.document.title = title;
     this.refs.clear();
     return { url: this.url, title: this.title };
   }
