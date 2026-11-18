@@ -299,3 +299,54 @@ it("keeps a dirty form across live refresh and requires a deliberate reload and 
     expect.anything(),
   );
 });
+
+it("saves a prepared runtime in the selected Space without a paid provisioning switch", async () => {
+  const prepared = {
+    provider: "prepared-runtime",
+    defaultProvider: "docker",
+    connectionId: "runtime-connection",
+    values: { url: "https://runtime.example.test:8443", fingerprint: "A".repeat(43) },
+    savedSecrets: { token: true },
+    providers: [
+      {
+        id: "prepared-runtime",
+        displayName: "Prepared runtime",
+        capabilities: { perAccount: false, spaceOnly: true },
+        fields: [
+          {
+            key: "url",
+            label: "Runtime URL",
+            kind: "url",
+            validation: "operator-https",
+            required: true,
+          },
+          {
+            key: "token",
+            label: "Access token",
+            kind: "secret",
+            destination: "url",
+            required: true,
+          },
+          { key: "fingerprint", label: "Certificate fingerprint", kind: "text", required: true },
+        ],
+      },
+    ],
+  };
+  mock.rpc.mockResolvedValue(prepared);
+  await render();
+  expect(host.querySelector('input[type="checkbox"]')).toBeNull();
+  expect(host.querySelector<HTMLInputElement>('input[type="password"]')?.value).toBe("");
+  expect(action().disabled).toBe(false);
+  await act(async () => action().onPress());
+  expect(mock.rpc).toHaveBeenCalledWith(
+    "computerProvider/space/update",
+    {
+      provider: prepared.provider,
+      values: prepared.values,
+      expectedConnectionId: prepared.connectionId,
+    },
+    expect.objectContaining({
+      requestContext: expect.objectContaining({ headers: { "x-rakazo-space-id": "space-edited" } }),
+    }),
+  );
+});

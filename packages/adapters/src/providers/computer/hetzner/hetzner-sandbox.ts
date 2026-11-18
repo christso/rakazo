@@ -9,14 +9,15 @@ import type {
 } from "@rakazo/adapter-kit";
 import { ipVersion, isNonPublicAddress } from "@rakazo/contracts";
 import { deadlineSignal, pollUntil } from "@rakazo/core";
-import { connectPinnedTls } from "@rakazo/core/node/pinned-https";
 import { supervisorComputerName } from "@rakazo/core/node/supervisor-identity";
 import { bestEffort } from "@rakazo/logging";
-import { Agent } from "undici";
 import { requireUnreferencedMachineRecord } from "../../../computers/sandbox/sandbox-cleanup.js";
 import { sandboxNotFoundError } from "../../../computers/sandbox/sandbox-errors.js";
+import {
+  gatewayScreenTransport,
+  pinnedGatewayFetch,
+} from "../../../computers/sandbox/supervisor/gateway-transport.js";
 import { SupervisorSandboxProvider } from "../../../computers/sandbox/supervisor/supervisor-sandbox.js";
-import { fetchPairedWithDispatcher } from "../../../network/undici-fetch.js";
 import { computerCloudInit, runtimeCertificate } from "./hetzner-bootstrap.js";
 import type { CloudServer } from "./hetzner-client.js";
 import { HetznerApiError, HetznerClient } from "./hetzner-client.js";
@@ -37,7 +38,7 @@ const encode = (value: Reference) =>
 export class HetznerSandboxProvider extends SupervisorSandboxProvider {
   private readonly client: HetznerClient;
   private readonly connection: string;
-  private readonly transports = new Map<string, Agent>();
+  private readonly transports = new Map<string, typeof fetch>();
 
   constructor(
     private readonly settings: Record<string, string>,
@@ -339,28 +340,12 @@ export class HetznerSandboxProvider extends SupervisorSandboxProvider {
     return server;
   }
   private pinnedFetch(pin: string): typeof fetch {
-    let dispatcher = this.transports.get(pin);
-    if (!dispatcher) {
-      dispatcher = new Agent({
-        connect: (options, callback) =>
-          connectPinnedTls(
-            { host: options.hostname, port: Number(options.port || 443), fingerprint: pin },
-            (error, socket) => {
-              if (error) callback(error, null);
-              else callback(null, socket!);
-            },
-          ),
-      });
-      this.transports.set(pin, dispatcher);
+    let send = this.transports.get(pin);
+    if (!send) {
+      send = pinnedGatewayFetch(pin);
+      this.transports.set(pin, send);
     }
-    return (input, init) => {
-      const options: RequestInit & { dispatcher: Agent } = {
-        ...init,
-        dispatcher: dispatcher!,
-        redirect: "error",
-      };
-      return fetchPairedWithDispatcher()(input, options);
-    };
+    return send;
   }
   private async runtimeRequest(input: Parameters<typeof fetch>[0], init?: RequestInit) {
     const url = new URL(String(input));
@@ -391,20 +376,12 @@ export class HetznerSandboxProvider extends SupervisorSandboxProvider {
     computer: ComputerRef,
     context: AdapterContext,
   ) {
-    if (!value) throw new Error("Cloud computer returned no screen");
-    const url = new URL(value);
-    if (
-      url.protocol !== "http:" ||
-      url.hostname !== "127.0.0.1" ||
-      !/^\d+$/.test(url.port) ||
-      Number(url.port) < 1024
-    )
-      throw new Error("Cloud computer returned an invalid screen endpoint");
     const server = await this.serverFor(computer, context);
-    return {
-      url: `https://${this.address(server)}/desktop/${url.port}${url.pathname}${url.search}`,
-      headers: { authorization: `Bearer ${this.runtimeToken(computer.botId)}` },
-      tlsCertificateSha256: this.reference(computer.providerRef).pin,
-    };
+    return gatewayScreenTransport(
+      value,
+      { origin: `https://${this.address(server)}` },
+      this.runtimeToken(computer.botId),
+      this.reference(computer.providerRef).pin,
+    );
   }
 }

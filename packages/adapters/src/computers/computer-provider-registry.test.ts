@@ -16,11 +16,12 @@ describe.each(computerProviderRegistry)("$id settings conformance", (descriptor)
         .filter((field) => field.required)
         .map((field) => [
           field.key,
-          field.kind === "url"
-            ? "https://gateway.example.com/mcp"
-            : field.kind === "select"
-              ? field.options![0]!.value
-              : "example-value",
+          field.placeholder ??
+            (field.kind === "url"
+              ? "https://gateway.example.com/mcp"
+              : field.kind === "select"
+                ? field.options![0]!.value
+                : "example-value"),
         ]),
     );
   }

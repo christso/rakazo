@@ -26,6 +26,7 @@ type Row = [
 // except boxd and railway: those lists had left out their terminal and stored team home.
 const EXPECTED: Record<KnownSandboxKind, Row> = {
   none: [false, false, false, false, DEFAULT_SCREEN, "never", false, false],
+  "remote-supervisor": [true, true, false, false, DEFAULT_SCREEN, "never", true, true],
   docker: [true, true, false, false, DEFAULT_SCREEN, "always", false, true],
   hetzner: [true, false, false, false, DEFAULT_SCREEN, "never", true, true],
   e2b: [true, true, false, false, DEFAULT_SCREEN, "never", true, false],
@@ -91,6 +92,7 @@ describe("sandbox kind capabilities", () => {
       "desktop",
       "docker",
       "hetzner",
+      "remote-supervisor",
       "wuying",
     ]);
     expect(sandboxKindsWhere((entry) => entry.runsOnUserMachine)).toEqual(["desktop"]);

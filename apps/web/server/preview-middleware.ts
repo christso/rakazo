@@ -170,7 +170,7 @@ export function attachNovncProxy(server: WebServerHost, settings: WebServerSetti
     const headers = {
       // The storage shim rewrites the page, so ask for all of it, uncompressed.
       ...(isNovncPage(target.path) ? novncPageRequestHeaders(forwarded) : forwarded),
-      host: `${target.hostname.includes(":") ? `[${target.hostname}]` : target.hostname}:${target.port}`,
+      host: `${target.tlsServerName ?? (target.hostname.includes(":") ? `[${target.hostname}]` : target.hostname)}:${target.port}`,
     };
     const transport = target.protocol === "https:" ? https : http;
     let upstream: ClientRequest | undefined;
@@ -225,7 +225,7 @@ export function attachNovncProxy(server: WebServerHost, settings: WebServerSetti
           headers,
           ...(target.protocol === "https:" ? { servername: target.hostname } : {}),
           ...(target.tlsCertificateSha256
-            ? { agent: pinnedHttpsAgent(target.tlsCertificateSha256) }
+            ? { agent: pinnedHttpsAgent(target.tlsCertificateSha256, target.tlsServerName) }
             : {}),
         },
         (incoming) => {
@@ -366,6 +366,7 @@ export function attachNovncProxy(server: WebServerHost, settings: WebServerSetti
                 host: target.hostname,
                 port: target.port,
                 fingerprint: target.tlsCertificateSha256!,
+                servername: target.tlsServerName,
               },
               (error, connected) => {
                 if (error) reject(error);
@@ -439,7 +440,7 @@ export function attachNovncProxy(server: WebServerHost, settings: WebServerSetti
     const forwardUpgrade = () => {
       const headerLines = [
         `${req.method ?? "GET"} ${target.path} HTTP/1.1`,
-        `Host: ${target.hostname.includes(":") ? `[${target.hostname}]` : target.hostname}:${target.port}`,
+        `Host: ${target.tlsServerName ?? (target.hostname.includes(":") ? `[${target.hostname}]` : target.hostname)}:${target.port}`,
       ];
       for (const [key, value] of Object.entries(safeProxyHeaders(req.headers, target))) {
         headerLines.push(`${key}: ${Array.isArray(value) ? value.join(",") : value}`);

@@ -28,6 +28,7 @@ import {
   fakeNovita,
 } from "../../providers/computer/novita/novita-sandbox.test-support.js";
 import { emulatedRailway } from "../../providers/computer/railway/railway-sandbox.test-support.js";
+import { emulatedRemoteRuntime } from "../../providers/computer/remote-supervisor/remote-supervisor.test-support.js";
 import { FakeWuyingDesktop } from "../../providers/computer/wuying/wuying-sandbox.test-support.js";
 import { toComputerRef } from "../screens/computer-support.js";
 import { createSandboxProvider } from "./sandbox-factory.js";
@@ -37,7 +38,7 @@ import { assertSandboxWorkspaceContract, provisionPrepared } from "./sandbox-tes
 // Cloud conformance uses the same emulated HTTP boundary as the other provider fixtures.
 vi.mock("../../network/undici-fetch.js", async (original) => ({
   ...(await original()),
-  fetchPairedWithDispatcher: () => globalThis.fetch,
+  fetchPairedWithDispatcher: (fetcher?: typeof fetch) => fetcher ?? globalThis.fetch,
 }));
 
 let cloud: ReturnType<typeof emulatedHetzner>;
@@ -98,6 +99,11 @@ function temporaryRoot() {
 /** Keyed by every provider id, so a provider without an offline fixture fails typecheck. */
 const fixtures: Record<KnownSandboxKind, SandboxConformanceFixture> = {
   none: { refusesComputers: true },
+  "remote-supervisor": {
+    provider: () => emulatedRemoteRuntime().provider(),
+    workspace: false,
+    unsetEnv: true,
+  },
   hetzner: { provider: () => cloud.provider(), workspace: true, unsetEnv: true },
   fake: { provider: () => new FakeSandboxProvider(), workspace: true, unsetEnv: true },
   boat: { provider: () => fakeBoat(), workspace: true, unsetEnv: true },

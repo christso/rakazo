@@ -9,6 +9,7 @@ import {
 import type { PrismaClient } from "@rakazo/db";
 import { describe, expect, it, vi } from "vitest";
 import {
+  checkedComputerSettings,
   effectiveSandboxProvider,
   getAccountComputerSettings,
   getComputerProviderSettings,
@@ -579,8 +580,8 @@ describe("an account's own computer", () => {
   });
 });
 
-// The same API sanitization checks cover every settings-configurable adapter.
-it.each(computerProviderDescriptors())(
+// The deployment sanitization checks cover every adapter configurable at that scope.
+it.each(computerProviderDescriptors().filter((entry) => !entry.capabilities.spaceOnly))(
   "stores $id settings without echoing any credentials",
   async (descriptor) => {
     const { deps } = makeDeps();
@@ -724,5 +725,67 @@ it("keeps paid provisioning out of legacy deployment and account settings", asyn
     expect(account.deps.secrets.put).not.toHaveBeenCalled();
   } finally {
     delete descriptor.capabilities.requiresSpendingApproval;
+  }
+});
+
+it("keeps existing-runtime connections in Space settings without treating them as paid provisioning", async () => {
+  const descriptor = computerProviderDescriptor("desktop");
+  descriptor.capabilities.spaceOnly = true;
+  try {
+    const { deps } = makeDeps();
+    expect(
+      (await getComputerProviderSettings(deps, actor)).providers.map((entry) => entry.id),
+    ).not.toContain(descriptor.id);
+    await expect(
+      updateComputerProviderSettings(deps, actor, { provider: descriptor.id, values: testDesktop }),
+    ).rejects.toThrow("Configure this provider in Space settings");
+    await expect(
+      checkedComputerSettings(
+        deps,
+        actor,
+        { provider: descriptor.id, values: testDesktop },
+        null,
+        "space",
+      ),
+    ).resolves.not.toHaveProperty("spendingApproved");
+  } finally {
+    delete descriptor.capabilities.spaceOnly;
+  }
+});
+
+it("requires the operator's exact private-runtime grant before sending a saved token", async () => {
+  const descriptor = computerProviderDescriptors().find((entry) => entry.capabilities.spaceOnly);
+  expect(descriptor).toBeDefined();
+  const { deps } = makeDeps();
+  deps.resolveHostname.mockResolvedValue([{ address: "100.64.10.8", family: 4 }]);
+  const input = {
+    provider: descriptor!.id,
+    values: {
+      apiUrl: "https://runtime.example.test:8443",
+      apiToken: "synthetic-runtime-token",
+      certificateSha256: "A".repeat(43),
+    },
+  };
+  await expect(checkedComputerSettings(deps, actor, input, null, "space")).rejects.toThrow(
+    "Could not verify computer settings",
+  );
+  expect(deps.verifyConnection).not.toHaveBeenCalled();
+  expect(deps.secrets.put).not.toHaveBeenCalled();
+  vi.stubEnv("COMPUTER_RUNTIME_PRIVATE_ORIGINS", input.values.apiUrl);
+  try {
+    const stored = await checkedComputerSettings(deps, actor, input, null, "space");
+    expect(stored).not.toHaveProperty("spendingApproved");
+    expect(deps.verifyConnection).toHaveBeenCalledOnce();
+    deps.verifyConnection.mockClear();
+    deps.resolveHostname.mockResolvedValue([
+      { address: "100.64.10.8", family: 4 },
+      { address: "169.254.169.254", family: 4 },
+    ]);
+    await expect(checkedComputerSettings(deps, actor, input, null, "space")).rejects.toThrow(
+      "Could not verify computer settings",
+    );
+    expect(deps.verifyConnection).not.toHaveBeenCalled();
+  } finally {
+    vi.unstubAllEnvs();
   }
 });

@@ -650,6 +650,7 @@ export function computerRoutes(ctx: RouterContext) {
             undefined,
             session.headers,
             session.tlsCertificateSha256,
+            session.tlsServerName,
           ),
         };
       }),
@@ -701,6 +702,7 @@ export function computerRoutes(ctx: RouterContext) {
             undefined,
             session.headers,
             session.tlsCertificateSha256,
+            session.tlsServerName,
           ),
           // The view is part of what a screen shows: taking or releasing control changes it.
           ...(session.singleUseSignIn

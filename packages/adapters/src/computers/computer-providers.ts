@@ -14,6 +14,7 @@ import { appleContainerComputer } from "../providers/computer/local-vm/apple-con
 import { noneComputer } from "../providers/computer/none/none-computer.js";
 import { novitaComputer } from "../providers/computer/novita/novita-computer.js";
 import { railwayComputer } from "../providers/computer/railway/railway-computer.js";
+import { remoteComputer } from "../providers/computer/remote-supervisor/remote-computer.js";
 import { wuyingComputer } from "../providers/computer/wuying/wuying-computer.js";
 import type { ComputerProviderDefinition } from "./computer-provider-descriptor.js";
 
@@ -24,6 +25,7 @@ import type { ComputerProviderDefinition } from "./computer-provider-descriptor.
 export const computerProviders = {
   none: noneComputer,
   docker: dockerComputer,
+  "remote-supervisor": remoteComputer,
   hetzner: hetznerComputer,
   wuying: wuyingComputer,
   e2b: e2bComputer,

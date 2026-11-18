@@ -28,6 +28,7 @@ afterEach(() => {
 async function runtime() {
   const received: string[] = [];
   const applicationBytes: number[] = [];
+  const serverNames: (string | false | null)[] = [];
   const server = https.createServer(
     { key: TEST_TLS_KEY, cert: TEST_TLS_CERTIFICATE },
     (request, response) => {
@@ -36,6 +37,7 @@ async function runtime() {
     },
   );
   server.on("secureConnection", (socket) => {
+    serverNames.push(socket.servername);
     socket.on("data", (chunk) => applicationBytes.push(chunk.length));
   });
   server.listen(0, "127.0.0.1");
@@ -44,11 +46,11 @@ async function runtime() {
     server.closeAllConnections();
     server.close();
   });
-  return { port: (server.address() as AddressInfo).port, received, applicationBytes };
+  return { port: (server.address() as AddressInfo).port, received, applicationBytes, serverNames };
 }
 
-async function readRuntime(port: number, pin: string) {
-  const agent = pinnedHttpsAgent(pin);
+async function readRuntime(port: number, pin: string, serverName?: string) {
+  const agent = pinnedHttpsAgent(pin, serverName);
   cleanups.push(() => agent.destroy());
   const response = await new Promise<IncomingMessage>((resolve, reject) => {
     https
@@ -64,6 +66,11 @@ async function readRuntime(port: number, pin: string) {
 }
 
 describe("pinned runtime HTTPS", () => {
+  it("preserves an approved hostname for SNI while dialing an exact numeric address", async () => {
+    const server = await runtime();
+    expect(await readRuntime(server.port, fingerprint, "runtime.example.test")).toBe(200);
+    expect(server.serverNames).toEqual(["runtime.example.test"]);
+  });
   it("authenticates a self-signed certificate before sending a request", async () => {
     const server = await runtime();
     expect(await readRuntime(server.port, fingerprint)).toBe(200);

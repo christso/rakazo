@@ -6,12 +6,18 @@ import { connect } from "node:tls";
 export function isTlsCertificateSha256(value: unknown): value is string {
   return typeof value === "string" && /^[A-Za-z0-9_-]{43}$/.test(value);
 }
+export function isTlsServerName(value: unknown): value is string {
+  return (
+    typeof value === "string" && /^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$/.test(value)
+  );
+}
 
 interface PinnedTlsOptions {
   host: string;
   port: number;
   fingerprint: string;
   signal?: AbortSignal;
+  servername?: string;
 }
 
 /** Releases a socket only after the certificate matches an authenticated, out-of-band pin. */
@@ -21,6 +27,10 @@ export function connectPinnedTls(
 ): void {
   if (!isTlsCertificateSha256(options.fingerprint)) {
     callback(new Error("Invalid runtime TLS certificate fingerprint"));
+    return;
+  }
+  if (options.servername !== undefined && !isTlsServerName(options.servername)) {
+    callback(new Error("Invalid runtime TLS server name"));
     return;
   }
   if (options.signal?.aborted) {
@@ -33,6 +43,7 @@ export function connectPinnedTls(
     // This one connection authenticates the exact certificate instead of a public CA/name.
     rejectUnauthorized: false,
     minVersion: "TLSv1.2",
+    servername: options.servername,
   });
   let settled = false;
   const failed = (error: Error) => {
@@ -63,7 +74,7 @@ export function connectPinnedTls(
 }
 
 /** HTTP cannot flush its queued headers/body until createConnection calls back with a pin-checked socket. */
-export function pinnedHttpsAgent(fingerprint: string): https.Agent {
+export function pinnedHttpsAgent(fingerprint: string, servername?: string): https.Agent {
   if (!isTlsCertificateSha256(fingerprint))
     throw new Error("Invalid runtime TLS certificate fingerprint");
   const agent = new https.Agent({ keepAlive: false });
@@ -74,6 +85,7 @@ export function pinnedHttpsAgent(fingerprint: string): https.Agent {
         host: options.hostname ?? options.host ?? "localhost",
         port: Number(options.port ?? 443),
         fingerprint,
+        servername,
         signal: options.signal,
       },
       (error, socket) => {

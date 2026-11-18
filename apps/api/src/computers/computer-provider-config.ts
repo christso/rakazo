@@ -68,7 +68,9 @@ export function computerSettingsView(
     savedSecrets,
     providers: enabled
       ? computerProviderDescriptors(scope === "account").filter(
-          (provider) => scope === "space" || !provider.capabilities.requiresSpendingApproval,
+          (provider) =>
+            scope === "space" ||
+            (!provider.capabilities.requiresSpendingApproval && !provider.capabilities.spaceOnly),
         )
       : [],
   };
@@ -84,7 +86,10 @@ export async function checkedComputerSettings(
   if (!computerProviderDescriptors().some((provider) => provider.id === input.provider))
     throw new ClientError("BAD_REQUEST", "Unknown computer provider");
   const descriptor = computerProviderDescriptor(input.provider);
-  if (descriptor.capabilities.requiresSpendingApproval && scope !== "space")
+  if (
+    (descriptor.capabilities.requiresSpendingApproval || descriptor.capabilities.spaceOnly) &&
+    scope !== "space"
+  )
     throw new ClientError("BAD_REQUEST", "Configure this provider in Space settings");
   if (descriptor.capabilities.requiresSpendingApproval && input.approveSpending !== true)
     throw new ClientError("BAD_REQUEST", "Approve resource costs to activate this connection");
@@ -110,8 +115,11 @@ export async function checkedComputerSettings(
     descriptor.verify(values);
     const signal = AbortSignal.timeout(VERIFY_TIMEOUT_MS);
     for (const field of descriptor.fields) {
-      if (field.kind === "url" && values[field.key])
-        await assertSafeWebUrl(values[field.key]!, deps.resolveHostname, signal);
+      if (field.kind === "url" && values[field.key]) {
+        if (descriptor.verifyEndpoint)
+          await descriptor.verifyEndpoint(values[field.key]!, signal, deps.resolveHostname);
+        else await assertSafeWebUrl(values[field.key]!, deps.resolveHostname, signal);
+      }
     }
     // Only the connection being left stays, for computers still on it; older ones are dropped.
     const connections: Record<string, Record<string, string>> | undefined =

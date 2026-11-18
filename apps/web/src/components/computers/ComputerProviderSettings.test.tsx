@@ -386,3 +386,52 @@ it("lets an optional choice go back to the provider's default", async () => {
     values: { ...saved.values, region: "" },
   });
 });
+
+it("saves a prepared runtime's origin, secret and TLS fingerprint in the Space without paid provisioning", async () => {
+  const runtime = {
+    provider: "prepared-runtime",
+    defaultProvider: "docker",
+    providers: [
+      {
+        id: "prepared-runtime",
+        displayName: "Prepared runtime",
+        capabilities: { perAccount: false, spaceOnly: true },
+        fields: [
+          {
+            key: "url",
+            label: "Runtime URL",
+            kind: "url",
+            required: true,
+            validation: "operator-https",
+          },
+          {
+            key: "token",
+            label: "Access token",
+            kind: "secret",
+            required: true,
+            destination: "url",
+          },
+          { key: "fingerprint", label: "Certificate fingerprint", kind: "text", required: true },
+        ],
+      },
+    ],
+    values: { url: "https://runtime.example.test:8443", fingerprint: "A".repeat(43) },
+    savedSecrets: { token: true },
+    connectionId: "runtime-connection",
+  };
+  space.get.mockResolvedValue(runtime);
+  space.update.mockResolvedValue(runtime);
+  await act(async () => root.render(settings({ scope: "space" })));
+  await act(flush);
+  expect(host.querySelector('[role="checkbox"]')).toBeNull();
+  expect(host.querySelector<HTMLInputElement>('input[type="password"]')?.value).toBe("");
+  await act(async () => paste("Access token", "replacement-runtime-token"));
+  await act(async () => host.querySelector("form")?.requestSubmit());
+  expect(space.update).toHaveBeenCalledWith({
+    provider: runtime.provider,
+    values: { ...runtime.values, token: "replacement-runtime-token" },
+    expectedConnectionId: runtime.connectionId,
+  });
+  expect(deployment.update).not.toHaveBeenCalled();
+  expect(account.update).not.toHaveBeenCalled();
+});
