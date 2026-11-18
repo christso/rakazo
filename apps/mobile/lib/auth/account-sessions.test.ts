@@ -300,7 +300,7 @@ it("a sign-out during validation cannot resurrect the selected bearer", async ()
 
 it("opens a notification named by the origin the server reports for itself", async () => {
   vi.mocked(fetch).mockImplementation(async (url, init) => {
-    expect(String(url).startsWith(apiBase)).toBe(true);
+    expect(new URL(String(url)).origin).toBe(apiBase);
     return String(url).endsWith("/api/accounts")
       ? Response.json({ serverOrigin: "https://web.example.test", accounts: [] })
       : Response.json({ user: { id: userFor(init), email: "work@example.test" } });
