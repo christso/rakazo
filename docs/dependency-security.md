@@ -50,3 +50,32 @@ review upstream releases and proposals. When a fixed release is available, upgra
 all affected versions, remove the temporary patch acceptance, and retain useful
 exploit regressions. Changes to a local patch require renewed review, new hashes
 and a regenerated lockfile; changing only the expiry does not establish a fix.
+
+## Bundled matcher factories
+
+Some dependencies ship their own compiled matcher code. Patching the standalone
+package leaves those copies unchanged. The bundle policy in
+`scripts/security/picomatch-bundles.json` records thirteen parser factories across
+eleven locked package versions, including two development-only tools. Eleven of
+those factories ship in the application image.
+
+Each exact-version vendor patch replaces its embedded parser factory with a call
+to the reviewed standalone parser in the same major version. Workspace package
+extensions give that vendor its own explicit dependency; a root-hoisted package
+cannot establish remediation. The vendor's matcher wrapper, scan function and
+other APIs stay in place. Existing vendor license files are unchanged, and the
+policy records the original and patched file hashes.
+
+The source audit scans live workspace dependencies for matcher implementation
+signatures, including minified copies without the original package name. An
+unknown implementation or changed bundle fails verification. Every known factory
+is checked by hash, redirect count, its owner-local dependency resolution and the
+same bounded regressions used for standalone packages. Compatibility checks also
+invoke each bundled wrapper's matcher, parse, makeRe and compileRe APIs.
+
+Lockfile checks parse every YAML document and bind patches to their exact snapshot
+and importer references, including quoted forms and peer-qualified versions. The
+source verifier uses the declared development dependency `yaml`; a production
+image does not need that audit tool installed. Artifact verification must compare
+the shipped bundle hashes and each owner's actual parser resolution against the
+reviewed policy from the same source commit.

@@ -46,9 +46,26 @@ test("attestation rejects a separate unpatched runtime copy, changed patches and
     writeFileSync(patch, patchText);
 
     const lock = path.join(root, "pnpm-lock.yaml");
+    const lockSource = readFileSync(lock, "utf8");
+    writeFileSync(lock, lockSource.replace(/(picomatch: 2\.3\.2)\(patch_hash=[a-f0-9]+\)/, "$1"));
+    assert.throws(() => verifyPicomatchPatches(root), /unpatched picomatch dependency/);
+    const workspaceSnapshots = lockSource.lastIndexOf("\nsnapshots:\n");
     writeFileSync(
       lock,
-      readFileSync(lock, "utf8").replace(/(picomatch: 2\.3\.2)\(patch_hash=[a-f0-9]+\)/, "$1"),
+      lockSource.slice(0, workspaceSnapshots) +
+        lockSource
+          .slice(workspaceSnapshots)
+          .replace("\nsnapshots:\n", '\nsnapshots:\n  "picomatch@2.3.2": {}\n'),
+    );
+    assert.throws(() => verifyPicomatchPatches(root), /Every locked picomatch/);
+    writeFileSync(
+      lock,
+      lockSource.replace("\nsnapshots:\n", '\nsnapshots:\n  "picomatch@2.3.2": {}\n'),
+    );
+    assert.throws(() => verifyPicomatchPatches(root), /package manager needs its own patch review/);
+    writeFileSync(
+      lock,
+      lockSource.replace(/(picomatch: )2\.3\.2\(patch_hash=[a-f0-9]+\)/, '$1"2.3.2"'),
     );
     assert.throws(() => verifyPicomatchPatches(root), /unpatched picomatch dependency/);
   } finally {

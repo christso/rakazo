@@ -4,6 +4,7 @@ import { existsSync, globSync, readdirSync, readFileSync, realpathSync } from "n
 import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { parse, parseAllDocuments } from "yaml";
 
 export const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
 export const remediation = JSON.parse(
@@ -13,17 +14,19 @@ const digest = (file) => createHash("sha256").update(readFileSync(file)).digest(
 
 // Follow dependency links from every workspace, including pnpm's sibling links.
 // Old, unreachable virtual-store directories are deliberately not trusted as proof.
-function installedPackages(root, workspace) {
-  const patterns = workspace
-    .split(/\n(?=\S)/, 1)[0]
-    .split("\n")
-    .slice(1)
-    .filter((line) => /^ {2}- /.test(line));
-  const moduleRoots = patterns.map((line) => {
-    assert(/^ {2}- "[^"\n]+"$/.test(line), "Review changed workspace package syntax");
-    return `${JSON.parse(line.slice(4))}/node_modules`;
+export function installedWorkspacePackages(
+  root = repositoryRoot,
+  workspace = readFileSync(path.join(root, "pnpm-workspace.yaml"), "utf8"),
+) {
+  const patterns = parse(workspace).packages;
+  assert(Array.isArray(patterns) && patterns.length > 0, "No workspaces found");
+  const moduleRoots = patterns.map((pattern) => {
+    assert(
+      typeof pattern === "string" && !pattern.startsWith("!"),
+      "Review changed workspace package patterns",
+    );
+    return `${pattern}/node_modules`;
   });
-  assert(moduleRoots.length > 0, "No workspaces found");
   const visitedModules = new Set();
   const visitedPackages = new Set();
   const installed = [];
@@ -48,12 +51,11 @@ function installedPackages(root, workspace) {
     const packageFile = path.join(real, "package.json");
     if (!existsSync(packageFile)) return;
     const metadata = JSON.parse(readFileSync(packageFile, "utf8"));
+    const item = { name: metadata.name, version: metadata.version, directory: real };
+    installed.push(item);
     if (metadata.name === "picomatch") {
-      installed.push({
-        version: metadata.version,
-        entrypoint: createRequire(packageFile).resolve(real),
-        parser: path.join(real, "lib/parse.js"),
-      });
+      item.entrypoint = createRequire(packageFile).resolve(real);
+      item.parser = path.join(real, "lib/parse.js");
     }
     if (path.basename(path.dirname(real)) === "node_modules") visitModules(path.dirname(real));
     // Scoped packages have one more directory between their siblings and package.
@@ -73,23 +75,54 @@ function installedPackages(root, workspace) {
 export function verifyPicomatchPatches(root = repositoryRoot) {
   const lockfile = readFileSync(path.join(root, "pnpm-lock.yaml"), "utf8");
   const workspace = readFileSync(path.join(root, "pnpm-workspace.yaml"), "utf8");
-  const documents = lockfile.split(/^---[ \t]*\r?$/m);
-  for (const document of documents.slice(0, -1)) {
-    assert(!/^ {2}picomatch@/m.test(document), "The package manager needs its own patch review");
+  const documents = parseAllDocuments(lockfile);
+  for (const document of documents)
+    assert.equal(document.errors.length, 0, "Invalid dependency lockfile");
+  const locks = documents.map((document) => document.toJSON());
+  for (const lock of locks.slice(0, -1)) {
+    assert(
+      ![...Object.keys(lock.packages ?? {}), ...Object.keys(lock.snapshots ?? {})].some((key) =>
+        key.startsWith("picomatch@"),
+      ),
+      "The package manager needs its own patch review",
+    );
   }
+  const lock = locks.at(-1);
+  assert(lock.snapshots && lock.importers, "Workspace dependency lock is missing");
+  const config = parse(workspace);
   const expected = Object.entries(remediation.packages).map(([version, patch]) => {
     assert.equal(digest(path.join(root, patch.patch)), patch.patchSha256, "Patch content changed");
-    assert(workspace.includes(`picomatch@${version}: ${patch.patch}`));
-    assert(lockfile.includes(`  picomatch@${version}: ${patch.patchSha256}\n`));
+    assert.equal(config.patchedDependencies?.[`picomatch@${version}`], patch.patch);
+    assert.equal(lock.patchedDependencies?.[`picomatch@${version}`], patch.patchSha256);
     return `${version}(patch_hash=${patch.patchSha256})`;
   });
-  const snapshots = lockfile.slice(lockfile.lastIndexOf("\nsnapshots:\n"));
-  const packages = [...snapshots.matchAll(/^ {2}picomatch@([^:]+):/gm)].map((match) => match[1]);
+  const packages = Object.keys(lock.snapshots)
+    .filter((key) => key.startsWith("picomatch@"))
+    .map((key) => key.slice("picomatch@".length));
   assert.deepEqual(packages.sort(), expected.toSorted(), "Every locked picomatch must be patched");
-  for (const [, reference] of snapshots.matchAll(/^\s+picomatch: ([^\n]+)$/gm)) {
-    assert(expected.includes(reference), "An unpatched picomatch dependency is referenced");
+  for (const snapshot of Object.values(lock.snapshots)) {
+    for (const section of ["dependencies", "optionalDependencies"]) {
+      if (snapshot[section]?.picomatch !== undefined) {
+        assert(
+          expected.includes(snapshot[section].picomatch),
+          "An unpatched picomatch dependency is referenced",
+        );
+      }
+    }
   }
-  const installed = installedPackages(root, workspace);
+  for (const importer of Object.values(lock.importers)) {
+    for (const section of ["dependencies", "devDependencies", "optionalDependencies"]) {
+      if (importer[section]?.picomatch !== undefined) {
+        assert(
+          expected.includes(importer[section].picomatch.version),
+          "An unpatched picomatch importer is referenced",
+        );
+      }
+    }
+  }
+  const installed = installedWorkspacePackages(root, workspace).filter(
+    (item) => item.name === "picomatch",
+  );
   assert.deepEqual(
     [...new Set(installed.map((item) => item.version))].sort(),
     Object.keys(remediation.packages).sort(),
