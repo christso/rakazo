@@ -6,7 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { authHeaders, currentApiBase, fetchMobileJson } from "../api/api";
 import { clearSpace } from "../api/api-server";
 import { currentSessionGeneration, replaceSessionTokenIfCurrent } from "../api/session";
-import { passwordResetCapabilities } from "./api-auth";
+import { passwordResetCapabilities, rememberAuthenticatedAccount } from "./api-auth";
+
 import {
   addPasskey,
   listPasskeys,
@@ -35,6 +36,7 @@ vi.mock("../api/api-server", () => ({
 }));
 vi.mock("./api-auth", () => ({
   passwordResetCapabilities: vi.fn(),
+  rememberAuthenticatedAccount: vi.fn(async () => undefined),
 }));
 vi.mock("../api/session", () => ({
   currentSessionGeneration: vi.fn(() => 1),
@@ -160,6 +162,12 @@ describe("passkey sign-in", () => {
     expect(verify?.body).toEqual({ response: credential });
     expect(clearSpace).toHaveBeenCalledOnce();
     expect(replaceSessionTokenIfCurrent).toHaveBeenCalledWith(1, "new-session");
+    expect(rememberAuthenticatedAccount).toHaveBeenCalledWith(
+      "https://rakazo.example.test",
+      "new-session",
+      expect.objectContaining({ user: { id: "user-1" } }),
+      1,
+    );
   });
 
   it.each([

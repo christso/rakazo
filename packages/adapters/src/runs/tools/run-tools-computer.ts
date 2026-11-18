@@ -17,6 +17,10 @@ import {
   redactBrowserResult,
 } from "../../browser/browser-tools.js";
 import { BACKGROUND_WORK_LAUNCH } from "../../computers/computer-idle.js";
+import {
+  computerResourceProbeAllowed,
+  measureComputerResources,
+} from "../../computers/computer-resources.js";
 import { nativeShellCommandArgv } from "../../computers/host/native-shell.js";
 import { redactShellStreams } from "../../computers/sandbox/agent-environment.js";
 import { sandboxKindCapabilities } from "../../computers/sandbox/sandbox-kind-capabilities.js";
@@ -477,6 +481,13 @@ export async function pageBrowserTool(ctx: RunContext, call: ToolCall) {
 
 /** Tools that drive the bot's computer: screen, page browser and shell. */
 export const computerTools: ToolHandlers = {
+  async computer_resources(ctx, call) {
+    if (!computerResourceProbeAllowed(ctx.computer.kind ?? ctx.computer.stored?.kind))
+      return { available: false };
+    const computer = await ctx.computer.get("tool", call.name);
+    const resources = await measureComputerResources(ctx.deps.sandbox, computer, ctx.context);
+    return resources ? { available: true, computerResources: resources } : { available: false };
+  },
   async computer_observe(ctx, call) {
     const { deps, context } = ctx;
     const { name } = call;

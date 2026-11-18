@@ -16,11 +16,13 @@ import {
   ApprovalModeRow,
   ApprovalRulesRow,
 } from "../../components/settings/approval-settings-rows";
+import { SavedAccountSettings } from "../../components/settings/saved-account-settings";
 import {
   SettingsGroup,
   SettingsRow,
   useStackedSettings,
 } from "../../components/settings/settings-group";
+
 import { SpendingLimitRow, useSpendingStatus } from "../../components/settings/spending-limit-row";
 import { AppMark } from "../../components/ui/app-mark";
 import { rpc, selectedSpaceId } from "../../lib/api/api";
@@ -285,6 +287,13 @@ export default function Account() {
           {focus !== "usage" ? creditsRow : null}
         </SettingsGroup>
         {focus !== "usage" ? planGroups : null}
+
+        <SavedAccountSettings
+          userId={me?.userId}
+          pending={signingOut}
+          onPendingChange={setSigningOut}
+          onError={setSignOutError}
+        />
 
         <SettingsGroup>{shortcuts.map(settingsLink)}</SettingsGroup>
 

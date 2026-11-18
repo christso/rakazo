@@ -22,6 +22,7 @@ import {
   createCloudAgentConnection,
   createConnectorRuntime,
   createDeadJobPruner,
+  createExpoPushProvider,
   createMediaGenerationProvider,
   createPaymentWalletProvider,
   createPostgresReconciliationLeadership,
@@ -34,7 +35,6 @@ import {
   createRunSecretWriter,
   createTicketChangeNotifier,
   drainRuns,
-  ExpoPushProvider,
   GraphileJobPublisher,
   homeStorageSweeper,
   InMemoryJobQueue,
@@ -78,7 +78,6 @@ import {
   installSecurityEventStore,
   observeThreadChanges,
   parsePositiveInteger,
-  pushSessionExpiresAt,
   rowSecurityWarning,
   runAsSystem,
   timeZoneWarning,
@@ -217,8 +216,9 @@ async function main() {
   const mediaGeneration = createMediaGenerationProvider();
   // Shared with the reconciler so a stuck wait uses the same push path as a finish notice.
   const pushTokens = new PrismaPushTokenStore(prisma, env.encryptionKey);
-  const notifications = new ExpoPushProvider(pushTokens, {
-    sessionExpiresAt: (sessionId) => pushSessionExpiresAt(prisma, sessionId),
+  const notifications = createExpoPushProvider(prisma, pushTokens, {
+    authUrl: process.env.BETTER_AUTH_URL,
+    webOrigin: process.env.WEB_ORIGIN,
     jobs,
     accessToken: process.env.EXPO_ACCESS_TOKEN,
     voip: await createApnsVoipProvider(apnsVoipConfig(process.env)),

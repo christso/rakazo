@@ -8,8 +8,9 @@ import {
   suggestEmailCorrection,
 } from "@rakazo/core";
 import { fetchFresh } from "@rakazo/core/query";
-import { Redirect, useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
+import { Redirect, Stack, useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useContext, useEffect, useState } from "react";
+
 import {
   AccessibilityInfo,
   ActivityIndicator,
@@ -26,11 +27,15 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import Svg, { Path } from "react-native-svg";
 import { NativeActionButton } from "../components/native/native-action-button";
+import { cancelHeaderOptions } from "../components/native/sheet-header";
+import { SettingsGroup, SettingsRow } from "../components/settings/settings-group";
 import { SocialSignInButtons } from "../components/settings/social-sign-in-buttons";
 import { currentApiBase } from "../lib/api/api";
 import { displayApiHost, usesCustomApiBase } from "../lib/api/endpoint";
-import { loadSessionToken } from "../lib/api/session";
+import { currentSessionGeneration, loadSessionToken } from "../lib/api/session";
 import { credentialIssueText, errorText } from "../lib/api/user-error";
+import type { AccountSummary } from "../lib/auth/account-sessions";
+import { loadAccountSummaries, selectSavedAccount } from "../lib/auth/account-sessions";
 import type { PasswordResetCapabilities } from "../lib/auth/api-auth";
 import {
   passwordResetCapabilities,
@@ -47,6 +52,7 @@ import { continueWithSso } from "../lib/auth/sso";
 import { CallKeyboardContext } from "../lib/calls/call-keyboard-context";
 import { hasIncomingShare } from "../lib/composer/incoming-share";
 import { FORM_COLUMN_WIDTH } from "../lib/layout/adaptive-layout";
+
 import { useMobileTokens } from "../lib/native/native";
 import { queryClient, rpcQuery } from "../lib/query/query";
 import { confirmUnsentSendLoss } from "../lib/thread/send/unsent-send-warning";
@@ -58,7 +64,15 @@ export default function SignIn() {
   const { t } = useLingui();
   const tokens = useMobileTokens();
   const router = useRouter();
-  const { mode: requestedMode } = useLocalSearchParams<{ mode?: string | string[] }>();
+  const {
+    mode: requestedMode,
+    addAccount,
+    notificationTarget,
+  } = useLocalSearchParams<{
+    mode?: string | string[];
+    addAccount?: string;
+    notificationTarget?: string;
+  }>();
   const [mode, setMode] = useState<AuthMode>(() => initialAuthMode(requestedMode));
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -80,6 +94,7 @@ export default function SignIn() {
   const [codeSent, setCodeSent] = useState(false);
   const [emailStep, setEmailStep] = useState(false);
   const [passkeys, setPasskeys] = useState(false);
+  const [savedAccounts, setSavedAccounts] = useState<AccountSummary[]>([]);
 
   useEffect(() => {
     setPasswordVisible(false);
@@ -98,6 +113,22 @@ export default function SignIn() {
       setReady(true);
     });
   }, []);
+
+  useEffect(() => {
+    let active = true;
+    setSavedAccounts([]);
+    if (addAccount === "1" || notificationTarget) return;
+    void loadAccountSummaries()
+      .then((accounts) => {
+        if (active && apiBase === currentApiBase()) setSavedAccounts(accounts);
+      })
+      .catch((error) => {
+        if (active) setError(errorText(error, t`Could not continue`));
+      });
+    return () => {
+      active = false;
+    };
+  }, [apiBase, addAccount, notificationTarget, t]);
 
   useEffect(() => {
     let active = true;
@@ -147,7 +178,8 @@ export default function SignIn() {
       </View>
     );
   }
-  if (hasSession) return <Redirect href={hasIncomingShare() ? "/share" : "/"} />;
+  if (hasSession && addAccount !== "1")
+    return <Redirect href={hasIncomingShare() ? "/share" : "/"} />;
 
   const providers = reset ? signInProviders(reset) : [];
   const codeFlow = Boolean(reset?.passwordAuth && reset.emailCode && mode !== "forgot");
@@ -160,6 +192,32 @@ export default function SignIn() {
   const presented = Boolean(
     reset?.passwordAuth && providers.length > 0 && mode !== "forgot" && !codeStep && !resetSent,
   );
+
+  async function openSavedAccount(account: AccountSummary) {
+    if (pending || apiBase !== currentApiBase()) return;
+    const generation = currentSessionGeneration();
+    setPending(true);
+    setError(null);
+    try {
+      const selected = await selectSavedAccount(account.userId);
+      if (selected === null) return;
+      if (apiBase !== currentApiBase()) return;
+      if (selected) {
+        if (currentSessionGeneration() > generation + 1) return;
+        router.replace("/");
+      } else if (generation === currentSessionGeneration()) {
+        setSavedAccounts((accounts) => accounts.filter((row) => row.userId !== account.userId));
+        setEmail(account.email);
+        setMode("in");
+        setError(t`Sign in to open this account`);
+      }
+    } catch (error) {
+      if (apiBase === currentApiBase() && generation === currentSessionGeneration())
+        setError(errorText(error, t`Could not continue`));
+    } finally {
+      setPending(false);
+    }
+  }
 
   async function submit(enteredCode = code) {
     if (pending || !reset?.passwordAuth) return;
@@ -236,6 +294,10 @@ export default function SignIn() {
   // Any sign-in can create the account (a code, SSO), so ask the server rather than the form.
   async function openApp() {
     if (hasIncomingShare()) return router.replace("/share");
+    if (notificationTarget) {
+      router.replace({ pathname: "/notification-open", params: { target: notificationTarget } });
+      return;
+    }
     const me = await fetchFresh(queryClient, rpcQuery("me")).catch(() => null);
     router.replace(me?.needsSignupSurvey ? "/signup-survey" : "/");
   }
@@ -264,6 +326,18 @@ export default function SignIn() {
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: tokens.background }}>
+      <Stack.Screen
+        options={
+          addAccount === "1" && hasSession
+            ? {
+                headerShown: true,
+                headerTransparent: true,
+                title: "",
+                ...cancelHeaderOptions(t`Cancel`, () => router.replace("/")),
+              }
+            : { headerShown: false }
+        }
+      />
       <KeyboardAvoidingView
         enabled={!call}
         style={{ flex: 1 }}
@@ -367,6 +441,22 @@ export default function SignIn() {
                       ? t`Sign in to continue to Rakazo`
                       : t`Persistent AI teammates that do real work`}
                   </Text>
+                ) : null}
+                {!resetSent && !codeStep && mode !== "forgot" && savedAccounts.length ? (
+                  <View style={{ marginTop: 28 }}>
+                    <SettingsGroup>
+                      {savedAccounts.map((account) => (
+                        <SettingsRow
+                          key={account.userId}
+                          title={account.email}
+                          chevron="right"
+                          accessibilityRole="button"
+                          disabled={pending}
+                          onPress={() => void openSavedAccount(account)}
+                        />
+                      ))}
+                    </SettingsGroup>
+                  </View>
                 ) : null}
                 {resetSent ? (
                   <View style={{ alignItems: "center", marginTop: 28 }}>

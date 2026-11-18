@@ -7,6 +7,26 @@ import { normalizeApiBase } from "../api/endpoint.js";
 const mobileRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 describe("Android mobile platform contract", () => {
+  it("retains the sender push owner across Android routing and sign-out cleanup", () => {
+    const nativeRoot = resolve(
+      mobileRoot,
+      "modules/rakazo-notifications/android/src/main/java/com/rakazo/notifications",
+    );
+    const sender = readFileSync(resolve(nativeRoot, "SenderPush.kt"), "utf8");
+    const service = readFileSync(resolve(nativeRoot, "RakazoNotificationService.kt"), "utf8");
+    const module = readFileSync(resolve(nativeRoot, "RakazoNotificationsModule.kt"), "utf8");
+    // These are wire keys shared with Expo payloads, the JS response handler and
+    // native sign-out cleanup. A native-only rename silently loses the owner.
+    for (const key of ["userId", "apiBase"]) {
+      expect(sender).toMatch(new RegExp(`\\.optString\\("${key}"\\)`));
+      expect(sender).toMatch(new RegExp(`putString\\("rakazo\\.${key}",\\s*[^)]+\\)`));
+      expect(sender).toMatch(new RegExp(`&${key}=\\$\\{Uri\\.encode\\([^)]+\\)\\}`));
+      expect(service).toContain(`extras.getString("rakazo.${key}")`);
+    }
+    expect(sender).toMatch(/putString\("rakazo\.spaceId",\s*[^)]+\)/);
+    expect(module).toContain('"supportsAccountScopedSenderNotifications" to true');
+  });
+
   it("keeps Server Save in an Android card header and preserves the iOS sheet", () => {
     const layout = readFileSync(resolve(mobileRoot, "app/_layout.tsx"), "utf8");
     const server = readFileSync(resolve(mobileRoot, "app/server.tsx"), "utf8");
@@ -86,9 +106,12 @@ describe("Android mobile platform contract", () => {
     expect(service).toContain(
       "if (openThreadId != null) openThreadId == threadId else openBotId == botId",
     );
-    expect(service).toContain("manager.notify(run.threadId.hashCode(), notification)");
-    expect(service).toContain("THREAD_NOTIFICATION_IDS");
-    expect(service).toContain("cancel(threadId.hashCode())");
+    expect(service).toContain("manager.notify(accountNotificationId(run.threadId), notification)");
+    expect(service).toContain("ACCOUNT_NOTIFICATION_IDS");
+    expect(service).toContain(
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: Kotlin interpolation is checked literally.
+      'cancel("${NotificationStorage(context).endpoint}:${NotificationStorage(context).userId}:$threadId".hashCode())',
+    );
     for (const request of [
       "        val avatarStyle = selectedAvatarStyle",
       "        val active = runs(",
@@ -110,7 +133,7 @@ describe("Android mobile platform contract", () => {
     expect(service).toContain('if (run.groupId != null) put("groupId", run.groupId)');
     expect(service).toContain('if (message.optString("runId") != run.runId) continue');
     expect(service).toContain('if (block.optString("kind") == "handoff") return null');
-    expect(service).toContain("run?.threadId?.hashCode() ?: 0");
+    expect(service).toContain("run?.threadId?.let(::accountNotificationId) ?: 0");
   });
 
   it("shows live updates only for working runs and ties the pill to a real bot", () => {

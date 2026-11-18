@@ -1,4 +1,4 @@
-import { flush } from "@rakazo/core/test-async";
+import { deferred, flush } from "@rakazo/core/test-async";
 import { Alert } from "react-native";
 import { beforeEach, expect, it, vi } from "vitest";
 import { hasUnsentSends } from "./thread-feedback";
@@ -21,12 +21,8 @@ it("proceeds without a prompt when no unsent messages wait", async () => {
 });
 
 it("waits for the persisted queue to load before deciding nothing is unsent", async () => {
-  let restoreUnblocked!: () => void;
-  vi.mocked(unsentSendsRestored).mockReturnValue(
-    new Promise<boolean>((resolve) => {
-      restoreUnblocked = () => resolve(true);
-    }),
-  );
+  const restoreUnblocked = deferred<boolean>();
+  vi.mocked(unsentSendsRestored).mockReturnValue(restoreUnblocked.promise);
   vi.mocked(hasUnsentSends).mockReturnValue(false);
   const pending = confirmUnsentSendLoss("sign-out");
   await flush();
@@ -35,7 +31,7 @@ it("waits for the persisted queue to load before deciding nothing is unsent", as
   expect(Alert.alert).not.toHaveBeenCalled();
 
   vi.mocked(hasUnsentSends).mockReturnValue(true);
-  restoreUnblocked();
+  restoreUnblocked.resolve(true);
   await vi.waitFor(() => expect(Alert.alert).toHaveBeenCalledOnce());
   vi.mocked(Alert.alert).mock.calls[0]![2]![0]!.onPress?.();
   await expect(pending).resolves.toBe(false);
@@ -54,6 +50,7 @@ it.each([
   ["sign-out", "Signing out deletes unsent messages.", "Sign out anyway"] as const,
   ["sign-in", "Signing in deletes unsent messages.", "Sign in anyway"] as const,
   ["server-switch", "Switching servers deletes unsent messages.", "Switch anyway"] as const,
+  ["account-switch", "Switching accounts deletes unsent messages.", "Switch anyway"] as const,
 ])(
   "asks before %s clears the queue and follows the chosen button",
   async (kind, message, confirm) => {

@@ -1,4 +1,5 @@
 export * from "./account/account-export.js";
+export * from "./account/account-sessions.js";
 export * from "./account/ai-consent.js";
 export * from "./account/analytics.js";
 export * from "./account/audit-events.js";

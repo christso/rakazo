@@ -156,15 +156,15 @@ model Session {
 model PushRegistration {
   userId String
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-  tokenDigest String @unique
+  tokenDigest String
   sessionId String
   ciphertext String
   /// "android_sender" when the installed Android build renders data-only sender pushes.
   presentation String?
   updatedAt DateTime @updatedAt
 
-  @@id([userId, tokenDigest])
-  @@index([sessionId])
+  @@id([userId, sessionId])
+  @@index([tokenDigest])
   @@map("push_registrations")
 }
 

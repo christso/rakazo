@@ -1,42 +1,45 @@
 import { credentialDigest } from "../secrets/credential-digest.js";
 import type { PushRecord, PushTokenStore } from "./push-token-store.js";
 
-type Row = PushRecord & { userId: string };
-
 export class MemoryPushTokenStore implements PushTokenStore {
-  private rows: Row[] = [];
+  private readonly rows = new Map<string, Map<string, PushRecord>>();
+  async load(userId: string) {
+    return (await this.list(userId))[0];
+  }
   async list(userId: string) {
-    return this.rows
-      .filter((row) => row.userId === userId)
-      .map(({ userId: _, ...record }) => record);
+    return [...(this.rows.get(userId)?.values() ?? [])];
   }
   async save(userId: string, token: string, sessionId = "", presentation?: "android_sender") {
-    this.rows = this.rows.filter(
-      (row) =>
-        row.token !== token && !(sessionId && row.userId === userId && row.sessionId === sessionId),
-    );
-    this.rows.push({
-      userId,
+    const rows = this.rows.get(userId) ?? new Map<string, PushRecord>();
+    rows.set(sessionId, {
       token,
       ...(sessionId ? { sessionId } : {}),
       ...(presentation ? { presentation } : {}),
     });
+    this.rows.set(userId, rows);
   }
   async importLegacy(userId: string, token: string, sessionId: string) {
-    if (this.rows.some((row) => row.userId === userId || row.token === token)) return false;
+    if (
+      (await this.list(userId)).length ||
+      [...this.rows.values()].some((rows) => [...rows.values()].some((row) => row.token === token))
+    )
+      return false;
     await this.save(userId, token, sessionId);
     return true;
   }
   async remove(userId: string, digest?: string) {
-    this.rows = this.rows.filter(
-      (row) =>
-        row.userId !== userId || (digest !== undefined && credentialDigest(row.token) !== digest),
-    );
+    const rows = this.rows.get(userId);
+    if (!rows) return;
+    for (const [key, row] of rows)
+      if (!digest || credentialDigest(row.token) === digest) rows.delete(key);
   }
   async endSession(userId: string, sessionId: string, nextSessionId?: string) {
-    this.rows = this.rows.flatMap((row) => {
-      if (row.userId !== userId || row.sessionId !== sessionId) return [row];
-      return nextSessionId ? [{ ...row, sessionId: nextSessionId }] : [];
-    });
+    const rows = this.rows.get(userId);
+    const row = rows?.get(sessionId);
+    if (!row || !rows) return;
+    if (nextSessionId === sessionId) return;
+    rows.delete(sessionId);
+    if (nextSessionId && !rows.has(nextSessionId))
+      rows.set(nextSessionId, { ...row, sessionId: nextSessionId });
   }
 }

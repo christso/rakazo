@@ -648,10 +648,12 @@ describe("account preferences", () => {
     await expect(phone.notifications.unregisterPush()).resolves.toEqual({ ok: true });
     expect(calls).toEqual([`endSession ${actor.userId} session-phone`]);
 
-    // Without a session to end, the account-wide registration is still removed.
+    // A request without a session must not end the account's other logins.
     const sessionless = createRouterClient(createRouter(deps), { context: { actor } as never });
-    await expect(sessionless.notifications.unregisterPush()).resolves.toEqual({ ok: true });
-    expect(calls).toEqual([`endSession ${actor.userId} session-phone`, `remove ${actor.userId}`]);
+    await expect(sessionless.notifications.unregisterPush()).rejects.toMatchObject({
+      code: "UNAUTHORIZED",
+    });
+    expect(calls).toEqual([`endSession ${actor.userId} session-phone`]);
   });
 });
 

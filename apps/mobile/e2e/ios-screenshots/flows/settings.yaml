@@ -239,3 +239,33 @@ name: Settings
 - tapOn:
     text: "Haptics"
     index: 1
+
+# Both disposable catalog identities stay signed in; switching back needs no credentials.
+- openLink: "rakazo:///account"
+- tapOn: "Switch accounts"
+- tapOn: "Add account"
+- extendedWaitUntil:
+    visible: "Sign in to Rakazo"
+    timeout: 15000
+- tapOn: "Email"
+- inputText: ${RAKAZO_SCREENSHOT_EMPTY_EMAIL}
+- tapOn: "Password"
+- inputText: ${RAKAZO_SCREENSHOT_PASSWORD}
+- hideKeyboard
+- tapOn: "Sign in"
+- extendedWaitUntil:
+    visible: "Account"
+    timeout: 40000
+- openLink: "rakazo:///account"
+- extendedWaitUntil:
+    visible: "Sign out all"
+    timeout: 15000
+- tapOn: "Switch accounts"
+- takeScreenshot: 23-account-switcher
+- tapOn: ${RAKAZO_SCREENSHOT_EMAIL}
+- extendedWaitUntil:
+    visible: "Account"
+    timeout: 15000
+- openLink: "rakazo:///account"
+- tapOn: "Sign out all"
+- tapOn: "Sign out all"

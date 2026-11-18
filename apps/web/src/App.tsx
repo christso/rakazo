@@ -21,6 +21,9 @@ import { VoiceConsentPrompt } from "./components/call/VoiceConsentPrompt";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { MarkdownLinkPrompt } from "./components/messages/markdown-link-prompt";
 import { PageLoading } from "./components/PageLoading";
+import { setAccountIdentity } from "./lib/auth/account-identity";
+import { accountUnreadCount } from "./lib/auth/account-notifications";
+import { useAccountNotifications, useSavedAccounts } from "./lib/auth/account-sessions";
 import { authClient } from "./lib/auth/auth";
 import { hasSignedInBefore, rememberSignedIn } from "./lib/auth/returning-user";
 import {
@@ -45,6 +48,7 @@ import { desktopBridge } from "./lib/platform/desktop";
 import { identifyMonitoringUser } from "./lib/platform/monitoring";
 import { markAfterPaint, markOnce } from "./lib/platform/performance";
 import { lazyComponent } from "./lib/platform/preload-recovery";
+import { useDesktopBadge } from "./lib/platform/use-desktop-badge";
 import { remoteImagesPreference } from "./lib/preferences/remote-images-preference";
 import { QueryUserProvider, setQueryUser } from "./lib/query/query";
 import { rpc } from "./lib/query/rpc";
@@ -130,6 +134,12 @@ function SessionApp() {
   const { pathname, search } = useLocation();
   const screen = analyticsScreen(pathname);
   const analyticsUserId = session.data?.user.id;
+  useAccountNotifications(analyticsUserId ?? null);
+  const savedAccounts = useSavedAccounts();
+  // With one account the shell's live roster count is fresher than the feed.
+  useDesktopBadge(
+    savedAccounts.accounts.length > 1 ? accountUnreadCount(savedAccounts.accounts) : undefined,
+  );
   const lastScreen = useRef<string | undefined>(undefined);
   useEffect(() => {
     // A pending session is not a sign-out; startup already tagged the signed-in user.
@@ -152,6 +162,7 @@ function SessionApp() {
   const gate = sessionGate(session);
   useLayoutEffect(() => {
     if (gate !== "authenticated" && gate !== "anonymous") return;
+    setAccountIdentity(analyticsUserId ?? null);
     syncWebLogoAvatarIdentity(analyticsUserId ?? null);
     syncCallIdentity(analyticsUserId ?? null);
     syncLogOutFailure(gate === "authenticated");
@@ -181,6 +192,9 @@ function SessionApp() {
   }
 
   const user = session.data?.user;
+  // Descendants read drafts and can start queries during their first render.
+  // Pin that render before mounting them; a later identity change still reloads below.
+  setAccountIdentity(user?.id ?? null);
   return (
     <QueryUserProvider value={user?.id ?? null}>
       <VoiceConsentPrompt key={user?.id ?? "anonymous"} />
@@ -202,7 +216,7 @@ function SessionApp() {
                   key={path}
                   path={path}
                   element={
-                    user ? (
+                    user && searchParams.get("add") !== "1" ? (
                       <Navigate to={next ?? "/app"} replace />
                     ) : (
                       <AuthPage key={path} mode="in" />

@@ -1000,6 +1000,7 @@ describe("toolResultTaintsRun", () => {
     // A skill write confirms the bot's own arguments, so a second save in a clean run stays clean.
     for (const tool of [
       "ask_user",
+      "computer_resources",
       "remember",
       "recall_memory",
       "skill_create",

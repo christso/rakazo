@@ -112,7 +112,13 @@ async function render(mode: "in" | "up" | "forgot" = "in", entry = "/") {
   );
 }
 function LocationProbe() {
-  return <span data-testid="location">{useLocation().pathname}</span>;
+  const location = useLocation();
+  return (
+    <span data-testid="location">
+      {location.pathname}
+      {location.search}
+    </span>
+  );
 }
 async function enter(input: Element | null, value: string) {
   await act(async () => {
@@ -458,4 +464,19 @@ it("offers no demo sign-in on other servers", async () => {
   vi.mocked(fetchAuthCapabilities).mockResolvedValue(codeCapabilities);
   await render();
   expect(button("Sign in with demo account")).toBeUndefined();
+});
+
+it("keeps add-account mode when continuing from the chooser to email sign-in", async () => {
+  vi.mocked(fetchAuthCapabilities).mockResolvedValue({ ...capabilities, passwordAuth: true });
+  await act(async () =>
+    root.render(
+      <MemoryRouter initialEntries={["/sign-in?add=1"]}>
+        <AuthPage mode="in" />
+        <LocationProbe />
+      </MemoryRouter>,
+    ),
+  );
+  await act(async () => button("Continue with email").click());
+  expect(host.querySelector('[data-testid="location"]')?.textContent).toBe("/sign-in/email?add=1");
+  expect(host.querySelector('input[type="email"]')).not.toBeNull();
 });

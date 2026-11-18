@@ -10,6 +10,7 @@ import {
   tokenFromAuthResponse,
 } from "../api/session";
 import { authErrorText, authResponseErrorText, sessionSaveErrorText } from "../api/user-error";
+import { rememberAuthenticatedAccount } from "./api-auth";
 
 let inFlight = false;
 
@@ -94,12 +95,14 @@ export async function continueWithSso(
       : "";
     if (!token) throw new Error(t`Sign-in did not return a session`);
     const user = await sessionUser(apiBase, { authorization: `Bearer ${token}` });
-    if (!user || (action === "reauthenticate" && (!previous || previous !== user)))
+    if (!user || (action === "reauthenticate" && (!previous || previous.user.id !== user.user.id)))
       throw new Error(t`Could not continue`);
     requireCurrentSession();
     try {
       if (action === "sign-in" && !(await clearSpace()))
         throw new Error(t`Could not save your sign-in on this device. Try again.`);
+      if (action === "sign-in")
+        await rememberAuthenticatedAccount(apiBase, token, user, generation);
       // The same account keeps its unsent messages and their cache, like a password change.
       if (action === "reauthenticate")
         return await rotateSessionTokenIfCurrent(generation, previousToken, token);
@@ -112,7 +115,10 @@ export async function continueWithSso(
   }
 }
 
-async function sessionUser(apiBase: string, headers: Record<string, string>): Promise<string> {
+async function sessionUser(
+  apiBase: string,
+  headers: Record<string, string>,
+): Promise<{ user: { id: string } }> {
   const { response, body, invalidJson } = await fetchMobileJson<{ user?: { id?: string } }>(
     `${apiBase}/api/auth/get-session`,
     { headers: { origin: "rakazo://", ...headers } },
@@ -120,5 +126,5 @@ async function sessionUser(apiBase: string, headers: Record<string, string>): Pr
   );
   if (!response.ok || typeof body?.user?.id !== "string" || invalidJson)
     throw new Error(authResponseErrorText(response.status, body, invalidJson));
-  return body.user.id;
+  return body as { user: { id: string } };
 }

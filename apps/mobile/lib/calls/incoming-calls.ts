@@ -22,6 +22,7 @@ import {
   loadSessionToken,
   registerSessionDiskCache,
 } from "../api/session";
+import { selectNotificationAccount } from "../auth/account-sessions";
 import { registerCallPushToken } from "../notifications/push";
 import { endCall, getSnapshot, startCall, subscribe as subscribeCall } from "./call-session";
 
@@ -384,9 +385,18 @@ async function drainNative() {
   }
 }
 
-const notificationActions = new Set<string>();
-async function notificationResponse(response: Notifications.NotificationResponse | null) {
-  if (!response) return;
+const notificationActions = new Map<string, symbol>();
+async function notificationResponse(
+  response: Notifications.NotificationResponse | null,
+  controller: AbortController,
+) {
+  const generation = currentSessionGeneration();
+  const current = () =>
+    running &&
+    feed === controller &&
+    !controller.signal.aborted &&
+    generation === currentSessionGeneration();
+  if (!response || !current()) return;
   const data = response.notification.request.content.data;
   if (
     data?.kind !== "incoming_call" ||
@@ -399,11 +409,29 @@ async function notificationResponse(response: Notifications.NotificationResponse
   if (response.actionIdentifier !== "answer" && response.actionIdentifier !== "decline") return;
   const key = `${data.callId}:${response.actionIdentifier}`;
   if (notificationActions.has(key)) return;
-  notificationActions.add(key);
+  const attempt = Symbol();
+  notificationActions.set(key, attempt);
+  const release = () => {
+    if (notificationActions.get(key) === attempt) notificationActions.delete(key);
+  };
   try {
+    const userId = typeof data.userId === "string" ? data.userId : undefined;
+    const apiBase = typeof data.apiBase === "string" ? data.apiBase : undefined;
+    if (userId !== undefined || apiBase !== undefined) {
+      const selected = await selectNotificationAccount(userId, apiBase, current);
+      // Selecting a saved account stops this feed. Its replacement replays the response
+      // against the selected session instead of borrowing a caller from the previous one.
+      if (selected !== "selected" || !current()) {
+        release();
+        return;
+      }
+    }
     const bot = await callerFor(data.botId, data.callId);
     // A stale lookup answers nothing and completes no native action: a newer feed owns it.
-    if (bot === undefined) return;
+    if (bot === undefined || !current()) {
+      release();
+      return;
+    }
     if (!bot) throw new Error("Unknown caller");
     await respondToMobileCall(
       {
@@ -413,7 +441,7 @@ async function notificationResponse(response: Notifications.NotificationResponse
       response.actionIdentifier,
     );
   } catch (error) {
-    notificationActions.delete(key);
+    release();
     throw error;
   }
 }
@@ -495,11 +523,12 @@ export function startIncomingCalls() {
       .catch(() => undefined);
   };
   refresh();
-  void notificationResponse(Notifications.getLastNotificationResponse?.() ?? null).catch(
-    () => undefined,
-  );
+  void notificationResponse(
+    Notifications.getLastNotificationResponse?.() ?? null,
+    controller,
+  ).catch(() => undefined);
   const response = Notifications.addNotificationResponseReceivedListener?.((response) => {
-    void notificationResponse(response).catch(() => undefined);
+    void notificationResponse(response, controller).catch(() => undefined);
   });
   const app = AppState.addEventListener("change", (state) => {
     if (state === "active") {

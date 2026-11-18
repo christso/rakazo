@@ -2,6 +2,13 @@ import { Trans, useLingui } from "@lingui/react/macro";
 import type { Bot, Group, NavLink } from "@rakazo/contracts";
 import { accountDisplay } from "@rakazo/core";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
   Button,
   InputGroup,
   InputGroupAddon,
@@ -17,6 +24,11 @@ import { useUsageHint } from "../../../components/billing/PlanUsage";
 import { useBilling } from "../../../components/billing/SubscriptionGate";
 import { CreateOrganizationDialog } from "../../../components/spaces/CreateOrganizationDialog";
 import { InviteDialog } from "../../../components/spaces/InviteDialog";
+import {
+  addSavedAccount,
+  switchSavedAccount,
+  useSavedAccounts,
+} from "../../../lib/auth/account-sessions";
 import { useSignOut } from "../../../lib/auth/sign-out";
 import { formatBillingDate } from "../../../lib/billing/billing";
 import type { BotsSidebarDensity } from "../../../lib/preferences/bots-sidebar-density-pref";
@@ -358,11 +370,13 @@ function ShellSidebarFooter({
       : null;
   const usage = useUsageHint();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [confirmLogOutAll, setConfirmLogOutAll] = useState(false);
   const [inviteOpen, setInviteOpen] = useState(false);
   const [creatingOrganization, setCreatingOrganization] = useState(false);
   const referral = billing?.referral;
   const [logOutError, setLogOutError] = useState<string | null>(null);
-  const { signingOut, logOut } = useSignOut("/sign-in", (message) => {
+  const saved = useSavedAccounts();
+  const { signingOut, logOut, logOutAll } = useSignOut("/sign-in", (message) => {
     // A failed sign-out reloads the page: reopen the menu so its error shows.
     setMenuOpen(true);
     setLogOutError(message);
@@ -390,6 +404,14 @@ function ShellSidebarFooter({
         initials={initials}
         image={user?.image}
         email={user?.email}
+        accounts={saved.accounts}
+        activeUserId={saved.activeUserId}
+        onSwitchAccount={(userId) => void switchSavedAccount(userId)}
+        onAddAccount={saved.accounts.length ? () => void addSavedAccount() : undefined}
+        onLogOutAll={() => {
+          setMenuOpen(false);
+          setConfirmLogOutAll(true);
+        }}
         open={menuOpen}
         onOpenChange={(open) => {
           setMenuOpen(open);
@@ -463,6 +485,31 @@ function ShellSidebarFooter({
         onOpenChange={setCreatingOrganization}
         openSpaceChat={openSpaceChat}
       />
+      <AlertDialog open={confirmLogOutAll} onOpenChange={setConfirmLogOutAll}>
+        <AlertDialogContent aria-describedby={undefined}>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              <Trans>Log out all accounts?</Trans>
+            </AlertDialogTitle>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>
+              <Trans>Cancel</Trans>
+            </AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              disabled={signingOut}
+              onClick={() => {
+                setConfirmLogOutAll(false);
+                setLogOutError(null);
+                void logOutAll();
+              }}
+            >
+              <Trans>Log out all accounts</Trans>
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       {referral ? (
         <InviteDialog referral={referral} open={inviteOpen} onOpenChange={setInviteOpen} />
       ) : null}

@@ -17,6 +17,7 @@ import { SKILL_TOOL_NAMES } from "../../tools/skill-tools.js";
 import { USER_COMPUTER_SCREEN_TOOLS } from "./run-tools-user-computer.js";
 
 export const READ_ONLY_AGENT_TOOLS = new Set([
+  "computer_resources",
   "computer_observe",
   "list_files",
   "list_fleet",

@@ -190,6 +190,27 @@ describe("mobile API requests", () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
+  it("does not dispatch an old request after an account changes during credential lookup", async () => {
+    const lookupStarted = deferred<void>();
+    const lookup = deferred<string>();
+    vi.mocked(SecureStore.getItemAsync).mockImplementation(async (key) => {
+      if (key === "rakazo.session_token") {
+        lookupStarted.resolve();
+        return lookup.promise;
+      }
+      return null;
+    });
+    const fetch = vi.fn(async () => jsonResponse({ json: [] }));
+    vi.stubGlobal("fetch", fetch);
+    const pending = rpc("bots/list", {});
+    const rejected = expect(pending).rejects.toThrow();
+    await lookupStarted.promise;
+    await saveSessionToken("fake-replacement-session");
+    lookup.resolve("fake-previous-session");
+    await rejected;
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
   it("reports an rpc that hit its timeout as a timeout, not as a canceled fetch", async () => {
     vi.useFakeTimers();
     vi.mocked(SecureStore.getItemAsync).mockResolvedValue("session-token");

@@ -2,6 +2,7 @@ import type { Bot, ChatAlert, ProductEvent } from "@rakazo/contracts";
 import { chatSnoozed } from "@rakazo/core";
 import type { RefObject } from "react";
 import { useCallback, useEffect, useRef } from "react";
+import { refreshAccountNotifications } from "../../lib/auth/account-sessions";
 import { computerUpdates } from "../../lib/computers/computer-updates";
 import {
   browserNotificationTag,
@@ -124,6 +125,8 @@ export function useBrowserNotifications(
     const stop = followStream(
       (signal) => rpc.notifications.subscribe(undefined, { signal }),
       (frame) => {
+        if (frame.type !== "heartbeat" && frame.type !== "computerUpdates")
+          refreshAccountNotifications();
         if (frame.type === "roster") rosterRef.current?.changed();
         else if (frame.type === "organizations") void organizationsChanged();
         else if (frame.type === "computerUpdates") computerUpdates.signalled();

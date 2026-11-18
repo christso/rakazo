@@ -1,6 +1,7 @@
 import type { OrganizationList } from "@rakazo/contracts";
+import { deferred } from "@rakazo/core/test-async";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { adoptDeletedSpaceFallback } from "../api/api-server";
+import { adoptDeletedSpaceFallback, rememberOrganizationSpace } from "../api/api-server";
 import { markNavigatorMounted } from "../navigation/navigator-mounted";
 import { queryClient } from "../query/query";
 import type { Organization } from "./organizations";
@@ -185,6 +186,39 @@ describe("switchOrganization", () => {
 
 describe("selectSpaceAcrossOrganizations", () => {
   const list: OrganizationList = { activeOrganizationId: work.id, organizations: [work, home] };
+
+  it.each([false, true])(
+    "keeps a newer account selection after an old read settles (%s)",
+    async (rejectRead) => {
+      const read = deferred<OrganizationList>();
+      state.rpc.mockReturnValue(read.promise);
+      let current = true;
+      const pending = selectSpaceAcrossOrganizations("space-b2", () => current);
+      await vi.waitFor(() => expect(state.rpc).toHaveBeenCalled());
+      current = false;
+      state.selected = "new-account-space";
+      if (rejectRead) read.reject(new Error("Cancelled old account read"));
+      else read.resolve(list);
+      await expect(pending).resolves.toBe(false);
+      expect(state.selected).toBe("new-account-space");
+      expect(state.selectSpace).not.toHaveBeenCalled();
+    },
+  );
+
+  it("keeps a newer notification selection while remembering the old Space", async () => {
+    state.rpc.mockResolvedValue(list);
+    const remembered = deferred<void>();
+    vi.mocked(rememberOrganizationSpace).mockImplementationOnce(() => remembered.promise);
+    let current = true;
+    const pending = selectSpaceAcrossOrganizations("space-b2", () => current);
+    await vi.waitFor(() => expect(rememberOrganizationSpace).toHaveBeenCalled());
+    current = false;
+    state.selected = "new-notification-space";
+    remembered.resolve();
+    await expect(pending).resolves.toBe(false);
+    expect(state.selected).toBe("new-notification-space");
+    expect(state.selectSpace).not.toHaveBeenCalled();
+  });
 
   it("switches organizations for a Space in another one", async () => {
     state.rpc.mockResolvedValue(list);

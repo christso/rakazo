@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import type {
   AdapterContext,
@@ -15,6 +15,7 @@ import { combineSignals } from "../integrations/connector-safety.js";
 import { credentialDigest } from "../secrets/credential-digest.js";
 import { readBodyCapped, withAbort } from "../web/web-ssrf.js";
 import type { PushRecord, PushTokenStore } from "./push-token-store.js";
+import { PushSessionEndedError } from "./push-token-store.js";
 
 const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
 const EXPO_RECEIPTS_URL = "https://exp.host/--/api/v2/push/getReceipts";
@@ -42,6 +43,8 @@ export function expoPushData(
   spaceId: string,
   deliveryId: string,
   largeAvatar = false,
+  userId?: string,
+  apiBase?: string,
 ) {
   const sender = message.sender
     ? {
@@ -59,13 +62,20 @@ export function expoPushData(
     threadId: message.threadId,
     ...(message.runId ? { runId: message.runId } : {}),
     deliveryId,
+    ...(userId ? { userId } : {}),
+    ...(apiBase ? { apiBase } : {}),
     ...(spaceId ? { spaceId } : {}),
     ...(message.groupId ? { groupId: message.groupId } : {}),
   };
 }
 
 /** Android devices with native call support render data-only pushes themselves. */
-function incomingCallPayload(token: string, call: IncomingCallPush, dataOnly = false) {
+function incomingCallPayload(
+  token: string,
+  call: IncomingCallPush,
+  owner: { userId: string; apiBase?: string },
+  dataOnly = false,
+) {
   const expiration = Math.floor(Date.parse(call.expiresAt) / 1000);
   const botName = call.botName.slice(0, MAX_PUSH_TITLE_CHARS);
   return {
@@ -79,6 +89,8 @@ function incomingCallPayload(token: string, call: IncomingCallPush, dataOnly = f
       botId: call.botId,
       botName,
       expiresAt: call.expiresAt,
+      userId: owner.userId,
+      ...(owner.apiBase ? { apiBase: owner.apiBase } : {}),
     },
     ...(dataOnly
       ? {}
@@ -178,6 +190,11 @@ export type ExpoPushOptions = {
   /** Sent as a bearer token when the Expo project enforces enhanced push security. */
   accessToken?: string;
   retryDelaysMs?: readonly number[];
+  accountLabel?: (userId: string) => Promise<string>;
+  /** Unread chats and live logins across every account registered on the device. */
+  deviceForToken?: (token: string) => Promise<{ badge: number; accounts: number }>;
+  /** Canonical public server origin for notification ownership. */
+  apiBase?: string;
 };
 
 export class ExpoPushProvider implements NotificationProvider {
@@ -189,7 +206,7 @@ export class ExpoPushProvider implements NotificationProvider {
 
   constructor(
     private readonly tokens: PushTokenStore,
-    options: ExpoPushOptions = {},
+    private readonly options: ExpoPushOptions = {},
   ) {
     this.voip = options.voip;
     this.sessionExpiresAt = options.sessionExpiresAt;
@@ -217,6 +234,7 @@ export class ExpoPushProvider implements NotificationProvider {
 
   async incomingCall(userId: string, call: IncomingCallPush): Promise<void> {
     const devices = (await this.tokens.devices?.(userId)) ?? [];
+    const nativeTokens = new Set<string>();
     await Promise.allSettled(
       devices.map(async (device) => {
         if (device.userId !== userId || !(Date.parse(call.expiresAt) > Date.now())) return;
@@ -235,6 +253,7 @@ export class ExpoPushProvider implements NotificationProvider {
           )
         )
           return;
+        if (device.expoToken) nativeTokens.add(device.expoToken);
         let invalidVoip = false;
         let invalidExpo = false;
         try {
@@ -264,18 +283,20 @@ export class ExpoPushProvider implements NotificationProvider {
       }),
     );
     // Old native builds registered only the account's Expo token.
-    if (devices.length === 0 && !call.ended) {
+    if (!call.ended) {
       // One device failing must not hold back the call on the others.
       await Promise.all(
-        (await this.deliverableTokens(userId)).map(({ token }) =>
-          bestEffort(
-            "incoming call push to a legacy device",
-            (async () => {
-              if ((await this.sendCallPush(userId, token, call)) === "invalid")
-                await this.tokens.remove(userId, credentialDigest(token));
-            })(),
+        (await this.deliverableTokens(userId))
+          .filter(({ token }) => !nativeTokens.has(token))
+          .map(({ token }) =>
+            bestEffort(
+              "incoming call push to a legacy device",
+              (async () => {
+                if ((await this.sendCallPush(userId, token, call)) === "invalid")
+                  await this.tokens.remove(userId, credentialDigest(token));
+              })(),
+            ),
           ),
-        ),
       );
     }
   }
@@ -287,7 +308,12 @@ export class ExpoPushProvider implements NotificationProvider {
     call: IncomingCallPush,
     dataOnly = false,
   ): Promise<"sent" | "invalid" | "failed"> {
-    const payload = incomingCallPayload(token, call, dataOnly);
+    const payload = incomingCallPayload(
+      token,
+      call,
+      { userId, apiBase: this.options.apiBase },
+      dataOnly,
+    );
     if (payload.ttl <= 0) return "failed";
     try {
       const { status, body } = await this.postWithBackoff(
@@ -332,7 +358,7 @@ export class ExpoPushProvider implements NotificationProvider {
       if (result.status === "rejected" && index !== thrown)
         getLogger().error("expo push device delivery failed", {
           error: result.reason,
-          tokenDigest: credentialDigest(registrations[index]!.token),
+          deviceDigest: credentialDigest(registrations[index]!.token),
         });
     if (delivered) return "delivered";
     const failed = results[thrown];
@@ -346,17 +372,33 @@ export class ExpoPushProvider implements NotificationProvider {
     context: AdapterContext,
   ): Promise<ExpoPushDelivery> {
     const token = registration.token;
+    const device = this.options.deviceForToken
+      ? await bestEffort("load a push device's badge", this.options.deviceForToken(token))
+      : undefined;
+    const badge = this.options.deviceForToken ? device?.badge : message.badge;
+    const label =
+      device && device.accounts > 1 ? await this.options.accountLabel?.(context.userId) : undefined;
+    const tag = createHash("sha256")
+      .update(JSON.stringify([this.options.apiBase ?? "", context.userId, message.threadId]))
+      .digest("hex");
     const title = capped(message.title, MAX_PUSH_TITLE_CHARS);
     let bodyChars = MAX_PUSH_BODY_CHARS;
     let text = capped(message.body, bodyChars);
     // Android's installed sender code drops an avatar over 96px; iOS and plain pushes have no
     // pixel cap, so they carry the larger render when one fit.
     const largeAvatar = registration.presentation !== "android_sender";
-    const data = expoPushData(message, context.spaceId, randomUUID(), largeAvatar);
+    const data = expoPushData(
+      message,
+      context.spaceId,
+      randomUUID(),
+      largeAvatar,
+      context.userId,
+      this.options.apiBase,
+    );
     const shared = {
       to: token,
-      collapseId: message.threadId,
-      ...(message.badge === undefined ? {} : { badge: message.badge }),
+      collapseId: tag,
+      ...(badge === undefined ? {} : { badge }),
     };
     const urgent =
       message.kind === "help" || message.kind === "takeover" || message.kind === "failure";
@@ -371,13 +413,14 @@ export class ExpoPushProvider implements NotificationProvider {
               ...data,
               notificationTitle: title,
               notificationBody: text,
-              ...(message.badge === undefined ? {} : { notificationBadge: message.badge }),
+              ...(badge === undefined ? {} : { notificationBadge: badge }),
             },
           }
         : {
             ...shared,
-            tag: message.threadId,
+            tag,
             title,
+            ...(label ? { subtitle: capped(label, MAX_PUSH_TITLE_CHARS) } : {}),
             body: text,
             data,
             ...(message.sender ? { mutableContent: true } : {}),
@@ -389,7 +432,17 @@ export class ExpoPushProvider implements NotificationProvider {
       text = capped(message.body, bodyChars);
       payload = build();
     }
-    const { status, body } = await this.postWithBackoff(EXPO_PUSH_URL, payload, context.signal);
+    let reply: { status: number; body: unknown };
+    try {
+      reply = await this.postWithBackoff(EXPO_PUSH_URL, payload, context.signal, async () => {
+        if (!(await this.deliverableTokens(context.userId)).some((row) => row.token === token))
+          throw new PushSessionEndedError();
+      });
+    } catch (error) {
+      if (error instanceof PushSessionEndedError) return "undeliverable";
+      throw error;
+    }
+    const { status, body } = reply;
     const [ticket] = expoPushTickets(body);
     if (status < 300 && body === undefined) {
       throw new Error("Expo push returned an invalid response.");
@@ -445,8 +498,14 @@ export class ExpoPushProvider implements NotificationProvider {
     else getLogger().error(message);
   }
 
-  private async postWithBackoff(url: string, payload: unknown, signal?: AbortSignal) {
+  private async postWithBackoff(
+    url: string,
+    payload: unknown,
+    signal?: AbortSignal,
+    beforeSend?: () => Promise<void>,
+  ) {
     for (let attempt = 0; ; attempt += 1) {
+      await beforeSend?.();
       const reply = await postToExpo(url, payload, this.accessToken, signal);
       const retryDelay = this.retryDelaysMs[attempt];
       if (retryDelay === undefined || !expoAskedToBackOff(reply.status, reply.body)) return reply;
@@ -492,11 +551,12 @@ export class ExpoPushProvider implements NotificationProvider {
       }),
     );
     const current = await this.tokens.list(userId);
-    return current.filter((now) =>
+    const deliverable = current.filter((now) =>
       saved.some(
         (row, index) => live[index] && row.token === now.token && row.sessionId === now.sessionId,
       ),
     );
+    return [...new Map(deliverable.map((row) => [row.token, row])).values()];
   }
 }
 

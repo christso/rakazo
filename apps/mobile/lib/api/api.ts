@@ -15,6 +15,8 @@ import {
 } from "@rakazo/core";
 import { clientCorrelationHeaders, responseCorrelation } from "@rakazo/logging/monitoring";
 import * as SecureStore from "expo-secure-store";
+import { completeSessionRevocation } from "../auth/pending-session-revocations";
+import { forgetSavedToken } from "../auth/saved-accounts";
 import { followSelectedSpace, selectedSpaceChanged } from "../billing/referral";
 import { identityLabels } from "../bots/identity-display";
 import {
@@ -238,7 +240,7 @@ export async function fetchAuthenticatedAccountJson<T>(
         context.sessionGeneration === currentSessionGeneration() &&
         !passwordChangesInFlight
       ) {
-        await rejectSession();
+        await rejectSession(context.headers.authorization.replace(/^Bearer /, ""));
       }
       if (!response.ok || init.method === "DELETE") {
         cancelResponseBody(response);
@@ -286,7 +288,7 @@ async function withMobileResponse<T>(
   const timer = setTimeout(() => controller.abort(new Error("Request timed out")), RPC_TIMEOUT_MS);
   try {
     const response = await withAbort(
-      fetchServer(input, { ...init, signal: controller.signal }, apiBase),
+      fetchServer(input, { credentials: "omit", ...init, signal: controller.signal }, apiBase),
       controller.signal,
       "Request timed out",
     ).catch((error: unknown) => {
@@ -582,6 +584,7 @@ export function deliverSignOutRecord(record: PendingSignOut, persisted = true): 
         : record;
       if (current && (await deliverPendingSignOut(current)) === "delivered") {
         await removePendingSignOut(current);
+        await completeSessionRevocation(current.apiBase, current.token).catch(() => undefined);
       }
     } catch {
       // Delivery problems never surface; the record waits for the next pass.
@@ -646,10 +649,14 @@ export function subscribeSessionRejected(listener: () => void): () => void {
     sessionRejectedListeners.delete(listener);
   };
 }
-async function rejectSession() {
+async function rejectSession(token: string) {
+  const apiBase = currentApiBase();
+  const generation = currentSessionGeneration();
   // The server ended the session; the user never asked to leave. Keep the unsent
   // queue, so the app can report those messages before a sign-in deletes them.
   await clearSessionToken({ keepUnsent: true });
+  await forgetSavedToken(apiBase, token).catch(() => undefined);
+  if (generation + 1 !== currentSessionGeneration() || apiBase !== currentApiBase()) return;
   for (const listener of sessionRejectedListeners) listener();
 }
 export type RpcOptions = {
@@ -724,15 +731,17 @@ async function request(
   const requestSpaceId = requestHeaders["x-rakazo-space-id"];
   try {
     if (
-      consentContext?.sessionGeneration !== undefined &&
-      consentContext.sessionGeneration !== currentSessionGeneration()
+      requestSessionGeneration !== currentSessionGeneration() ||
+      requestApiBase !== currentApiBase() ||
+      (consentContext?.sessionGeneration !== undefined &&
+        consentContext.sessionGeneration !== currentSessionGeneration())
     )
       throw new Error(t`Something went wrong. Try again.`);
     let res: Response;
     const correlation = clientCorrelationHeaders();
     try {
       res = await fetchServer(
-        `${consentContext?.apiBase ?? currentApiBase()}/rpc/${proc}`,
+        `${requestApiBase}/rpc/${proc}`,
         {
           method: "POST",
           headers: {
@@ -744,7 +753,7 @@ async function request(
           body: JSON.stringify({ json: body }),
           signal: controller.signal,
         },
-        consentContext?.apiBase ?? currentApiBase(),
+        requestApiBase,
       );
     } catch (error) {
       // The native fetch reports an aborted request with an implementation detail
@@ -797,7 +806,7 @@ async function request(
         !passwordChangesInFlight &&
         requestSessionGeneration === currentSessionGeneration()
       ) {
-        await rejectSession();
+        await rejectSession(requestHeaders.authorization.replace(/^Bearer /, ""));
       }
       // After a delete where SecureStore could not clear the stale id, restart
       // reloads it and the first RPCs 401. Probe once without a Space header:

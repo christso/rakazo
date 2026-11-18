@@ -61,7 +61,8 @@ describe("built-in tool bridge", () => {
     // most used deferred tool, and a lookup before each message cost a step; schedule_create says
     // whether a routine runs in its chat, and takes the events (webhook, Git, chat, email) a
     // routine can start on.
-    expect(definitionBytes(listed)).toBeLessThanOrEqual(35_482);
+    // The deferred computer_resources name adds 20 bytes to find_tool's name index.
+    expect(definitionBytes(listed)).toBeLessThanOrEqual(35_502);
     expect(deferred.map((tool) => tool.name)).toEqual(
       expect.arrayContaining(["render_plot", "create_space", "generate_secret", "scratchpad_add"]),
     );
@@ -69,6 +70,14 @@ describe("built-in tool bridge", () => {
 
   it("names only real built-ins as core", () => {
     for (const name of CORE_BUILTIN_TOOL_NAMES) expect(BUILTIN_AGENT_TOOL_NAMES).toContain(name);
+  });
+
+  it("lets a text-only model discover resource readings without offering screen tools", () => {
+    expect(ownerChat.some((tool) => tool.name === "computer_observe")).toBe(false);
+    const { deferred } = partitionTools(ownerChat);
+    expect(findTools(deferred, { names: ["computer_resources"] }).tools).toMatchObject([
+      { name: "computer_resources", inputSchema: { type: "object" } },
+    ]);
   });
 
   it("lists every tool when none is deferred", () => {

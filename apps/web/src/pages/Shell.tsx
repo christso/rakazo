@@ -597,7 +597,7 @@ function SpaceShell() {
     () => countUnreadChats(sidebarGroupsForSpaces(sidebarSpaces, "", undefined, snoozeNow)),
     [sidebarSpaces, snoozeNow],
   );
-  useDesktopBadge(userId ? unreadChatCount : 0);
+  useDesktopBadge(userId ? unreadChatCount : 0, "roster");
   const openSpaceChat = useOpenSpaceChat({
     bootstrapSpaceId: bootstrapMe?.spaceId,
     userId,

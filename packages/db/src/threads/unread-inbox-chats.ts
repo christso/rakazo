@@ -1,6 +1,7 @@
 import { GROUP_MEMBER_MIN } from "@rakazo/contracts";
 import { GUEST_ROLE } from "../billing/billing.js";
 import type { PrismaClient } from "../database/client.js";
+import { Prisma } from "../database/client.js";
 import { runAsSystem } from "../database/row-security.js";
 import { homeOrganizationId } from "../spaces/spaces.js";
 
@@ -11,17 +12,19 @@ import { homeOrganizationId } from "../spaces/spaces.js";
  */
 export function countUnreadInboxChats(
   prisma: PrismaClient,
-  { userId, spaceId }: { userId: string; spaceId: string },
+  { userId, spaceId }: { userId: string; spaceId?: string },
 ): Promise<number> {
   // Cross-Space RLS bypass is restricted to this user's memberships.
   return runAsSystem("count unread inbox chats across the member's Spaces", async () => {
-    const organizationId = await homeOrganizationId(prisma, { userId, spaceId });
-    const [result] = await prisma.$queryRaw<Array<{ count: number }>>`
+    const organizationId = spaceId
+      ? await homeOrganizationId(prisma, { userId, spaceId })
+      : undefined;
+    const [result] = await prisma.$queryRaw<Array<{ count: number }>>(Prisma.sql`
       WITH member_spaces AS (
         SELECT m."spaceId" FROM space_members m
         JOIN member o ON o."organizationId" = m."organizationId" AND o."userId" = m."userId"
         WHERE m."userId" = ${userId}
-          AND (m."organizationId" = ${organizationId} OR o.role = ${GUEST_ROLE})
+          ${organizationId ? Prisma.sql`AND (m."organizationId" = ${organizationId} OR o.role = ${GUEST_ROLE})` : Prisma.empty}
       )
       SELECT count(*)::int AS count FROM threads t
       JOIN member_spaces m ON m."spaceId" = t."spaceId"
@@ -37,7 +40,7 @@ export function countUnreadInboxChats(
             AND g."spaceId" = t."spaceId" AND g."archivedAt" IS NULL
             AND (SELECT count(*) FROM chat_group_members gm JOIN bots b ON b.id = gm."botId"
               WHERE gm."groupId" = g.id AND b."archivedAt" IS NULL) >= ${GROUP_MEMBER_MIN})
-        )`;
+        )`);
     return result?.count ?? 0;
   });
 }

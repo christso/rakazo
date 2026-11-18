@@ -92,13 +92,15 @@ SQL
 }
 
 shutdown() {
-  local pids
-  pids=$(jobs -pr)
-  # Name the jobs: after a trapped signal interrupts `wait -n`, a bare `wait` can spin forever in
-  # bash 5.3.
-  if [[ -n $pids ]]; then
-    kill $pids 2> /dev/null || true
-    wait $pids 2> /dev/null || true
+  local pid
+  local -a children
+  mapfile -t children < <(jobs -pr)
+  if (( ${#children[@]} )); then
+    kill "${children[@]}" 2> /dev/null || true
+    # Explicit PIDs avoid Bash looping over stale jobs after an interrupted wait -n.
+    for pid in "${children[@]}"; do
+      wait "$pid" || true
+    done
   fi
   stop_database
 }

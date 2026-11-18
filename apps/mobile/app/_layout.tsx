@@ -22,7 +22,7 @@ import * as SplashScreen from "expo-splash-screen";
 import { StatusBar } from "expo-status-bar";
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { Platform, ScrollView, StyleSheet, View } from "react-native";
+import { Alert, Platform, ScrollView, StyleSheet, View } from "react-native";
 import { Gesture, GestureDetector, GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardAvoidingView, KeyboardProvider } from "react-native-keyboard-controller";
 import Animated, { useAnimatedStyle, useSharedValue } from "react-native-reanimated";
@@ -55,11 +55,14 @@ import {
   registerSessionDiskCache,
   subscribeSessionGeneration,
 } from "../lib/api/session";
+import { errorText } from "../lib/api/user-error";
 import { loadAppearancePreference, mobileTokens } from "../lib/appearance/appearance";
 import { capTextScaling } from "../lib/appearance/text-scale";
+import { refreshAppBadge } from "../lib/auth/account-sessions";
 import { replaceWithSignIn } from "../lib/auth/auth-routing";
 import { useReferral } from "../lib/billing/referral";
 import { AvatarScreenFocus } from "../lib/bots/avatar-life";
+
 import { CallKeyboardContext } from "../lib/calls/call-keyboard-context";
 import { useCallActive } from "../lib/calls/call-session";
 import { startIncomingCalls } from "../lib/calls/incoming-calls";
@@ -81,13 +84,14 @@ import { OpenPageContext } from "../lib/messages/message-mentions";
 import { loadHapticsPreference } from "../lib/native/haptics";
 import { native, useMobileTokens, useResolvedAppearance } from "../lib/native/native";
 import { useNavigatorMounted } from "../lib/navigation/navigator-mounted";
-import { clearAppBadge } from "../lib/notifications/app-badge";
+import { forgetAppBadge } from "../lib/notifications/app-badge";
 import {
   configureForegroundNotifications,
   resumeLiveNotifications,
 } from "../lib/notifications/live-notifications";
 import { useNotificationResponses } from "../lib/notifications/open-notification";
 import { startWorkActivities } from "../lib/notifications/work-activity";
+import { useAppForeground } from "../lib/platform/app-foreground";
 import { setMobileMonitoringScreen } from "../lib/platform/monitoring";
 import {
   completeMobileStartup,
@@ -119,7 +123,7 @@ registerSessionDiskCache((sameAccount) => {
   if (!sameAccount) return clearLastBot();
 });
 installClientUpdates();
-registerSessionDiskCache(() => void clearAppBadge());
+registerSessionDiskCache(forgetAppBadge);
 // Keep the splash up until the saved appearance applies, so the first frame isn't in the OS scheme.
 void SplashScreen.preventAutoHideAsync().catch(() => undefined);
 
@@ -291,6 +295,14 @@ function LayoutContent() {
   const [ready, setReady] = useState(false);
   useNavigatorMounted(ready);
   useNotificationResponses(ready);
+  const accountGeneration = useSyncExternalStore(
+    subscribeSessionGeneration,
+    currentReadySessionGeneration,
+  );
+  const appForeground = useAppForeground();
+  useEffect(() => {
+    if (ready && appForeground) void refreshAppBadge().catch(() => undefined);
+  }, [ready, appForeground, accountGeneration]);
   const callSession = useSyncExternalStore(
     subscribeSessionGeneration,
     currentReadySessionGeneration,
@@ -349,6 +361,7 @@ function LayoutContent() {
   useEffect(() => {
     if (!ready) return;
     // A session revoked or expired on the server ends here, from whichever screen noticed it.
+    // Sign-in lists the other saved logins.
     return subscribeSessionRejected(() => replaceWithSignIn());
   }, [ready]);
 
@@ -370,7 +383,9 @@ function LayoutContent() {
     void loadHapticsPreference();
     void Promise.all([
       Promise.all([
-        trackMobileStartup("server", loadApiBase()),
+        trackMobileStartup("server", loadApiBase()).catch((error) => {
+          Alert.alert(errorText(error, t`Could not continue`));
+        }),
         trackMobileStartup("appearance", loadAppearancePreference()).finally(() =>
           setAppearanceReady(true),
         ),

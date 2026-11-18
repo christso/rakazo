@@ -115,7 +115,10 @@ vi.mock("../api/session", () => ({
   currentSessionGeneration: () => 1,
 }));
 vi.mock("../notifications/live-notifications", { spy: true });
-vi.mock("expo-modules-core", () => ({ requireNativeModule: vi.fn() }));
+vi.mock("expo-modules-core", () => ({
+  requireNativeModule: vi.fn(),
+  requireOptionalNativeModule: vi.fn(() => null),
+}));
 vi.mock("expo-secure-store", () => ({
   getItemAsync: async () => null,
   setItemAsync: async () => undefined,

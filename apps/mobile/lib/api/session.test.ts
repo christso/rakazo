@@ -1,10 +1,8 @@
 import type { Deferred } from "@rakazo/core/test-async";
 import { deferred } from "@rakazo/core/test-async";
-import * as Notifications from "expo-notifications";
 import * as SecureStore from "expo-secure-store";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { artifactCacheSession } from "../artifacts/artifact-cache-session";
-import { clearAppBadge, syncAppBadge } from "../notifications/app-badge";
 import { stopLiveNotifications } from "../notifications/live-notifications.js";
 import { clearFailedSends } from "../thread/send/thread-feedback.js";
 import { clearNetworkCache } from "./network-cache.js";
@@ -24,8 +22,6 @@ import {
   subscribeSessionGeneration,
   tokenFromAuthResponse,
 } from "./session.js";
-
-vi.mock("expo-notifications", () => ({ setBadgeCountAsync: vi.fn(async () => true) }));
 
 vi.mock("expo-secure-store", () => ({
   getItemAsync: vi.fn(),
@@ -79,17 +75,6 @@ describe("mobile session storage", () => {
     expect(clear).toHaveBeenCalledTimes(2);
     await restoreSessionToken("fake-b");
     expect(clear.mock.calls.length).toBeGreaterThan(2);
-  });
-
-  it("clears the icon badge on sign-out and server-session restoration", async () => {
-    registerSessionDiskCache(() => void clearAppBadge());
-    await syncAppBadge(3);
-    vi.mocked(Notifications.setBadgeCountAsync).mockClear();
-    await clearSessionToken();
-    expect(Notifications.setBadgeCountAsync).toHaveBeenLastCalledWith(0);
-    await syncAppBadge(2);
-    await restoreSessionToken("fake-other-server");
-    expect(Notifications.setBadgeCountAsync).toHaveBeenLastCalledWith(0);
   });
 
   it("clears delivered notifications only when the session ends", async () => {

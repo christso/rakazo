@@ -7,6 +7,8 @@ import {
 } from "../calls/call-session";
 import { clearComposerDrafts } from "../composer/composer-draft";
 import { clearSpaceSelection } from "../query/rpc";
+import { accountIdentity, pauseAccountRequests } from "./account-identity";
+import { changeSavedAccount, savedAccountsUnsupported } from "./account-sessions";
 import { authClient } from "./auth";
 
 /** Kept across the reload after a failed sign-out, so the fresh page can say it failed. */
@@ -18,7 +20,8 @@ let logOutFailed = false;
  * Signs out, then loads a fresh page whether or not it worked, so no call, microphone, pending
  * answer or queued request from this session survives in the page.
  */
-export async function signOut(destination: string): Promise<void> {
+export async function signOut(destination: string, all = false): Promise<void> {
+  const userId = accountIdentity();
   // Hang up while the session still exists, so the server-side hang-up is authorized.
   await endCallBeforeSignOut();
   // The account changed while hanging up: signing out now would sign out the other account.
@@ -26,11 +29,18 @@ export async function signOut(destination: string): Promise<void> {
     window.location.reload();
     return;
   }
-  const result = await authClient.signOut().catch(() => null);
+  const result = await (userId && !all && !savedAccountsUnsupported()
+    ? changeSavedAccount("remove", userId).then(() => ({ error: null }))
+    : authClient.signOut()
+  ).catch(async () => {
+    // Electron may connect to an API that predates saved accounts.
+    return savedAccountsUnsupported() ? authClient.signOut().catch(() => null) : null;
+  });
+  pauseAccountRequests();
   if (result && !result.error) {
     forgetSignedInUser();
     clearSpaceSelection();
-    clearComposerDrafts();
+    clearComposerDrafts(userId, all);
     window.location.assign(destination);
   } else {
     try {
@@ -67,13 +77,13 @@ export function useSignOut(destination: string, onError: (message: string) => vo
     onError(t`Could not log out. Try again.`);
   }, [onError]);
 
-  async function logOut() {
+  async function logOut(all = false) {
     if (busy.current) return;
     busy.current = true;
     setSigningOut(true);
     // The page is left either way, so it stays busy until then.
-    await signOut(destination);
+    await signOut(destination, all);
   }
 
-  return { signingOut, logOut };
+  return { signingOut, logOut: () => logOut(), logOutAll: () => logOut(true) };
 }

@@ -13,6 +13,7 @@ import type { PendingSignOut } from "../api/api";
 import {
   authHeaders,
   beginPasswordChange,
+  captureApiRequestContext,
   currentApiBase,
   deliverSignOutRecord,
   endPasswordChange,
@@ -36,7 +37,12 @@ import {
 } from "../api/session";
 import { authResponseErrorText, sessionSaveErrorText } from "../api/user-error";
 import { getActiveUiLocale } from "../i18n/i18n";
-import { resumeLiveNotifications } from "../notifications/live-notifications";
+import {
+  DEFAULT_LIVE_NOTIFICATION_SETTINGS,
+  resumeLiveNotifications,
+} from "../notifications/live-notifications";
+import { queueSessionRevocation } from "./pending-session-revocations";
+import { forgetSavedToken, rememberSavedAccount, replaceSavedToken } from "./saved-accounts";
 
 async function postAuth(path: string, input: object, apiBase = currentApiBase()) {
   return fetchMobileJson<unknown>(
@@ -86,6 +92,7 @@ async function authenticate(
     try {
       if (!(await clearSpace()))
         throw new Error(t`Could not save your sign-in on this device. Try again.`);
+      await rememberAuthenticatedAccount(apiBase, token, body, generation);
       // Checked in the same tick the save starts; a failed write leaves no session behind.
       if (current()) {
         await saveSessionToken(token);
@@ -103,6 +110,26 @@ async function authenticate(
     throw new Error(t`Could not continue`);
   }
   return { verificationRequired: false };
+}
+/** Fresh logins receive independent notification preferences. */
+export async function rememberAuthenticatedAccount(
+  apiBase: string,
+  token: string,
+  body: unknown,
+  generation: number,
+): Promise<void> {
+  const user = (body as { user?: { id?: unknown; email?: unknown } } | null)?.user;
+  if (typeof user?.id !== "string" || typeof user.email !== "string") return;
+  await rememberSavedAccount(
+    apiBase,
+    {
+      userId: user.id,
+      token,
+      email: user.email,
+      notifications: DEFAULT_LIVE_NOTIFICATION_SETTINGS,
+    },
+    () => apiBase === currentApiBase() && generation === currentSessionGeneration(),
+  );
 }
 export function signIn(email: string, password: string) {
   return authenticate("sign-in/email", { email, password }, t`Sign-in did not return a session`);
@@ -263,9 +290,10 @@ async function replaceSessionAfterPasswordChange(
     await maybeResume();
     throw error;
   }
+  await replaceSavedToken(apiBase, previousToken, token).catch(() => undefined);
   await maybeResume();
 }
-export async function signOut() {
+export async function signOut(expectedTokens?: readonly string[], expectedApiBase?: string) {
   const apiBase = currentApiBase();
   // A save still running reads as no session, and the clear would delete its token once it lands
   // with no record to revoke it: as in a server switch, the sign-out stops and the user retries.
@@ -281,6 +309,9 @@ export async function signOut() {
   if (stored && (generation !== currentSessionGeneration() || sessionSaveInProgress())) {
     throw new Error(t`Could not clear the local session`);
   }
+  const accountToken = tokenSnapshot.value || (stored?.ok ? stored.value : "");
+  if (expectedApiBase !== undefined && apiBase !== expectedApiBase) return;
+  if (expectedTokens && !expectedTokens.includes(accountToken)) return;
   const revocation: PendingSignOut = {
     apiBase,
     token: tokenSnapshot.value || (stored?.ok ? stored.value : ""),
@@ -290,6 +321,8 @@ export async function signOut() {
   // The record is written before the attempts: an app that dies mid-sign-out still revokes later.
   // A failed write cannot block the local sign-out; the session still expires server-side.
   const persisted = revocation.token ? await savePendingSignOut(revocation) : false;
+  if (revocation.token)
+    await queueSessionRevocation(apiBase, revocation.token).catch(() => undefined);
   // A sign-in that saved its token since the read has no record; as in a server switch, the
   // sign-out stops without clearing it. The record stays for the session the user signed out of.
   if (generation !== currentSessionGeneration() || sessionSaveInProgress()) {
@@ -297,37 +330,62 @@ export async function signOut() {
   }
   // The local session clears first: a server that accepts the connection but never answers
   // must not keep this device signed in for the delivery's request timeout.
+  let localFailed = false;
+  await forgetSavedToken(apiBase, revocation.token).catch(() => {
+    localFailed = true;
+  });
+  if (generation !== currentSessionGeneration() || apiBase !== currentApiBase()) return;
   const sessionCleared = await clearSessionToken();
-  const spaceCleared = await clearSpace();
-  if (!sessionCleared || !spaceCleared) throw new Error(t`Could not clear the local session`);
+  const spaceCleared =
+    generation + 1 === currentSessionGeneration() && apiBase === currentApiBase()
+      ? await clearSpace()
+      : true;
+  if (!sessionCleared || !spaceCleared) localFailed = true;
   // Delivery waits on the same silent server, so it cannot hold the visible sign-out either.
   // The persisted record covers an attempt that dies with the process.
-  if (revocation.token) void deliverSignOutRecord(revocation, persisted);
+  if (revocation.token && sessionCleared && spaceCleared)
+    void deliverSignOutRecord(revocation, persisted);
+  if (localFailed) throw new Error(t`Could not clear the local session`);
 }
 export async function deleteAccount(password?: string, token?: string) {
+  const { apiBase, headers, sessionGeneration } = await captureApiRequestContext(null);
+  const accountToken = (headers.authorization ?? "").replace(/^Bearer /, "");
   // No push unregistration: deleting the user removes the registrations on the server,
   // and unregistering first would silently end this device's notifications and calls
   // whenever the deletion is refused (wrong password, throttling, server error).
   const { response, body, invalidJson } = await fetchMobileJson<unknown>(
-    `${currentApiBase()}/api/auth/delete-user`,
+    `${apiBase}/api/auth/delete-user`,
     {
       method: "POST",
       headers: {
         "content-type": "application/json",
         origin: "rakazo://",
-        ...(await authHeaders()),
+        ...headers,
       },
       body: JSON.stringify({ password, token }),
     },
     {},
+    apiBase,
   );
   if (!response.ok) {
     throw new Error(
       authResponseErrorText(response.status, body, invalidJson, t`Could not delete account`),
     );
   }
-  await clearSessionToken();
-  await clearSpace();
+  let localFailed = false;
+  await forgetSavedToken(apiBase, accountToken).catch(() => {
+    localFailed = true;
+  });
+  if (sessionGeneration === currentSessionGeneration() && apiBase === currentApiBase()) {
+    if (!(await clearSessionToken())) localFailed = true;
+    if (
+      sessionGeneration! + 1 === currentSessionGeneration() &&
+      apiBase === currentApiBase() &&
+      !(await clearSpace())
+    )
+      localFailed = true;
+  }
+  if (localFailed) throw new Error(t`Could not clear the local session`);
 }
 export async function fetchAccountSecurity(): Promise<AccountSecurity> {
   const { response, body } = await fetchMobileJson<unknown>(

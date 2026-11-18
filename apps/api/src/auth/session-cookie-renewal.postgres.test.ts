@@ -99,6 +99,35 @@ it.skipIf(!databaseUrl)(
       });
       expect(unrelatedCookie.status).toBe(200);
       expect(sessionCookies(unrelatedCookie)).toEqual([]);
+
+      // A guarded sign-in can renew the old account before creating the new session.
+      // That renewal must never overwrite the cookie chosen by the sign-in handler.
+      const otherEmail = `session-renewal-other-${Date.now()}@example.test`;
+      const other = await handles.app.request("/api/auth/sign-up/email", {
+        method: "POST",
+        headers: { "content-type": "application/json", origin },
+        body: JSON.stringify({ email: otherEmail, password: "test-password-123", name: "Other" }),
+      });
+      expect(other.status).toBeLessThan(400);
+      await system.session.updateMany({
+        where: { userId: user.id },
+        data: { expiresAt: aged },
+      });
+      const switched = await handles.app.request("/api/auth/sign-in/email", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          origin,
+          cookie,
+          "x-rakazo-user-id": user.id,
+        },
+        body: JSON.stringify({ email: otherEmail, password: "test-password-123" }),
+      });
+      expect(switched.status).toBe(200);
+      expect(sessionCookies(switched)).toHaveLength(1);
+      expect(sessionCookies(switched)[0]).not.toContain(
+        cookie.split("; ").find((part) => part.includes("session_token="))!,
+      );
     } finally {
       await handles.stop();
       await rm(dataDir, { recursive: true, force: true });

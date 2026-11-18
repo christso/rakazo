@@ -4,7 +4,7 @@ import { hasUnsentSends } from "./thread-feedback";
 import { unsentSendsRestored } from "./unsent-sends";
 
 /** What is about to clear the queue of unsent messages. */
-export type UnsentSendLossAction = "sign-out" | "server-switch" | "sign-in";
+export type UnsentSendLossAction = "sign-out" | "server-switch" | "sign-in" | "account-switch";
 
 /**
  * Confirms an action that deletes this device's unsent messages. Resolves false when
@@ -22,6 +22,10 @@ export async function confirmUnsentSendLoss(action: UnsentSendLossAction): Promi
     "sign-in": {
       message: t`Signing in deletes unsent messages.`,
       confirmLabel: t`Sign in anyway`,
+    },
+    "account-switch": {
+      message: t`Switching accounts deletes unsent messages.`,
+      confirmLabel: t`Switch anyway`,
     },
     "server-switch": {
       message: t`Switching servers deletes unsent messages.`,

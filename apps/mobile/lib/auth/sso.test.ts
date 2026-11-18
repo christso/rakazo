@@ -8,6 +8,7 @@ import {
   replaceSessionTokenIfCurrent,
   rotateSessionTokenIfCurrent,
 } from "../api/session";
+import { rememberAuthenticatedAccount } from "./api-auth";
 import { continueWithSso } from "./sso";
 
 vi.mock("react-native", () => ({ Platform: { OS: "ios" } }));
@@ -16,6 +17,8 @@ vi.mock("expo-web-browser", () => ({
   openAuthSessionAsync: vi.fn(),
   WebBrowserResultType: { CANCEL: "cancel", DISMISS: "dismiss" },
 }));
+vi.mock("./api-auth", () => ({ rememberAuthenticatedAccount: vi.fn(async () => undefined) }));
+vi.mock("../api/api-live", () => ({}));
 vi.mock("../api/api", () => ({
   authHeaders: vi.fn(async () => ({ authorization: "Bearer old-session" })),
   currentApiBase: vi.fn(() => "https://rakazo.example.test"),
@@ -67,6 +70,12 @@ it("uses the Expo proxy, validates the session, and saves the existing session s
   expect(new URL(url).searchParams.get("oauthState")).toBe("encrypted-state");
   expect(replaceSessionTokenIfCurrent).toHaveBeenCalledWith(1, "new-session");
   expect(clearSpace).toHaveBeenCalledOnce();
+  expect(rememberAuthenticatedAccount).toHaveBeenCalledWith(
+    "https://rakazo.example.test",
+    "new-session",
+    expect.objectContaining({ user: { id: "user-1" } }),
+    1,
+  );
 });
 it.each([WebBrowserResultType.CANCEL, WebBrowserResultType.DISMISS])(
   "does not store a session on %s",

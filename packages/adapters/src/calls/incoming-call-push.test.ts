@@ -63,7 +63,7 @@ describe("incoming call delivery", () => {
         categoryId: "incoming-call",
         data: { kind: "incoming_call", ...call },
       });
-      expect(body.data).toEqual({ kind: "incoming_call", ...call });
+      expect(body.data).toEqual({ kind: "incoming_call", ...call, userId: "user-1" });
       expect(body.ttl).toBeGreaterThan(0);
       if (result === "invalid")
         expect(tokens.removeDevice).toHaveBeenCalledWith(
@@ -92,7 +92,7 @@ describe("incoming call delivery", () => {
     device.platform = "android";
     await provider.incomingCall("user-1", ended);
     const body = JSON.parse(fetch.mock.calls[0]![1]!.body as string);
-    expect(body.data).toEqual({ kind: "incoming_call_ended", ...call });
+    expect(body.data).toEqual({ kind: "incoming_call_ended", ...call, userId: "user-1" });
   });
   it("ignores expired calls, revoked sessions, and registrations changed during authorization", async () => {
     const { provider, voip, fetch, sessions, tokens } = fixture();
@@ -137,6 +137,37 @@ describe("incoming call delivery", () => {
     expect(body.channelId).toBeUndefined();
     expect(body.ttl).toBeGreaterThan(0);
   });
+  it.each([false, true])(
+    "rings every legacy registration without duplicating a native device (%s)",
+    async (nativePeer) => {
+      const { provider, tokens, fetch, device, voip } = fixture();
+      if (!nativePeer) vi.mocked(tokens.devices!).mockResolvedValue([]);
+      vi.mocked(tokens.list).mockResolvedValue([
+        { token: "ExponentPushToken[legacy-a]", sessionId: "legacy-session-a" },
+        { token: "ExponentPushToken[legacy-b]", sessionId: "legacy-session-b" },
+        ...(nativePeer ? [{ token: device.expoToken!, sessionId: device.sessionId }] : []),
+      ]);
+      await provider.incomingCall("user-1", call);
+      const bodies = fetch.mock.calls.map(([, init]) => JSON.parse(init!.body as string));
+      expect(bodies.map((body) => body.to).sort()).toEqual([
+        "ExponentPushToken[legacy-a]",
+        "ExponentPushToken[legacy-b]",
+      ]);
+      expect(voip.send).toHaveBeenCalledTimes(nativePeer ? 1 : 0);
+      for (const body of bodies) {
+        expect(body).toMatchObject({
+          title: call.botName,
+          data: {
+            kind: "incoming_call",
+            ...call,
+            userId: "user-1",
+          },
+        });
+        expect(body.channelId).toBeUndefined();
+        expect(body.ttl).toBeGreaterThan(0);
+      }
+    },
+  );
   it("removes only the invalid Expo transport", async () => {
     const { provider, device, fetch, tokens } = fixture();
     device.platform = "android";

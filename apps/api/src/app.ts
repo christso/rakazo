@@ -39,6 +39,7 @@ import {
   createCloudAgentConnection,
   createConnectorRuntime,
   createDubPartnerProgram,
+  createExpoPushProvider,
   createMediaGenerationProvider,
   createPaymentWalletProvider,
   createProductAnalytics,
@@ -50,7 +51,6 @@ import {
   createTicketChangeNotifier,
   drainRuns,
   EmailEmulator,
-  ExpoPushProvider,
   GraphileJobPublisher,
   InMemoryJobQueue,
   InMemoryRealtimeFanout,
@@ -115,7 +115,6 @@ import {
   joinedOrganizationIds,
   observeThreadChanges,
   parsePositiveInteger,
-  pushSessionExpiresAt,
   requireMembership,
   rowSecurityWarning,
   runAsSystem,
@@ -141,6 +140,7 @@ import {
 } from "./account/account-deletion.js";
 import { mountAccountExportRoute } from "./account/account-export.js";
 import { mountAccountImportRoute } from "./account/account-import.js";
+import { mountAccountSessionGuard, mountAccountSessions } from "./account/account-sessions.js";
 import { settleDirectoryChange } from "./account/account-status.js";
 import { mountAuditExportRoute } from "./account/audit-export.js";
 import { mountLocalComputerHost } from "./auth/local-settings.js";
@@ -501,8 +501,8 @@ async function buildApp(overrides: CreateAppOverrides): Promise<AppHandles> {
   const pushTokens = new PrismaPushTokenStore(prisma, env.encryptionKey);
   const notifications =
     notificationsOverride ??
-    new ExpoPushProvider(pushTokens, {
-      sessionExpiresAt: (sessionId) => pushSessionExpiresAt(prisma, sessionId),
+    createExpoPushProvider(prisma, pushTokens, {
+      authUrl: env.authUrl,
       jobs,
       accessToken: env.expoAccessToken,
       voip: await createApnsVoipProvider(env.apnsVoip),
@@ -900,12 +900,18 @@ async function buildApp(overrides: CreateAppOverrides): Promise<AppHandles> {
   app.use("*", async (c, next) => {
     const request = c.req.raw;
     await next();
+    // Signing in, switching accounts or signing out owns the final cookie value.
+    const responseCookieNames = new Set(
+      c.res.headers.getSetCookie().map((cookie) => cookie.split("=")[0]),
+    );
     for (const cookie of renewedSessionCookies.get(request) ??
       renewedSessionCookies.get(c.req.raw) ??
       []) {
-      c.header("set-cookie", cookie, { append: true });
+      if (!responseCookieNames.has(cookie.split("=")[0]))
+        c.header("set-cookie", cookie, { append: true });
     }
   });
+  const authenticatedSession = mountAccountSessionGuard(app, auth, readSession);
   // Session and account replies must never be stored by a client or an HTTP cache.
   for (const path of ["/api/auth/*", "/rpc/*"]) {
     app.use(path, async (c, next) => {
@@ -946,7 +952,7 @@ async function buildApp(overrides: CreateAppOverrides): Promise<AppHandles> {
     monitoringRoutes(
       env.browserMonitoring,
       fetch,
-      async (request) => (await readSession(request))?.user.id,
+      async (request) => (await authenticatedSession(request))?.user.id,
     ),
   );
   app.route("/", cspReportRoutes(requestClientIp));
@@ -967,6 +973,14 @@ async function buildApp(overrides: CreateAppOverrides): Promise<AppHandles> {
   mountScriptAssets(app);
   mountSharedPages(app, prisma, requestClientIp);
   const auditAuthResponse = createAuthResponseAudit();
+  const handleAuthRequest = async (request: Request, ip: string | undefined) => {
+    const path = new URL(request.url).pathname.replace("/api/auth", "");
+    const response = await withAuthLibraryFailures(() =>
+      auth.handler(withClientIp(emptyAuthBodyAsJson(request), ip)),
+    );
+    await auditAuthResponse(path, ip, response);
+    return response;
+  };
   for (const [path, reason] of SYSTEM_CONTEXT_PATHS) {
     app.use(path, (_c, next) => runAsSystem(reason, next));
   }
@@ -1020,12 +1034,15 @@ async function buildApp(overrides: CreateAppOverrides): Promise<AppHandles> {
     if (isBlockedAuthPath(path)) {
       return c.json({ error: "Not available in version 1" }, 404);
     }
-    const ip = requestClientIp(c);
-    const response = await withAuthLibraryFailures(() =>
-      auth.handler(withClientIp(emptyAuthBodyAsJson(c.req.raw), ip)),
-    );
-    await auditAuthResponse(path, ip, response);
-    return response;
+    return handleAuthRequest(c.req.raw, requestClientIp(c));
+  });
+  mountAccountSessions(app, {
+    auth,
+    prisma,
+    trustedOrigin: (origin) => isTrustedOrigin(origin, env),
+    handleAuthRequest,
+    serverOrigin: new URL(env.authUrl?.trim() || env.webOrigin?.trim() || "http://127.0.0.1:5173")
+      .origin,
   });
   mountLocalComputerHost(app, {
     token: env.desktopStackToken,
@@ -1034,7 +1051,7 @@ async function buildApp(overrides: CreateAppOverrides): Promise<AppHandles> {
   });
   const requestSession = async (request: Request, disableRefresh = false) => {
     // The bearer plugin turns a signed `Authorization: Bearer` into the session cookie.
-    const session = await readSession(request, disableRefresh);
+    const session = await authenticatedSession(request, disableRefresh);
     if (!session?.user) return null;
     const actor = await actorFromMembership(
       requireMembership(
@@ -1054,7 +1071,7 @@ async function buildApp(overrides: CreateAppOverrides): Promise<AppHandles> {
       devices: userDevices,
       forwardSecret: userDeviceSecret,
       session: async (request) => {
-        const found = await readSession(request);
+        const found = await authenticatedSession(request);
         return found ? { userId: found.user.id, sessionId: found.session.id } : null;
       },
       trustedOrigin: (origin) => isTrustedOrigin(origin, env),

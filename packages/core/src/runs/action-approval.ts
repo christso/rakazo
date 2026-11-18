@@ -6,6 +6,7 @@ export { isSecretAskBlock } from "../asks/ask-kind.js";
 import { humanizeToolName } from "../messages/events.js";
 
 const APPROVAL_EXEMPT_TOOLS = new Set([
+  "computer_resources",
   "computer_observe",
   "computer_act",
   "browser_navigate",
@@ -40,6 +41,7 @@ const APPROVAL_EXEMPT_TOOLS = new Set([
  * run. Anything else, new tools included, is gated there (see outsideRunToolRequiresApproval).
  */
 const OUTSIDE_RUN_SAFE_BUILTIN_TOOLS = new Set([
+  "computer_resources",
   "ask_user",
   "attach_file",
   "browser_snapshot",
@@ -249,6 +251,8 @@ const OWN_STATE_RESULT_TOOLS = new Set([
   "attach_file",
   // Only confirms the bot's own address.
   "claim_email_address",
+  // Validated numeric measurements and fixed guidance, never text from a page or process.
+  "computer_resources",
   "delete_email",
   "end_call",
   "feedback",

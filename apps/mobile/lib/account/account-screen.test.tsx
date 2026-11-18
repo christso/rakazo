@@ -5,7 +5,7 @@ import { deferred, flush } from "@rakazo/core/test-async";
 import { notifyManager } from "@tanstack/react-query";
 import * as SecureStore from "expo-secure-store";
 import type { ReactNode } from "react";
-import { act, createElement, useEffect } from "react";
+import { act, createElement, useEffect, useState } from "react";
 import type { Root } from "react-dom/client";
 import { createRoot } from "react-dom/client";
 import { Alert } from "react-native";
@@ -18,7 +18,12 @@ import type * as Api from "../api/api";
 import { rpc } from "../api/api";
 import type * as ApiServer from "../api/api-server";
 import type * as Session from "../api/session";
-import { currentSessionGeneration } from "../api/session";
+import { currentSessionGeneration, loadSessionToken } from "../api/session";
+import {
+  refreshAccountSummaries,
+  selectSavedAccount,
+  signOutAllAccounts,
+} from "../auth/account-sessions";
 import type * as ApiAuth from "../auth/api-auth";
 import {
   deleteAccount,
@@ -56,6 +61,7 @@ const { element, account } = vi.hoisted(() => ({
       unknown
     >,
     push: vi.fn(),
+    dismissTo: vi.fn(),
     approvals: { mode: "ask", enabled: false, skipApprovals: false, checkerAvailable: true },
     rules: [] as { id: string }[],
     messaging: { enabled: true },
@@ -64,6 +70,12 @@ const { element, account } = vi.hoisted(() => ({
   },
 }));
 
+vi.mock("../auth/account-sessions", () => ({
+  refreshAccountSummaries: vi.fn(async () => []),
+  rememberCurrentAccount: vi.fn(async () => undefined),
+  selectSavedAccount: vi.fn(async () => false),
+  signOutAllAccounts: vi.fn(async () => undefined),
+}));
 vi.mock("../layout/side-insets", () => ({ useSideInsets: () => ({}) }));
 vi.mock("../thread/send/unsent-sends", () => ({ unsentSendsRestored: vi.fn(async () => true) }));
 // The unsent-message warning reads this without a screen subscription; tests flip it per case.
@@ -116,35 +128,50 @@ vi.mock("react-native", () => ({
   View: element("div"),
 }));
 vi.mock("@expo/ui/community/menu", () => ({
-  MenuView: ({
+  MenuView: function MenuView({
     children,
     actions,
     onPressAction,
   }: {
     children?: ReactNode;
-    actions: Array<{ id: string; title: string }>;
+    actions: Array<{
+      id: string;
+      title: string;
+      state?: string;
+      attributes?: { disabled?: boolean };
+    }>;
     onPressAction: (event: { nativeEvent: { event: string } }) => void;
-  }) =>
-    createElement(
+  }) {
+    const [open, setOpen] = useState(false);
+    return createElement(
       "div",
-      null,
+      { onClick: () => setOpen(true) },
       children,
-      actions.map((action) =>
-        createElement(
-          "button",
-          {
-            key: action.id,
-            type: "button",
-            "data-menu-action": action.id,
-            onClick: () => onPressAction({ nativeEvent: { event: action.id } }),
-          },
-          action.title,
-        ),
-      ),
-    ),
+      open
+        ? actions.map((action) =>
+            createElement(
+              "button",
+              {
+                key: action.id,
+                type: "button",
+                "data-menu-action": action.id,
+                "aria-pressed": action.state === "on",
+                disabled: action.attributes?.disabled,
+                onClick: (event: { stopPropagation: () => void }) => {
+                  event.stopPropagation();
+                  setOpen(false);
+                  onPressAction({ nativeEvent: { event: action.id } });
+                },
+              },
+              action.title,
+            ),
+          )
+        : null,
+    );
+  },
 }));
 vi.mock("expo-router", () => {
-  const router = { push: account.push, back: () => undefined };
+  const router = { push: account.push, back: () => undefined, dismissTo: account.dismissTo };
   return {
     useFocusEffect: (effect: () => undefined | (() => void)) => useEffect(effect, [effect]),
     useLocalSearchParams: () => ({}),
@@ -206,6 +233,7 @@ vi.mock("../../components/settings/settings-group", () => ({
     title,
     value,
     accessibilityRole,
+    accessibilityState,
     chevron,
     disabled,
     onPress,
@@ -213,6 +241,7 @@ vi.mock("../../components/settings/settings-group", () => ({
     title: string;
     value?: string;
     accessibilityRole?: string;
+    accessibilityState?: { selected?: boolean };
     chevron?: string;
     disabled?: boolean;
     onPress?: () => void;
@@ -224,6 +253,7 @@ vi.mock("../../components/settings/settings-group", () => ({
         role: accessibilityRole,
         "data-chevron": chevron,
         "data-value": value,
+        "aria-selected": accessibilityState?.selected,
         "data-row": "",
         disabled,
         onClick: onPress,
@@ -428,6 +458,9 @@ beforeEach(() => {
   haptics.save.mockReset().mockResolvedValue(undefined);
   haptics.load.mockReset().mockResolvedValue(undefined);
   vi.mocked(fetchAccountSecurity).mockResolvedValue(security());
+  vi.mocked(refreshAccountSummaries).mockResolvedValue([]);
+  vi.mocked(loadSessionToken).mockResolvedValue("token");
+  vi.mocked(signOut).mockReset();
 });
 
 afterEach(() => {
@@ -853,7 +886,7 @@ it.each([false, true])(
         "Labs",
         "Members",
       ];
-      expect(titles).toEqual(["tester@example.test", "Usage", ...links]);
+      expect(titles).toEqual(["tester@example.test", "Usage", "Switch accounts", ...links]);
       const artifacts = view.button("Artifacts")!;
       expect(artifacts.getAttribute("role")).toBe("button");
       expect(artifacts.dataset.chevron).toBe("right");
@@ -898,6 +931,11 @@ it("lists trusted link sites only when there is one, each with a remove action",
   const group = container.querySelector('[aria-label="Trusted sites"]');
   expect(group?.textContent).toContain("alice.github.io");
   expect(group?.textContent).toContain("example.com");
+  await act(async () => {
+    for (const row of group?.querySelectorAll<HTMLButtonElement>("[data-row]") ?? []) {
+      row.click();
+    }
+  });
   const removes = group?.querySelectorAll<HTMLButtonElement>('[data-menu-action="remove"]');
   expect(removes).toHaveLength(2);
   await act(async () => removes?.[1]?.click());
@@ -928,6 +966,70 @@ it("shows the approval mode as the Approvals row's value, with Rules only once t
   expect(view.button("Rules")!.dataset.value).toBe("2");
   await view.press("Rules");
   expect(account.push).toHaveBeenCalledWith("/approvals");
+});
+
+it("reveals saved accounts with unread counts and the selected identity only in the picker", async () => {
+  vi.mocked(refreshAccountSummaries).mockResolvedValue([
+    { userId: "user-1", email: "family@example.test", unread: 2 },
+    { userId: "user-2", email: "work@example.test", unread: 3 },
+  ]);
+  vi.mocked(selectSavedAccount).mockResolvedValue(false);
+  const view = await renderAccount();
+  expect(view.screen.textContent).not.toContain("work@example.test");
+  expect(view.button("Add account")).toBeUndefined();
+
+  await view.press("Switch accounts");
+  const selected = view.button("family@example.test (2 unread)")!;
+  const work = view.button("work@example.test (3 unread)")!;
+  expect(selected.getAttribute("aria-pressed")).toBe("true");
+  expect(selected.disabled).toBe(true);
+  expect(work.getAttribute("aria-pressed")).toBe("false");
+  expect(view.button("Add account")?.disabled).toBe(false);
+  await act(async () => selected.click());
+  expect(selectSavedAccount).not.toHaveBeenCalled();
+  await act(async () => work.click());
+  expect(selectSavedAccount).toHaveBeenCalledWith("user-2");
+});
+
+it("offers Add account inside the picker with only one saved login", async () => {
+  vi.mocked(refreshAccountSummaries).mockResolvedValue([
+    { userId: "user-1", email: "family@example.test", unread: 0 },
+  ]);
+  const view = await renderAccount();
+  expect(view.button("Add account")).toBeUndefined();
+  await view.press("Switch accounts");
+  expect(view.button("family@example.test")?.disabled).toBe(true);
+  await view.press("Add account");
+  expect(account.push).toHaveBeenCalledWith({
+    pathname: "/sign-in",
+    params: { mode: "in", addAccount: "1" },
+  });
+});
+
+it("disables account picker actions while sign-out is pending", async () => {
+  vi.mocked(refreshAccountSummaries).mockResolvedValue([
+    { userId: "user-1", email: "family@example.test", unread: 2 },
+    { userId: "user-2", email: "work@example.test", unread: 3 },
+  ]);
+  vi.mocked(signOut).mockReturnValueOnce(new Promise(() => undefined));
+  const view = await renderAccount();
+  await view.press("Switch accounts");
+  await view.press("Sign out");
+  expect(view.button("Switch accounts")?.disabled).toBe(true);
+  expect(view.button("work@example.test (3 unread)")?.disabled).toBe(true);
+  expect(view.button("Add account")?.disabled).toBe(true);
+  await view.press("work@example.test (3 unread)");
+  await view.press("Add account");
+  expect(selectSavedAccount).not.toHaveBeenCalled();
+  expect(account.push).not.toHaveBeenCalled();
+});
+
+it("sends single-account sign-out to sign-in, which lists the other saved logins", async () => {
+  const view = await renderAccount();
+  await view.press("Sign out");
+  expect(signOut).toHaveBeenCalledOnce();
+  expect(replaceWithSignIn).toHaveBeenCalledOnce();
+  expect(account.dismissTo).not.toHaveBeenCalled();
 });
 
 it("hides Messaging when no chat app is connected to the server", async () => {
@@ -1095,4 +1197,51 @@ it("shows subscription allowances and credits only for members who have them", a
   expect(titles).toContain("Session");
   expect(view.button("Session")!.dataset.value).toBe("38% used");
   expect(view.button("Credits")!.dataset.value).toBe("$12.50 left");
+});
+
+it("keeps unsent messages when cancelling sign-out of all saved accounts", async () => {
+  vi.mocked(refreshAccountSummaries).mockResolvedValue([
+    { userId: "user-1", email: "one@example.test", unread: 0 },
+    { userId: "user-2", email: "two@example.test", unread: 0 },
+  ]);
+  vi.mocked(hasUnsentSends).mockReturnValue(true);
+  try {
+    const view = await renderAccount();
+    await view.press("Sign out all");
+    const first = vi.mocked(Alert.alert).mock.calls[0]![2]!;
+    await act(async () => {
+      void first[1]!.onPress?.();
+    });
+    expect(Alert.alert).toHaveBeenCalledTimes(2);
+    const loss = vi.mocked(Alert.alert).mock.calls[1]![2]!;
+    await act(async () => {
+      loss[0]!.onPress?.();
+    });
+    expect(signOutAllAccounts).not.toHaveBeenCalled();
+    expect(endCallBeforeSessionEnd).not.toHaveBeenCalled();
+    expect(replaceWithSignIn).not.toHaveBeenCalled();
+  } finally {
+    vi.mocked(hasUnsentSends).mockReturnValue(false);
+  }
+});
+
+it("hangs up before signing out every saved account", async () => {
+  vi.mocked(refreshAccountSummaries).mockResolvedValue([
+    { userId: "user-1", email: "one@example.test", unread: 0 },
+    { userId: "user-2", email: "two@example.test", unread: 0 },
+  ]);
+  const order: string[] = [];
+  vi.mocked(endCallBeforeSessionEnd).mockImplementationOnce(async () => {
+    order.push("hang-up");
+  });
+  vi.mocked(signOutAllAccounts).mockImplementationOnce(async () => {
+    order.push("sign-out");
+  });
+  const view = await renderAccount();
+  await view.press("Sign out all");
+  const buttons = vi.mocked(Alert.alert).mock.calls[0]![2]!;
+  await act(async () => {
+    await buttons[1]!.onPress?.();
+  });
+  expect(order).toEqual(["hang-up", "sign-out"]);
 });

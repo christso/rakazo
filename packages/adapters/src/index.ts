@@ -131,6 +131,7 @@ export * from "./models/model-vision.js";
 export { MODEL_CANNOT_SEE_MESSAGE } from "./models/model-vision.prompt.js";
 export { dispatcherFetch } from "./network/undici-fetch.js";
 export * from "./notifications/expo-push.js";
+export * from "./notifications/expo-push-factory.js";
 export * from "./notifications/push-token-store.js";
 export * from "./notifications/realtime.js";
 export * from "./payments/paid-services-factory.js";
@@ -196,7 +197,12 @@ export * from "./runs/assembly/run-runtime.js";
 export { createRunTrustLoaders } from "./runs/assembly/run-trust.js";
 export * from "./runs/executor/executor.js";
 export * from "./runs/labs-env.js";
-export { notifyMemberMessage } from "./runs/lifecycle/run-notifications.js";
+export {
+  completionNotificationBody,
+  completionNotificationPreview,
+  notifyMemberMessage,
+  runEventNotifies,
+} from "./runs/lifecycle/run-notifications.js";
 export { loadRunOrigin } from "./runs/lifecycle/run-origin.js";
 export * from "./runs/lifecycle/work-activity.js";
 export * from "./runs/wakeups/background-job-handlers.js";

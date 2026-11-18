@@ -5,6 +5,7 @@ import type { AppContract, ProductEvent } from "@rakazo/contracts";
 import { CLIENT_BUILD_HEADER, formatClientBuild } from "@rakazo/contracts";
 import { displayIdentityEvent, displayIdentityResult } from "@rakazo/core";
 import { clientCorrelationHeaders, responseCorrelation } from "@rakazo/logging/monitoring";
+import { accountRequestHeaders } from "../auth/account-identity";
 import { authClient } from "../auth/auth";
 import { identityLabels } from "../bots/identity-display";
 import { i18n } from "../locale/i18n";
@@ -63,7 +64,7 @@ export function withSpaceHeaders(
   init?: HeadersInit,
   spaceId: string | null = selectedSpaceId(),
 ): Headers {
-  const headers = new Headers(init);
+  const headers = accountRequestHeaders(init);
   if (spaceId) headers.set("x-rakazo-space-id", spaceId);
   else headers.delete("x-rakazo-space-id");
   return headers;

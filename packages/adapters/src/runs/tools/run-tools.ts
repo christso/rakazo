@@ -2,6 +2,10 @@ import type { AgentToolExecutionObserver } from "@rakazo/adapter-kit";
 import { BACKGROUND_HELPER_TRIGGER, toolResultTaintsRun } from "@rakazo/core";
 import { isTerminatingReplyResult } from "../../approvals/approval-effect.js";
 import { argumentGiven } from "../../bots/update-bot-patch.js";
+import {
+  measureComputerResources,
+  withComputerResources,
+} from "../../computers/computer-resources.js";
 import { IMAGE_RETURNING_COMPUTER_TOOLS } from "../../models/model-vision.js";
 import { MODEL_CANNOT_SEE_MESSAGE } from "../../models/model-vision.prompt.js";
 import { strategicInitiativeToolAllowed } from "../../routines/strategic-initiative.js";
@@ -85,7 +89,20 @@ export async function applyTool(
     const { bot_id: _self, ...own } = args;
     args = own;
   }
-  return dispatchTool(ctx, name, args, executionId, observer);
+  const result = await dispatchTool(ctx, name, args, executionId, observer);
+  // Never wake a computer for diagnostics, and never inspect the user's own machine.
+  const computer = ctx.computer?.lazy?.ready;
+  if (
+    name !== "computer_resources" &&
+    computer &&
+    (Object.hasOwn(computerTools, name) || PAGE_BROWSER_TOOL_NAMES.has(name))
+  ) {
+    return withComputerResources(
+      result,
+      await measureComputerResources(ctx.deps.sandbox, computer, ctx.context),
+    );
+  }
+  return result;
 }
 
 async function dispatchTool(

@@ -1,6 +1,7 @@
 import { Trans, useLingui } from "@lingui/react/macro";
 import { BOT_COLOR_LIST, signInProviders } from "@rakazo/contracts";
 import {
+  accountDisplay,
   credentialIssue,
   MAX_PASSWORD_LENGTH,
   MIN_PASSWORD_LENGTH,
@@ -8,6 +9,7 @@ import {
   suggestEmailCorrection,
 } from "@rakazo/core";
 import {
+  Badge,
   Button,
   Input,
   InputOTP,
@@ -19,9 +21,11 @@ import {
 import { ChevronLeft } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
+import { AccountAvatar } from "../../components/account/AccountAvatar";
 import { PasskeySignIn, usePasskeySignIn } from "../../components/account/PasskeySignIn";
 import { SocialSignInButtons } from "../../components/account/SocialSignInButtons";
 import { WindowChrome } from "../../components/WindowChrome";
+import { switchSavedAccount, useSavedAccounts } from "../../lib/auth/account-sessions";
 import { authClient } from "../../lib/auth/auth";
 import type { AuthCapabilities } from "../../lib/auth/auth-capabilities";
 import { fetchAuthCapabilities } from "../../lib/auth/auth-capabilities";
@@ -41,13 +45,17 @@ export const submitClass = "mt-3 h-12 w-full rounded-xl text-body-lg";
 export function AuthPage({ mode }: { mode: AuthMode }) {
   const { t } = useLingui();
   const [searchParams, setSearchParams] = useSearchParams();
+  const saved = useSavedAccounts();
   const location = useLocation();
   const navigate = useNavigate();
   const chooserPath = mode === "up" ? "/sign-up" : "/sign-in";
   const emailStep = location.pathname === `${chooserPath}/email`;
   const next = signInNext(searchParams.get("next"));
   // Switching between sign-in and sign-up keeps where the person was going.
-  const nextQuery = next ? `?next=${encodeURIComponent(next)}` : "";
+  const authQuery = new URLSearchParams();
+  if (next) authQuery.set("next", next);
+  if (searchParams.get("add") === "1") authQuery.set("add", "1");
+  const nextQuery = authQuery.size ? `?${authQuery}` : "";
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
@@ -221,6 +229,10 @@ export function AuthPage({ mode }: { mode: AuthMode }) {
 
   function enterApp() {
     clearSpaceSelection();
+    if (searchParams.get("add") === "1") {
+      window.location.assign("/app");
+      return;
+    }
     // The routes move a signed-in user on once the session refetch lands. Navigating
     // first beats it, so the guards bounce through sign-in and the shell.
     entering.current = true;
@@ -308,6 +320,39 @@ export function AuthPage({ mode }: { mode: AuthMode }) {
         </div>
       ) : (
         <>
+          {mode === "in" && !codeStep
+            ? saved.accounts.map((account) => {
+                const display = accountDisplay(account, account.email);
+                return (
+                  <Button
+                    key={account.userId}
+                    type="button"
+                    variant="outline"
+                    className="mb-3 h-14 w-full justify-start gap-3 rounded-xl px-3 font-normal"
+                    onClick={() => void switchSavedAccount(account.userId)}
+                  >
+                    <AccountAvatar
+                      image={display.image}
+                      initials={display.initial}
+                      className="size-8 text-body"
+                    />
+                    <span className="min-w-0 flex-1 text-start">
+                      <span className="block truncate">{display.label}</span>
+                      {display.label !== account.email ? (
+                        <span className="block truncate text-label text-muted-foreground">
+                          {account.email}
+                        </span>
+                      ) : null}
+                    </span>
+                    {account.unread > 0 ? (
+                      <Badge variant="secondary" className="tabular-nums">
+                        {account.unread}
+                      </Badge>
+                    ) : null}
+                  </Button>
+                );
+              })
+            : null}
           {capabilityError ? (
             <div role="alert" className="w-full text-center">
               <p>

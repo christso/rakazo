@@ -75,6 +75,106 @@ beforeEach(() => {
 });
 
 describe("dispatchTool audit outcomes", () => {
+  it.each(["desktop", "wuying", "none", "fake"])(
+    "does not start an unsupported %s computer for resource readings",
+    async (kind) => {
+      const get = vi.fn();
+      const execute = vi.fn();
+      const base = dispatchContext(false);
+      const ctx = {
+        ...base,
+        deps: { ...base.deps, sandbox: { execute } },
+        computer: { kind, get },
+      };
+      expect(await applyTool(ctx as never, "computer_resources", {}, "call-1")).toEqual({
+        available: false,
+      });
+      expect(get).not.toHaveBeenCalled();
+      expect(execute).not.toHaveBeenCalled();
+    },
+  );
+
+  it("does not start a computer to diagnose a tool refused before its first use", async () => {
+    const get = vi.fn();
+    const execute = vi.fn();
+    const base = dispatchContext(false);
+    const ctx = {
+      ...base,
+      deps: { ...base.deps, sandbox: { execute } },
+      computer: { get, heldForTakeover: true, lazy: { ready: undefined } },
+    };
+    expect(await applyTool(ctx as never, "computer_observe", {}, "call-1")).toHaveProperty("error");
+    expect(get).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it("automatically attaches fresh resource pressure to a computer tool's returned error", async () => {
+    const base = dispatchContext(false);
+    const computer = { id: "c", botId: "bot-1", kind: "docker", providerRef: "p" };
+    const ctx = {
+      ...base,
+      deps: {
+        ...base.deps,
+        prisma: { ...base.deps.prisma, taughtSkill: { findFirst: async () => null } },
+        sandbox: {
+          async *execute() {
+            yield {
+              type: "stdout",
+              data: JSON.stringify({
+                sampledAt: "2026-11-13T00:00:00.000Z",
+                sampleMs: 200,
+                scope: "cgroup-v2",
+                memoryUsedBytes: 950,
+                memoryLimitBytes: 1000,
+                cpuPercent: 90,
+                cpuLimitCores: 1,
+              }),
+            };
+            yield { type: "exit", code: 0 };
+          },
+        },
+      },
+      computer: { heldForTakeover: true, lazy: { ready: computer } },
+    };
+    const result = await applyTool(ctx as never, "computer_observe", {}, "call-1");
+    expect(result).toMatchObject({
+      error: expect.any(String),
+      computerResources: { memoryPressure: true, memoryPercent: 95, memoryLimitBytes: 1000 },
+    });
+  });
+
+  it("returns resource readings without requiring a screen or a browser", async () => {
+    const base = dispatchContext(false);
+    const ctx = {
+      ...base,
+      deps: {
+        ...base.deps,
+        sandbox: {
+          async *execute() {
+            yield {
+              type: "stdout",
+              data: JSON.stringify({
+                sampledAt: "2026-11-13T00:00:00.000Z",
+                sampleMs: 200,
+                scope: "cgroup-v2",
+                memoryUsedBytes: 250,
+                memoryLimitBytes: 1000,
+                cpuPercent: 12,
+                cpuLimitCores: 0.5,
+              }),
+            };
+            yield { type: "exit", code: 0 };
+          },
+        },
+      },
+      computer: { get: async () => ({ id: "c", botId: "b", kind: "docker", providerRef: "p" }) },
+    };
+    expect(await applyTool(ctx as never, "computer_resources", {}, "call-1")).toMatchObject({
+      available: true,
+      computerResources: { memoryPercent: 25, cpuPercent: 12, cpuLimitCores: 0.5 },
+    });
+  });
+
   it.each(["reflect_memory", "recall_memory", "save_memory", "forget_memory", "read_history"])(
     "refuses an unoffered memory tool before approval or execution: %s",
     async (name) => {

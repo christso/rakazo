@@ -13,7 +13,7 @@ import {
   tokenFromAuthResponse,
 } from "../api/session";
 import { authResponseErrorText, errorText, sessionSaveErrorText } from "../api/user-error";
-import { passwordResetCapabilities } from "./api-auth";
+import { passwordResetCapabilities, rememberAuthenticatedAccount } from "./api-auth";
 
 export type MobilePasskey = { id: string; name: string | null; createdAt: string };
 
@@ -156,6 +156,7 @@ export function signInWithPasskey(): Promise<boolean> {
     try {
       if (!(await clearSpace()))
         throw new Error(t`Could not save your sign-in on this device. Try again.`);
+      await rememberAuthenticatedAccount(flow.apiBase, token, body, flow.generation);
       return await replaceSessionTokenIfCurrent(flow.generation, token);
     } catch (error) {
       throw new Error(sessionSaveErrorText(error));

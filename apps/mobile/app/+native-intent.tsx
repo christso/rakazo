@@ -1,5 +1,6 @@
 import { MOBILE_MCP_OAUTH_CALLBACK_URL } from "@rakazo/contracts";
 import { receiveIncomingShare } from "../lib/composer/incoming-share";
+import { notificationOpenTargetFromLink } from "../lib/notifications/notification-open";
 import { closeSettingsSheet, isSettingsLink, linkScreen } from "../lib/settings/settings-sheet";
 
 /** A link to a screen outside settings closes the settings sheet first, so the screen opens on
@@ -11,5 +12,7 @@ export function redirectSystemPath({ path, initial }: { path: string; initial: b
   // The in-app browser already handed this to the sign-in that opened it; stay put.
   if (linkScreen(path) === linkScreen(MOBILE_MCP_OAUTH_CALLBACK_URL)) return "";
   if (!isSettingsLink(path)) closeSettingsSheet();
+  if (notificationOpenTargetFromLink(path))
+    return `/notification-open?target=${encodeURIComponent(path)}`;
   return isShare ? "/share" : path;
 }

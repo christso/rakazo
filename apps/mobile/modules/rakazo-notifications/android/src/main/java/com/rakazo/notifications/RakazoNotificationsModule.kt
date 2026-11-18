@@ -13,7 +13,7 @@ class RakazoNotificationsModule : Module() {
   private var incomingReceiver: android.content.BroadcastReceiver? = null
   override fun definition() = ModuleDefinition {
     Name("RakazoNotifications")
-    Constants("supportsSenderAvatars" to true)
+    Constants("supportsSenderAvatars" to true, "supportsAccountScopedSenderNotifications" to true)
     Events("onIncomingCallChanged")
     OnStartObserving {
       val receiver = object : android.content.BroadcastReceiver() {
@@ -43,6 +43,14 @@ class RakazoNotificationsModule : Module() {
     AsyncFunction("finishAnswer") { id: String, success: Boolean -> IncomingCalls.end(context(), id) }
     AsyncFunction("clearIncomingCalls") { IncomingCalls.clear(context()) }
     AsyncFunction("incomingState") { mapOf("token" to "", "actions" to IncomingCalls.take(context()), "ringing" to IncomingCalls.ringing(context())) }
+
+    AsyncFunction("setAccount") { userId: String, label: String ->
+      val context = context()
+      val storage = NotificationStorage(context)
+      if (storage.userId != userId) RakazoNotificationService.stop(context)
+      storage.userId = userId
+      storage.accountLabel = label
+    }
 
     AsyncFunction("getSettings") {
       NotificationStorage(context()).settings.toMap()
@@ -83,6 +91,8 @@ class RakazoNotificationsModule : Module() {
         storage.token = ""
         storage.headers = ""
         storage.spaceId = ""
+        storage.userId = ""
+        storage.accountLabel = ""
       } else {
         RakazoNotificationService.stop(context)
       }

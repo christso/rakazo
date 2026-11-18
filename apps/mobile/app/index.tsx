@@ -53,6 +53,7 @@ import {
 } from "../lib/api/session";
 import { errorText } from "../lib/api/user-error";
 import { mobileTokens, resolveMobileAppearance } from "../lib/appearance/appearance";
+import { refreshAppBadge } from "../lib/auth/account-sessions";
 import { signOut } from "../lib/auth/api-auth";
 import { explicitSignInRoute } from "../lib/auth/auth-routing";
 import { offerPasskeyOnce } from "../lib/auth/passkey";
@@ -95,9 +96,10 @@ import { useSplitView } from "../lib/layout/split-view";
 import { hapticImpact, hapticSelection } from "../lib/native/haptics";
 import { native, useThemedStyles } from "../lib/native/native";
 import { iosAtLeast } from "../lib/native/native-controls";
-import { forgetAppBadge, syncInboxAppBadge, unreadChatCount } from "../lib/notifications/app-badge";
+import { forgetAppBadge, unreadChatCount } from "../lib/notifications/app-badge";
 import { registerPushToken } from "../lib/notifications/push";
 import { loadActivityMode, saveActivityMode } from "../lib/preferences/activity-mode";
+
 import { usePublishSearchInbox } from "../lib/search/use-publish-search-inbox";
 import {
   organizationSwitchActions,
@@ -184,7 +186,6 @@ function Home({ embedded, onSelectSpace, onShareSelect }: InboxPaneProps & { emb
     inboxLoading,
     loadFailure,
     refreshing,
-    badgeLoad,
     inboxRequestId,
     inboxLoaded,
     loadBots,
@@ -414,9 +415,9 @@ function Home({ embedded, onSelectSpace, onShareSelect }: InboxPaneProps & { emb
       )
     : null;
   useEffect(() => {
-    if (badgeCount === null || badgeLoad === null) return;
-    void syncInboxAppBadge(badgeCount, badgeLoad.generation);
-  }, [badgeCount, badgeLoad]);
+    // Reading a chat here changes the count the icon shows.
+    if (badgeCount !== null) void refreshAppBadge().catch(() => undefined);
+  }, [badgeCount]);
   const initials = accountDisplay(me ?? {}, t`You`).initial ?? "?";
   const organizeSpace = organizeTarget
     ? organizeTarget.spaceId === me?.spaceId
