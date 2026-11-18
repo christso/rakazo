@@ -16,6 +16,7 @@ import { Agent } from "undici";
 import { requireUnreferencedMachineRecord } from "../../../computers/sandbox/sandbox-cleanup.js";
 import { sandboxNotFoundError } from "../../../computers/sandbox/sandbox-errors.js";
 import { SupervisorSandboxProvider } from "../../../computers/sandbox/supervisor/supervisor-sandbox.js";
+import { fetchPairedWithDispatcher } from "../../../network/undici-fetch.js";
 import { computerCloudInit, runtimeCertificate } from "./hetzner-bootstrap.js";
 import type { CloudServer } from "./hetzner-client.js";
 import { HetznerApiError, HetznerClient } from "./hetzner-client.js";
@@ -358,7 +359,7 @@ export class HetznerSandboxProvider extends SupervisorSandboxProvider {
         dispatcher: dispatcher!,
         redirect: "error",
       };
-      return fetch(input, options);
+      return fetchPairedWithDispatcher()(input, options);
     };
   }
   private async runtimeRequest(input: Parameters<typeof fetch>[0], init?: RequestInit) {

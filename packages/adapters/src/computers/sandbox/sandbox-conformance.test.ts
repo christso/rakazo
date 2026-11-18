@@ -34,6 +34,12 @@ import { createSandboxProvider } from "./sandbox-factory.js";
 import type { KnownSandboxKind } from "./sandbox-kind-capabilities.js";
 import { assertSandboxWorkspaceContract, provisionPrepared } from "./sandbox-test-support.js";
 
+// Cloud conformance uses the same emulated HTTP boundary as the other provider fixtures.
+vi.mock("../../network/undici-fetch.js", async (original) => ({
+  ...(await original()),
+  fetchPairedWithDispatcher: () => globalThis.fetch,
+}));
+
 let cloud: ReturnType<typeof emulatedHetzner>;
 let previousCloudFetch: typeof fetch;
 let supervisor: Awaited<ReturnType<typeof emulatedDockerSupervisor>>;

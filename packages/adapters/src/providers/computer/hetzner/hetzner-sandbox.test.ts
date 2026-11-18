@@ -11,6 +11,12 @@ import { MachineRecords } from "../../../computers/sandbox/sandbox-test-support.
 import { HetznerSandboxProvider } from "./hetzner-sandbox.js";
 import { emulatedHetzner } from "./hetzner-sandbox.test-support.js";
 
+// These lifecycle tests emulate the HTTP boundary; the transport suite exercises real TLS.
+vi.mock("../../../network/undici-fetch.js", async (original) => ({
+  ...(await original()),
+  fetchPairedWithDispatcher: () => globalThis.fetch,
+}));
+
 const context: AdapterContext = {
   operationId: "operation",
   traceId: "trace",
