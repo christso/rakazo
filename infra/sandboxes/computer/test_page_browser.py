@@ -716,6 +716,68 @@ class PurchaseTest(unittest.TestCase):
         self.assertIsNone(result["purchase"])
         self.assertEqual(browser.actions(), [["scrollintoview", "@e8"]])
 
+    def test_a_target_moving_during_the_initial_hit_test_is_checked_again(self):
+        browser = pays(FakeAgentBrowser())
+        browser.boxes["e8"].update(x=10, y=100, width=40, height=20)
+        original = FakePurchases.click
+        moved = False
+
+        def click(checker, box, scrolled):
+            nonlocal moved
+            if not moved:
+                moved = True
+                browser.boxes["e8"] = {**box, "y": 200}
+                return None  # The stale coordinates hit empty space after the target moved.
+            return original(checker, box, scrolled)
+
+        with patch.object(FakePurchases, "click", click), patch.object(helper.time, "sleep"):
+            result = page(browser).purchase_check({"actions": [{"kind": "click", "ref": "e8"}]})
+        self.assertEqual(result["purchase"]["label"], PAY["label"])
+        self.assertFalse(any(command[0] == "click" for command in browser.actions()))
+
+    def test_a_target_moving_during_the_scrolled_hit_test_is_checked_again(self):
+        browser = FakeAgentBrowser()
+        box = {"ref": "e8", "x": 10, "width": 40, "height": 20, "pay": PAY}
+        browser.boxes["e8"] = [{**box, "y": y} for y in (1500, 100, 100)]
+        original = FakePurchases.click
+        moved = False
+
+        def click(checker, sampled, scrolled):
+            nonlocal moved
+            if sampled and sampled["y"] < 713 and not moved:
+                moved = True
+                browser.boxes["e8"] = {**sampled, "y": 200}
+                return None
+            return original(checker, sampled, scrolled)
+
+        with patch.object(FakePurchases, "click", click), patch.object(helper.time, "sleep"):
+            result = page(browser).purchase_check({"actions": [{"kind": "click", "ref": "e8"}]})
+        self.assertEqual(result["purchase"]["label"], PAY["label"])
+        self.assertFalse(any(command[0] == "click" for command in browser.actions()))
+
+    def test_a_target_that_keeps_moving_uses_the_conservative_fallback_within_the_scroll_budget(self):
+        browser = FakeAgentBrowser()
+        browser.boxes["e8"] = {"ref": "e8", "x": 10, "y": 100, "width": 40, "height": 20}
+        FakePurchases.shows = PAY
+        now = [0.0]
+
+        def click(_checker, sampled, _scrolled):
+            if sampled is None:
+                return PAY
+            browser.boxes["e8"] = {**sampled, "y": sampled["y"] + 1}
+            return None
+
+        def sleep(seconds):
+            now[0] += seconds
+
+        with patch.object(FakePurchases, "click", click), \
+                patch.object(helper.time, "monotonic", side_effect=lambda: now[0]), \
+                patch.object(helper.time, "sleep", side_effect=sleep):
+            result = page(browser).purchase_check({"actions": [{"kind": "click", "ref": "e8"}]})
+        self.assertEqual(result["purchase"]["label"], PAY["label"])
+        self.assertLessEqual(now[0], helper.SCROLL_SETTLE_SECONDS + 0.01)
+        self.assertFalse(any(command[0] == "click" for command in browser.actions()))
+
     def test_a_control_still_out_of_view_after_scrolling_asks_what_the_page_shows(self):
         browser = FakeAgentBrowser()
         browser.boxes["e8"] = {"ref": "e8", "x": 10, "y": 1500, "width": 40, "height": 20}

@@ -1054,7 +1054,14 @@ class PageBrowser:
                             try:
                                 # A stable box outside the viewport may be the beginning of the animation.
                                 # Keep waiting; only an in-view target can avoid the page-wide fallback.
-                                return site, purchases.click(box, False)
+                                found = purchases.click(box, False)
+                                (checked_box,) = self.ab.batch([["get", "box", f"@{ref}"]],
+                                                              timeout=max(0.001, deadline - time.monotonic()))
+                                # The CDP hit-test and agent-browser sample run separately. Scroll restoration
+                                # or layout can move the target between them, even after two stable samples.
+                                if checked_box == box:
+                                    return site, found
+                                box = checked_box
                             except Offscreen:
                                 pass
                     # No stable visible target was established within the call's scroll budget.
@@ -1062,9 +1069,18 @@ class PageBrowser:
             except Exception:  # noqa: BLE001
                 box = None
             try:
-                return site, purchases.click(box, scrolled)
+                found = purchases.click(box, scrolled)
+                if box is None:
+                    return site, found
+                (checked_box,) = self.ab.batch([["get", "box", f"@{ref}"]], timeout=SCROLL_SETTLE_SECONDS)
+                if checked_box == box:
+                    return site, found
+                # An initially visible target moved during the hit-test: scroll to it and retry within
+                # the same bounded wait used for a target that started outside the viewport.
             except Offscreen:
                 continue
+            except Exception:  # noqa: BLE001
+                return site, purchases.click(None, True)
         return site, None
 
     def purchase_check(self, args: dict[str, Any]) -> dict[str, Any]:
