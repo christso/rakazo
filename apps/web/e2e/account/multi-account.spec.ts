@@ -4,6 +4,7 @@ import {
   activeBotId,
   captureScreenshot,
   completeOnboarding,
+  openEmailSignIn,
   rpc,
   signup,
 } from "../helpers/helpers";
@@ -60,7 +61,7 @@ test("saved accounts switch, refresh unread accounts, and sign out independently
     await page.getByRole("button", { name: "Switch accounts", exact: true }).click();
     await page.getByRole("button", { name: "Add account", exact: true }).click();
     await expect(page).toHaveURL(/\/sign-in\?add=1$/);
-    await page.getByRole("button", { name: "Continue with email", exact: true }).click();
+    await openEmailSignIn(page);
     await page.getByLabel("Email", { exact: true }).fill(workEmail);
     await page.getByLabel("Password", { exact: true }).fill(password);
     await page.getByRole("button", { name: "Sign in", exact: true }).click();
@@ -173,7 +174,7 @@ test("saved accounts switch, refresh unread accounts, and sign out independently
     await page.getByTestId("user-menu-trigger").click();
     await page.getByRole("button", { name: "Switch accounts", exact: true }).click();
     await page.getByRole("button", { name: "Add account", exact: true }).click();
-    await page.getByRole("button", { name: "Continue with email", exact: true }).click();
+    await openEmailSignIn(page);
     await page.getByLabel("Email", { exact: true }).fill(workEmail);
     await page.getByLabel("Password", { exact: true }).fill(password);
     await page.getByRole("button", { name: "Sign in", exact: true }).click();
