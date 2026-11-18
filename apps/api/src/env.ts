@@ -168,11 +168,22 @@ export interface AppEnv extends MessagingEnvironmentValues {
   demoAccount?: { email: string; password: string } | null;
 }
 
-/** Overrides win key by key inside `sandboxOptions`, so a partial one keeps the rest of the environment's. */
-export function withEnvOverrides(env: AppEnv, overrides: Partial<AppEnv>): AppEnv {
+/**
+ * Overrides win key by key inside `sandboxOptions`. Validate the final key with
+ * the original runtime policy, even when an override changes `nodeEnv`.
+ */
+export function withEnvOverrides(
+  env: AppEnv,
+  overrides: Partial<AppEnv>,
+  runtimePolicy: NodeJS.ProcessEnv = { NODE_ENV: env.nodeEnv },
+): AppEnv {
   return {
     ...env,
     ...overrides,
+    encryptionKey: resolveEncryptionKey({
+      ...runtimePolicy,
+      ENCRYPTION_KEY: overrides.encryptionKey ?? env.encryptionKey,
+    }),
     sandboxOptions: { ...env.sandboxOptions, ...overrides.sandboxOptions },
   };
 }

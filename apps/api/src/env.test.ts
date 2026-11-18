@@ -11,6 +11,31 @@ const base = {
 };
 
 describe("loadEnv", () => {
+  it("validates the final key override under the original runtime policy", () => {
+    const env = loadEnv({
+      ...base,
+      NODE_ENV: "production",
+      BETTER_AUTH_SECRET: "independent-auth-secret-with-sufficient-length",
+      ENCRYPTION_KEY: "original-random-key-material-at-least-32-chars",
+      SCREEN_PROXY_SECRET: "independent-screen-secret-with-sufficient-length",
+      SANDBOX_SUPERVISOR_TOKEN: "independent-supervisor-secret-with-sufficient-length",
+    });
+    expect(() => withEnvOverrides(env, { encryptionKey: "weak" })).toThrow(/ENCRYPTION_KEY/);
+    expect(() => withEnvOverrides(env, { encryptionKey: "weak", nodeEnv: "test" })).toThrow(
+      /ENCRYPTION_KEY/,
+    );
+    const key = " replacement-random-key-material-at-least-32-chars ";
+    expect(withEnvOverrides(env, { encryptionKey: key }).encryptionKey).toBe(key);
+    expect(withEnvOverrides(loadEnv(base), { encryptionKey: "test-key" }).encryptionKey).toBe(
+      "test-key",
+    );
+    const buildPolicy = { ...base, NODE_ENV: "production", RAKAZO_ALLOW_DEV_SECRETS: "1" };
+    expect(
+      withEnvOverrides(loadEnv(buildPolicy), { encryptionKey: "build-key" }, buildPolicy)
+        .encryptionKey,
+    ).toBe("build-key");
+  });
+
   it("refuses a weak production encryption key before starting the API", () => {
     expect(() =>
       loadEnv({

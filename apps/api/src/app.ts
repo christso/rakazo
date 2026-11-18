@@ -288,7 +288,7 @@ async function buildApp(overrides: CreateAppOverrides): Promise<AppHandles> {
     now,
     ...envOverrides
   } = overrides;
-  const env = withEnvOverrides(loadEnv(process.env), envOverrides);
+  const env = withEnvOverrides(loadEnv(process.env), envOverrides, process.env);
   const runtimeEnv: RunRuntimeEnv = { ...env, inboundEmailDomain: env.inboundEmail?.domain };
   const logger = loggerOverride ?? createServiceLogger({ service: SERVICE_NAMES.api });
   installLogger(logger);
