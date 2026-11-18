@@ -361,7 +361,8 @@ export const DENIED_MOUNT_SOURCES = [
 
 // normalize keeps a trailing slash; Docker reports mounts without one.
 function cleanMountPath(value: string) {
-  return path.posix.normalize(value).replace(/(.)\/+$/, "$1");
+  const normalized = path.posix.normalize(value);
+  return normalized.length > 1 && normalized.endsWith("/") ? normalized.slice(0, -1) : normalized;
 }
 
 function pathsOverlap(a: string, b: string) {

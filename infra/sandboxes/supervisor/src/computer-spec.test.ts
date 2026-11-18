@@ -316,6 +316,9 @@ describe("graphical computer spec", () => {
   it("parses computer host mounts, with none when unset", () => {
     expect(resolveComputerMounts(undefined)).toEqual([]);
     expect(resolveComputerMounts(" , ")).toEqual([]);
+    expect(resolveComputerMounts("/srv//docs/////:/mnt//docs/////:ro")).toEqual([
+      { source: "/srv/docs", target: "/mnt/docs", readOnly: true },
+    ]);
     expect(
       resolveComputerMounts("/srv/docs:/mnt/docs:ro, /srv/shares/:/media/shares:rw:rslave"),
     ).toEqual([

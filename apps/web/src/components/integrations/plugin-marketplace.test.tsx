@@ -165,6 +165,32 @@ afterEach(() => {
 });
 
 describe("plugin detail", () => {
+  it.each([
+    "javascript:alert(1)",
+    "JaVaScRiPt:alert(1)",
+    "java\nscript:alert(1)",
+    "data:text/html,<script>alert(1)</script>",
+    "file:///tmp/plugin",
+    "http://example.test/plugins",
+    "https://user:password@example.test/plugins",
+    "https://example.test/plugins?token=credential",
+  ])("does not render a source link for unsafe pasted source %s", async (pasted) => {
+    api.preview.mockRejectedValue(new Error("Invalid plugin source"));
+    await render({ pasted });
+    expect(
+      [...container.querySelectorAll("a")].some((link) =>
+        link.textContent?.includes("View source"),
+      ),
+    ).toBe(false);
+  });
+
+  it("links a plugin subdirectory to the previewed revision", async () => {
+    await render({ pasted: `${source}#skills/notes` });
+    expect(container.querySelector("a")?.getAttribute("href")).toBe(
+      `${source}/tree/${preview.resolvedSha}/skills/notes`,
+    );
+  });
+
   it("previews what a plugin adds and confirms the previewed digest", async () => {
     await render();
     expect(api.preview).toHaveBeenCalledWith({ source });
