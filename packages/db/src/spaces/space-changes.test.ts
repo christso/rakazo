@@ -2,6 +2,8 @@ import { flush } from "@rakazo/core/test-async";
 import { describe, expect, it } from "vitest";
 import { followSpaceChanges, publishSpaceChange } from "./space-changes.js";
 
+const initialKinds = ["computerUpdates", "runs", "routines", "computerProvider"];
+
 function fakeFanout() {
   const subscribers = new Map<string, Set<(payload: string) => void>>();
   return {
@@ -23,7 +25,7 @@ function fakeFanout() {
 
 async function opened(iterator: AsyncGenerator<string>) {
   const kinds = [];
-  for (let i = 0; i < 3; i += 1) kinds.push((await iterator.next()).value);
+  for (let i = 0; i < initialKinds.length; i += 1) kinds.push((await iterator.next()).value);
   return kinds;
 }
 
@@ -31,7 +33,7 @@ describe("followSpaceChanges", () => {
   it("signals every kind on open, then each change in its own Space only", async () => {
     const fanout = fakeFanout();
     const iterator = followSpaceChanges(fanout as never, "space-1");
-    expect(await opened(iterator)).toEqual(["computerUpdates", "runs", "routines"]);
+    expect(await opened(iterator)).toEqual(initialKinds);
 
     const next = iterator.next();
     let signalled = false;
@@ -88,7 +90,7 @@ describe("followSpaceChanges", () => {
     const iterator = followSpaceChanges(fanout as never, "space-1");
     await opened(iterator);
     await fanout.publish("space-changes:space-1", "");
-    expect(await opened(iterator)).toEqual(["computerUpdates", "runs", "routines"]);
+    expect(await opened(iterator)).toEqual(initialKinds);
     await iterator.return(undefined);
   });
 });

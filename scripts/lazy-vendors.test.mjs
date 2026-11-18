@@ -22,13 +22,14 @@ const OPTIONAL_VENDORS =
   /^(@aws-sdk\/.+|@azure\/.+|@daytona\/sdk|@e2b\/desktop|novita-sandbox|@composio\/core|@stripe\/link-sdk|@chat-adapter\/(slack|teams|telegram|whatsapp)|@boatdev\/sdk|@boxd-sh\/sdk|@insforge\/instabox-sdk|chat-adapter-sendblue|@axiomhq\/js|@sentry\/node|@alicloud\/.+|@darabonba\/typescript|@kubernetes\/client-node|@larksuiteoapi\/node-sdk|@photon-ai\/chat-adapter-imessage|mppx|railway|@opentelemetry\/(api|sdk-trace|resources|exporter-.+))$/;
 // Packages the bundles load through import() that are not vendor SDKs: an image library, the
 // auth library's own SCIM plugin, the email parser and DKIM check for inbound mail, and the
-// database client, which is also imported statically.
+// database client, which is also imported statically, and the certificate generator.
 const LAZY_NON_VENDORS = [
   "sharp",
   "@better-auth/scim",
   "postal-mime",
   "mailauth",
   "@prisma/client",
+  "@peculiar/x509",
 ];
 // Known static imports still to make lazy. Remove an entry once its SDK loads on demand.
 const PENDING = [

@@ -149,7 +149,7 @@ describe("createSandboxProvider", () => {
 
   it("throws on unknown provider", async () => {
     await expect(createSandboxProvider("bogus", {})).rejects.toThrow(
-      'Unknown SANDBOX_PROVIDER "bogus". Use none | docker | wuying | e2b | novita | daytona | createos | boat | boxd | instabox | railway | kubernetes | incus | local-vm | desktop | fake.',
+      'Unknown SANDBOX_PROVIDER "bogus". Use none | docker | remote-supervisor | hetzner | wuying | e2b | novita | daytona | createos | boat | boxd | instabox | railway | kubernetes | incus | local-vm | desktop | fake.',
     );
   });
 
