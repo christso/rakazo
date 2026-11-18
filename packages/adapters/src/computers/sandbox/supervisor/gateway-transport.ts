@@ -1,3 +1,4 @@
+import { isIP } from "node:net";
 import type { ScreenSession } from "@rakazo/adapter-kit";
 import { connectPinnedTls } from "@rakazo/core/node/pinned-https";
 import { Agent } from "undici";
@@ -9,21 +10,32 @@ export function pinnedGatewayFetch(
   serverName?: string,
   fetcher?: typeof fetch,
 ): typeof fetch {
-  const dispatcher = new Agent({
-    connect: (options, callback) =>
-      connectPinnedTls(
-        {
-          host: options.hostname,
-          port: Number(options.port || 443),
-          fingerprint,
-          servername: serverName,
-        },
-        (error, socket) => (error ? callback(error, null) : callback(null, socket!)),
-      ),
-  });
+  const dispatchers = new Map<string, Agent>();
   const send = fetchPairedWithDispatcher(fetcher);
-  return (input, init) =>
-    send(input, { ...init, dispatcher, redirect: "error" } as RequestInit & { dispatcher: Agent });
+  return (input, init) => {
+    const target = new URL(String(input));
+    const address = target.hostname.replace(/^\[|\]$/g, "");
+    if (target.protocol !== "https:" || !isIP(address) || target.username || target.password)
+      throw new Error("Runtime transport requires a checked numeric HTTPS address");
+    let dispatcher = dispatchers.get(target.origin);
+    if (!dispatcher) {
+      const port = Number(target.port || 443);
+      dispatcher = new Agent({
+        connect: (_options, callback) =>
+          connectPinnedTls(
+            { host: address, port, fingerprint, servername: serverName },
+            (error, socket) => (error ? callback(error, null) : callback(null, socket!)),
+          ),
+      });
+      dispatchers.set(target.origin, dispatcher);
+    }
+    // fetch ignores a caller's Host header. Keep the approved logical authority in its URL,
+    // while the connector above dials only the checked address and performs no DNS lookup.
+    if (serverName) target.hostname = serverName;
+    return send(target, { ...init, dispatcher, redirect: "error" } as RequestInit & {
+      dispatcher: Agent;
+    });
+  };
 }
 
 /** Turn supervisor loopback screen ports into one authenticated, pin-checked gateway origin. */

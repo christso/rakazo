@@ -61,9 +61,9 @@ it("uses an existing host for normal shell, files, headed screen and terminal wi
     "saved",
   );
   await provider.destroy(resumed, context);
-  expect(host.calls.every((call) => new URL(call.url).origin === "https://93.184.216.34")).toBe(
-    true,
-  );
+  expect(
+    host.calls.every((call) => new URL(call.url).origin === "https://runtime.example.test"),
+  ).toBe(true);
   expect(host.calls.find((call) => call.body?.homePath)?.body).toMatchObject({
     homePath: "/var/lib/rakazo/homes/bot-a",
     spaceId: "space-a",

@@ -18,7 +18,7 @@ export function emulatedRemoteRuntime() {
     const url = new URL(String(input));
     const headers = new Headers(init?.headers);
     if (
-      !["https://93.184.216.34", "https://100.64.10.8"].includes(url.origin) ||
+      url.origin !== "https://runtime.example.test" ||
       headers.get("authorization") !== `Bearer ${settings.apiToken}` ||
       headers.get("host") !== "runtime.example.test"
     )
