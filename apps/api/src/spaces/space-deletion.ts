@@ -9,7 +9,9 @@ import type {
 import type { MemoryProviderResolver } from "@rakazo/adapters";
 import {
   destroyBot,
+  finishSpaceComputerConnectionCleanup,
   forgetPageShareSecrets,
+  prepareSpaceComputerConnectionCleanup,
   removeAgentHome,
   toComputerRef,
 } from "@rakazo/adapters";
@@ -53,7 +55,7 @@ export type SpaceDeletionDeps = {
   dataDir: string;
   messagingInstallations?: Parameters<typeof destroyBot>[0]["messagingInstallations"];
   /** Removes deleted page links' tokens from a remote secret store. */
-  secrets?: Pick<SecretStore, "delete">;
+  secrets?: Pick<SecretStore, "delete"> & Partial<Pick<SecretStore, "isRemote">>;
 };
 
 /**
@@ -165,6 +167,7 @@ export async function deleteSpaceWithContent(
     }
     lease.signal.throwIfAborted();
     await rehomeItemsLeaving(deps.prisma, spaceId);
+    const connectionCleanups = await prepareSpaceComputerConnectionCleanup(deps, spaceId);
     const deleted = await deleteClaimedSpaceForMember(deps.prisma, { ...claimedInput, lease });
     // Cleaned up here rather than after the lease, so a deletion that commits just as the attempt
     // is cut off still removes what it left behind. The rows are gone and leftover stored files are
@@ -176,6 +179,7 @@ export async function deleteSpaceWithContent(
     for (const result of cleanup) {
       if (result.status === "rejected") getLogger().error("space file cleanup", result.reason);
     }
+    await finishSpaceComputerConnectionCleanup(deps, connectionCleanups);
     if (deps.secrets) await forgetPageShareSecrets(deps.secrets, deleted.pageShareSecrets);
     return deleted.id;
   };

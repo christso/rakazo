@@ -28,9 +28,10 @@ export function computerProviderDescriptor(id: string) {
 export function computerProviderDescriptors(perAccount = false): ComputerProviderDescriptor[] {
   return computerProviderRegistry
     .filter((entry) => !perAccount || entry.capabilities.perAccount)
-    .map(({ id, displayName, fields, capabilities }) => ({
+    .map(({ id, displayName, fields, capabilities, spendingApprovalMessage }) => ({
       id,
       displayName,
+      ...(spendingApprovalMessage ? { spendingApprovalMessage } : {}),
       fields,
       capabilities,
     }));
@@ -41,17 +42,26 @@ function settingsProvider(
   id: string,
   { env = {}, settings }: ComputerProviderDefinition,
 ): SettingsComputerProvider {
-  const { displayName, perAccount = false, fields, validate, verifyConnection } = settings!;
+  const {
+    displayName,
+    perAccount = false,
+    requiresSpendingApproval,
+    spendingApprovalMessage,
+    fields,
+    validate,
+    verifyConnection,
+  } = settings!;
   const options = new Map(fields.map((field) => [field.key, field.option]));
   const publicFields: ComputerProviderField[] = fields.map(({ option, ...field }) => ({
     ...field,
-    required: env[option]?.required ?? false,
+    required: field.required ?? (option ? env[option]?.required : false) ?? false,
     ...(field.kind === "url" ? { validation: "public-https" as const } : {}),
   }));
   return {
     id,
     displayName,
-    capabilities: { perAccount },
+    ...(spendingApprovalMessage ? { spendingApprovalMessage } : {}),
+    capabilities: { perAccount, ...(requiresSpendingApproval ? { requiresSpendingApproval } : {}) },
     fields: publicFields,
     verify(values) {
       validate?.(values);
@@ -61,6 +71,7 @@ function settingsProvider(
       // Only the options these fields set: a blank one falls back to the provider's default,
       // and options Settings has no field for keep their environment values.
       const verified: Record<string, unknown> = {};
+      const providerSettings: Record<string, string> = {};
       for (const field of publicFields) {
         const value = values[field.key]?.trim() ?? "";
         if (field.required && !value) throw new Error(`${field.label} is required`);
@@ -73,9 +84,12 @@ function settingsProvider(
         )
           throw new Error(`Invalid ${field.label}`);
         const option = options.get(field.key)!;
-        const read = env[option]?.read ?? optional;
-        verified[option] = value ? read(value, {}) : undefined;
+        if (option) {
+          const read = env[option]?.read ?? optional;
+          verified[option] = value ? read(value, {}) : undefined;
+        } else if (value) providerSettings[field.key] = value;
       }
+      if (Object.keys(providerSettings).length) verified.providerSettings = providerSettings;
       return verified as SandboxProviderOptions;
     },
     ...(verifyConnection ? { verifyConnection } : {}),

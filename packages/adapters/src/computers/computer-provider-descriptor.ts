@@ -8,6 +8,8 @@ import type { ComputerProviderDescriptor, ComputerProviderField } from "@rakazo/
 import type { KubernetesSandboxOptions } from "../providers/computer/kubernetes/kubernetes-sandbox.js";
 
 export interface SandboxProviderOptions {
+  /** Settings-only provider values; vendor-specific keys stay inside the provider. */
+  providerSettings?: Record<string, string>;
   hostComputerUrl?: string;
   hostComputerToken?: string;
   supervisorUrl?: string;
@@ -79,7 +81,8 @@ type WiredOption =
   | "onUnsafeStop"
   | "referenceInUse"
   | "unreferencedMachines"
-  | "dataDir";
+  | "dataDir"
+  | "providerSettings";
 
 export type SandboxSettingOption = Exclude<keyof SandboxProviderOptions, WiredOption>;
 
@@ -97,7 +100,9 @@ export type EnvBindings = {
 
 export interface ComputerSettingsField extends Omit<ComputerProviderField, "required"> {
   /** The option this field sets; it is required exactly when that option's binding is. */
-  option: SandboxSettingOption;
+  option?: SandboxSettingOption;
+  /** Required settings need no environment binding. */
+  required?: boolean;
 }
 
 /** One computer provider: everything the factory, environment, Settings and tests read about it. */
@@ -108,6 +113,8 @@ export interface ComputerProviderDefinition {
   settings?: {
     displayName: string;
     perAccount?: boolean;
+    requiresSpendingApproval?: boolean;
+    spendingApprovalMessage?: string;
     fields: readonly ComputerSettingsField[];
     /** Checks beyond each field's own. */
     validate?(values: Record<string, string>): void;

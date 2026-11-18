@@ -5,6 +5,8 @@ import {
   isPrivateNetworkAddress,
 } from "@rakazo/contracts/network-host";
 
+import { isTlsCertificateSha256 } from "@rakazo/core/node/pinned-https";
+
 export const SCREEN_PROXY_TTL_MS = 60 * 60_000;
 export const SCREEN_TARGET_ENDPOINT = "/api/internal/screen-target";
 export const SCREEN_RECHECK_MS = 1_000;
@@ -37,6 +39,8 @@ export interface ScreenProxyTarget {
   interactive: boolean;
   /** Sealed provider authentication; only the server proxy receives it. */
   headers?: Record<string, string>;
+  /** Authenticated certificate pin for a private runtime; never sent to browsers. */
+  tlsCertificateSha256?: string;
 }
 
 export function isScreenProxyTarget(value: unknown): value is ScreenProxyTarget {
@@ -52,6 +56,8 @@ export function isScreenProxyTarget(value: unknown): value is ScreenProxyTarget 
     target.port > 0 &&
     target.port <= 65535 &&
     isScreenProxyHeaders(target.headers) &&
+    (target.tlsCertificateSha256 === undefined ||
+      (target.protocol === "https:" && isTlsCertificateSha256(target.tlsCertificateSha256))) &&
     typeof target.path === "string" &&
     target.path.startsWith("/") &&
     !/[\r\n]/.test(target.path) &&
@@ -85,8 +91,18 @@ export function sealScreenCapability(
   scope: ScreenCapabilityScope,
   now = Date.now(),
   headers?: Record<string, string>,
+  tlsCertificateSha256?: string,
 ) {
-  return seal(url, secret, origin, scope, now + SCREEN_PROXY_TTL_MS, headers, false);
+  return seal(
+    url,
+    secret,
+    origin,
+    scope,
+    now + SCREEN_PROXY_TTL_MS,
+    headers,
+    false,
+    tlsCertificateSha256,
+  );
 }
 
 function seal(
@@ -97,15 +113,21 @@ function seal(
   expiresAt: number,
   headers: Record<string, string> | undefined,
   repeatable: boolean,
+  tlsCertificateSha256?: string,
 ) {
   if (!isScreenProxyHeaders(headers)) throw new Error("Invalid screen authentication headers");
   const target = new URL(url);
   if (target.protocol !== "https:" && target.protocol !== "http:")
     throw new Error("Invalid screen protocol");
+  if (
+    tlsCertificateSha256 !== undefined &&
+    (target.protocol !== "https:" || !isTlsCertificateSha256(tlsCertificateSha256))
+  )
+    throw new Error("Invalid screen TLS certificate fingerprint");
   const policy = target.searchParams.get("view_only") === "false" ? "control" : "view";
   const key = createHash("sha256").update(secret).digest();
   const aad = `${policy}:${expiresAt}`;
-  const plaintext = JSON.stringify({ url, scope, headers });
+  const plaintext = JSON.stringify({ url, scope, headers, tlsCertificateSha256 });
   // A repeatable seal derives its nonce from what it seals, so equal inputs give the same
   // link on every server and different inputs never share a nonce.
   const iv = repeatable
@@ -125,7 +147,9 @@ function seal(
     view_only: policy === "control" ? "false" : "true",
     // noVNC can resolve paths relative to its document directory. An absolute
     // path prevents it from repeating the capability prefix.
-    path: target.pathname === "/embed.html" ? "websockify" : `${prefix}/websockify`,
+    path: target.pathname.endsWith("/embed.html")
+      ? "websockify"
+      : `${prefix}${screenBasePath(target)}websockify`,
   }).toString();
   return result.toString();
 }
@@ -150,13 +174,14 @@ export function issueScreenCapability(
   scope: ScreenCapabilityScope,
   now = Date.now(),
   headers?: Record<string, string>,
+  tlsCertificateSha256?: string,
 ) {
   if (isLoopbackScreenTarget(url))
-    return sealScreenCapability(url, secret, origin, scope, now, headers);
+    return sealScreenCapability(url, secret, origin, scope, now, headers, tlsCertificateSha256);
   const expiresAt =
     (Math.floor(now / REMOTE_SCREEN_SEAL_WINDOW_MS) + 1) * REMOTE_SCREEN_SEAL_WINDOW_MS +
     REMOTE_SCREEN_CAPABILITY_MIN_REMAINING_MS;
-  return seal(url, secret, origin, scope, expiresAt, headers, true);
+  return seal(url, secret, origin, scope, expiresAt, headers, true, tlsCertificateSha256);
 }
 
 export function addScreenProxyCapability(
@@ -166,12 +191,13 @@ export function addScreenProxyCapability(
   scope: ScreenCapabilityScope,
   now = Date.now(),
   headers?: Record<string, string>,
+  tlsCertificateSha256?: string,
 ) {
   // Local/desktop providers return non-http schemes (e.g. desktop://). Those never
   // traverse the web proxy, so seal only http(s) upstream URLs.
   const protocol = new URL(url).protocol;
   if (protocol !== "http:" && protocol !== "https:") return url;
-  return issueScreenCapability(url, secret, origin, scope, now, headers);
+  return issueScreenCapability(url, secret, origin, scope, now, headers, tlsCertificateSha256);
 }
 
 export function openScreenCapability(
@@ -212,6 +238,11 @@ export function openScreenCapability(
       return null;
     const target = new URL(payload.url);
     if (target.protocol !== "https:" && target.protocol !== "http:") return null;
+    if (
+      payload.tlsCertificateSha256 !== undefined &&
+      (target.protocol !== "https:" || !isTlsCertificateSha256(payload.tlsCertificateSha256))
+    )
+      return null;
     const port = Number(target.port || (target.protocol === "https:" ? 443 : 80));
     if (
       target.protocol === "http:" &&
@@ -220,6 +251,8 @@ export function openScreenCapability(
       return null;
     const interactive = match[1] === "control";
     const requestedPath = `${match[4] || target.pathname || "/"}${match[5] || ""}`;
+    const resourcePath = remoteTargetPath(target, requestedPath);
+    if (resourcePath === null) return null;
     return {
       scope,
       expiresAt,
@@ -227,9 +260,12 @@ export function openScreenCapability(
         protocol: target.protocol,
         hostname: target.hostname.replace(/^\[|\]$/g, ""),
         port,
-        path: screenPolicyPath(remoteTargetPath(target, requestedPath), interactive),
+        path: screenPolicyPath(resourcePath, interactive),
         interactive,
         ...(payload.headers ? { headers: payload.headers } : {}),
+        ...(payload.tlsCertificateSha256
+          ? { tlsCertificateSha256: payload.tlsCertificateSha256 }
+          : {}),
       },
     };
   } catch {
@@ -239,7 +275,7 @@ export function openScreenCapability(
 
 export function screenPolicyPath(requestedPath: string, interactive: boolean) {
   const parsed = new URL(requestedPath, "http://screen.invalid");
-  if (parsed.pathname === "/embed.html" || parsed.pathname === "/vnc.html") {
+  if (parsed.pathname.endsWith("/embed.html") || parsed.pathname.endsWith("/vnc.html")) {
     parsed.searchParams.set("view_only", interactive ? "false" : "true");
   }
   return `${parsed.pathname}${parsed.search}`;
@@ -248,14 +284,32 @@ export function screenPolicyPath(requestedPath: string, interactive: boolean) {
 function remoteTargetPath(target: URL, requestedPath: string) {
   const requested = new URL(requestedPath, "https://screen.invalid");
   const path = requested.pathname || target.pathname || "/";
-  if (path === "/websockify" && target.searchParams.has("path")) {
+  const base = screenBasePath(target);
+  if (!isScreenResourcePath(path, base)) return null;
+  const socketPath = `${base}websockify`;
+  if (path === socketPath && target.searchParams.has("path")) {
     const socket = new URL(target.searchParams.get("path")!, target);
+    if (!isScreenResourcePath(socket.pathname, base)) return null;
     return `${socket.pathname}${socket.search}`;
   }
-  if (path === target.pathname || path === "/websockify") {
+  if (path === target.pathname || path === socketPath) {
     return `${path}${target.search}`;
   }
   return `${path}${requested.search}`;
+}
+
+function screenBasePath(target: URL) {
+  return target.pathname.slice(0, target.pathname.lastIndexOf("/") + 1);
+}
+
+/** Gateway authentication is valid only inside the directory that serves this screen. */
+function isScreenResourcePath(path: string, base: string) {
+  const decoded = decodeURIComponent(path);
+  // Reject ambiguous extra decoding and Windows separators before an upstream can reinterpret them.
+  if (/[\\%\p{Cc}]/u.test(decoded)) return false;
+  return (
+    path.startsWith(base) && new URL(decoded, "https://screen.invalid").pathname.startsWith(base)
+  );
 }
 
 /** Plain-HTTP screens stay on this machine, the private network, or a bot's Compose service. */

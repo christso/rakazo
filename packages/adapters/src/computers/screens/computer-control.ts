@@ -68,6 +68,7 @@ export async function revokeScreenControl(
     homeKey: string;
     kind: string;
     providerRef: string | null;
+    providerConnectionId: string | null;
     runningSince?: Date | null;
   },
   context: AdapterContext,

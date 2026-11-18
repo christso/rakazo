@@ -705,7 +705,14 @@ async function detachBotFromGroups(tx: Prisma.TransactionClient, botId: string) 
           botId: true,
           bot: {
             select: {
-              computer: { select: { homeKey: true, kind: true, providerRef: true } },
+              computer: {
+                select: {
+                  homeKey: true,
+                  kind: true,
+                  providerRef: true,
+                  providerConnectionId: true,
+                },
+              },
             },
           },
         },
@@ -837,6 +844,7 @@ async function removeTeamBrowserProfile(
     homeKey: string;
     kind: string;
     providerRef: string | null;
+    providerConnectionId: string | null;
     state: string;
   } | null,
   context: AdapterContext,
@@ -966,7 +974,7 @@ export async function removeDeletedBotsFromLegacyTeamHome(
 async function removeBotFolders(
   deps: BotLifecycleDeps,
   botId: string,
-  computer: { homeKey: string; kind: string; providerRef: string | null; state: string },
+  computer: Parameters<typeof toComputerRef>[0] & { state: string },
   folders: ReadonlyArray<readonly [".browser-profiles" | "bots", string]>,
   context: AdapterContext,
 ) {

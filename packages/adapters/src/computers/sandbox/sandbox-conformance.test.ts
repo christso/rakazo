@@ -5,7 +5,7 @@ import type { ComputerRef, ProcessEvent, SandboxProvider } from "@rakazo/adapter
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   fakeBoatProvider as fakeBoat,
-  routeFakeBoatDownloads,
+  serveFakeBoatDownload,
 } from "../../providers/computer/boat/boat-sandbox.test-support.js";
 import { fakeBoxdProvider } from "../../providers/computer/boxd/boxd-sandbox.test-support.js";
 import { emulatedCreateOS } from "../../providers/computer/createos/createos-sandbox.test-support.js";
@@ -15,6 +15,7 @@ import { DockerSandboxProvider } from "../../providers/computer/docker/docker-sa
 import { emulatedDockerSupervisor } from "../../providers/computer/docker/docker-sandbox.test-support.js";
 import { E2BSandboxProvider } from "../../providers/computer/e2b/e2b-sandbox.js";
 import { FakeSandboxProvider } from "../../providers/computer/fake/fake-sandbox.js";
+import { emulatedHetzner } from "../../providers/computer/hetzner/hetzner-sandbox.test-support.js";
 import { emulatedIncus } from "../../providers/computer/incus/incus-sandbox.test-support.js";
 import { emulatedInstabox } from "../../providers/computer/instabox/instabox-sandbox.test-support.js";
 import { emulatedKubernetes } from "../../providers/computer/kubernetes/kubernetes-sandbox.test-support.js";
@@ -33,14 +34,23 @@ import { createSandboxProvider } from "./sandbox-factory.js";
 import type { KnownSandboxKind } from "./sandbox-kind-capabilities.js";
 import { assertSandboxWorkspaceContract, provisionPrepared } from "./sandbox-test-support.js";
 
-let restoreFetch: () => void;
+let cloud: ReturnType<typeof emulatedHetzner>;
+let previousCloudFetch: typeof fetch;
 let supervisor: Awaited<ReturnType<typeof emulatedDockerSupervisor>>;
 beforeAll(async () => {
-  restoreFetch = routeFakeBoatDownloads();
   supervisor = await emulatedDockerSupervisor();
+  previousCloudFetch = globalThis.fetch;
+  cloud = emulatedHetzner(async (input, init) => {
+    const download = serveFakeBoatDownload(String(input));
+    if (download) return download;
+    if (new URL(String(input)).origin === new URL(supervisor.url).origin)
+      return previousCloudFetch(input, init);
+    throw new Error("Unexpected conformance fixture request");
+  });
+  globalThis.fetch = cloud.fetch;
 });
 afterAll(async () => {
-  restoreFetch();
+  globalThis.fetch = previousCloudFetch;
   await supervisor.close();
 });
 
@@ -82,6 +92,7 @@ function temporaryRoot() {
 /** Keyed by every provider id, so a provider without an offline fixture fails typecheck. */
 const fixtures: Record<KnownSandboxKind, SandboxConformanceFixture> = {
   none: { refusesComputers: true },
+  hetzner: { provider: () => cloud.provider(), workspace: true, unsetEnv: true },
   fake: { provider: () => new FakeSandboxProvider(), workspace: true, unsetEnv: true },
   boat: { provider: () => fakeBoat(), workspace: true, unsetEnv: true },
   boxd: { provider: () => fakeBoxdProvider(), workspace: true, unsetEnv: true },
@@ -345,11 +356,13 @@ describe("desktop sandbox", () => {
       homeKey: "stable",
       kind: "desktop",
       providerRef: first.providerRef!,
+      providerConnectionId: null,
     });
     const never = toComputerRef({
       homeKey: "other",
       kind: "desktop",
       providerRef: path.join(root, "desktop-computers", "other"),
+      providerConnectionId: null,
     });
 
     expect(await desktop.isRunning(stored, ctx)).toBe(true);

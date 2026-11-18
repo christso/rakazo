@@ -39,7 +39,15 @@ describe.each(computerProviderRegistry)("$id settings conformance", (descriptor)
       if (field.kind === "select") expect(field.options?.length).toBeGreaterThan(0);
     }
     const publicView = computerProviderDescriptors().find((entry) => entry.id === descriptor.id)!;
-    expect(Object.keys(publicView).sort()).toEqual(["capabilities", "displayName", "fields", "id"]);
+    expect(Object.keys(publicView).sort()).toEqual(
+      [
+        "capabilities",
+        "displayName",
+        "fields",
+        "id",
+        ...(publicView.spendingApprovalMessage ? ["spendingApprovalMessage"] : []),
+      ].sort(),
+    );
     expect(JSON.stringify(publicView)).not.toContain("example-value");
   });
   it("rejects unknown fields and missing required input", () => {
@@ -70,7 +78,7 @@ describe.each(computerProviderRegistry)("$id settings conformance", (descriptor)
 it("sets every Settings field through the same environment binding the deployment reads", () => {
   for (const definition of Object.values(computerProviders)) {
     for (const field of definition.settings?.fields ?? []) {
-      expect(definition.env).toHaveProperty(field.option);
+      if (field.option) expect(definition.env).toHaveProperty(field.option);
     }
   }
 });
@@ -99,4 +107,12 @@ it("returns only the options a provider's fields set, so other environment optio
   });
   // A blank region means the provider's default, not the environment's region.
   expect(wuying).toHaveProperty("wuyingRegionId", undefined);
+});
+
+it("supports settings-only cloud connections without environment bindings", () => {
+  const provider = computerProviderDescriptors().find(
+    (entry) => entry.capabilities.requiresSpendingApproval,
+  );
+  expect(provider).toBeDefined();
+  expect(provider!.fields.some((field) => field.kind === "secret" && field.required)).toBe(true);
 });

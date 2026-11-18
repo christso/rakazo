@@ -587,6 +587,7 @@ describe("applyTeachingDesktopInput", () => {
     homeKey: "bot-1",
     kind: "e2b",
     providerRef: "boat-1",
+    providerConnectionId: null,
     controlLeaseId: "lease-1",
   };
 

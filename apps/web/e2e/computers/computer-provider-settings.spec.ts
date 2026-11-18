@@ -6,9 +6,81 @@ import {
   captureScreenshot,
   chooseOption,
   completeOnboarding,
+  openNewSpace,
   openUserSettings,
   signup,
 } from "../helpers/helpers";
+
+test("a Space owner explicitly authorizes a cloud computer connection", async ({
+  page,
+}, testInfo) => {
+  await signup(page, `space-computer-${randomUUID()}@rakazo.test`, "password12", "Space Owner");
+  await completeOnboarding(page);
+  await openNewSpace(page);
+  const dialog = page.getByRole("dialog", { name: "New space" });
+  await dialog.getByLabel("Name").fill("Computer space");
+  await dialog.getByRole("button", { name: "Create space", exact: true }).click();
+  await completeOnboarding(page);
+  const cloudSettings = {
+    provider: "default",
+    defaultProvider: "fake",
+    providers: [
+      {
+        id: "test-cloud",
+        displayName: "Test cloud",
+        capabilities: { perAccount: false, requiresSpendingApproval: true },
+        spendingApprovalMessage: "Stopped servers remain billable.",
+        fields: [{ key: "apiKey", label: "API key", kind: "secret", required: true }],
+      },
+    ],
+    values: {},
+    savedSecrets: {},
+  };
+  await page.route(/\/rpc\/computerProvider\/space\/get(\?|$)/, (route) =>
+    route.fulfill({ json: { json: cloudSettings } }),
+  );
+  await page.route(/\/rpc\/computerProvider\/space\/update(\?|$)/, (route) =>
+    route.fulfill({
+      json: {
+        json: {
+          ...cloudSettings,
+          provider: "test-cloud",
+          values: {},
+          savedSecrets: { apiKey: true },
+          connectionId: "test-space-connection",
+        },
+      },
+    }),
+  );
+  await page
+    .locator("aside")
+    .first()
+    .getByRole("button", { name: "Actions for Computer space" })
+    .click();
+  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
+  const settings = page.getByTestId("space-settings");
+  await settings.getByRole("button", { name: "Computers", exact: true }).click();
+  const form = settings.getByTestId("computer-provider-settings");
+  await chooseOption(form.getByLabel("New computers run on"), "Test cloud");
+  await form.getByLabel("API key").fill("example-api-key");
+  await expect(form.getByRole("button", { name: "Save", exact: true })).toBeDisabled();
+  await expect(form.getByRole("checkbox", { name: "Allow paid computers" })).not.toBeChecked();
+  await form.getByRole("checkbox", { name: "Allow paid computers" }).check();
+  await captureScreenshot(page, testInfo, "space-computer-connection");
+  const request = page.waitForRequest((request) =>
+    request.url().includes("/computerProvider/space/update"),
+  );
+  await form.getByRole("button", { name: "Save", exact: true }).click();
+  expect((await request).postDataJSON()).toEqual({
+    json: {
+      provider: "test-cloud",
+      values: { apiKey: "example-api-key" },
+      expectedConnectionId: null,
+      approveSpending: true,
+    },
+  });
+  await expect(form.getByRole("checkbox", { name: "Allow paid computers" })).not.toBeChecked();
+});
 
 async function adminComputers(route: Route) {
   const response = await route.fetch();

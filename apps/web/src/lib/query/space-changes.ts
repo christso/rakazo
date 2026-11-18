@@ -1,12 +1,12 @@
-import type { SpaceChangeKind } from "@rakazo/contracts";
+import type { RpcPath, SpaceChangeKind } from "@rakazo/contracts";
 import { queryClient } from "./query";
-import type { RpcClient } from "./rpc";
 
 type ReadChangeKind = Exclude<SpaceChangeKind, "computerUpdates">;
 /** A procedure as its query key ends, typed so a renamed procedure fails to compile here. */
-type Procedure = {
-  [Router in keyof RpcClient & string]: readonly [Router, keyof RpcClient[Router] & string];
-}[keyof RpcClient & string];
+type ProcedureSegments<Path extends string> = Path extends `${infer Head}/${infer Rest}`
+  ? readonly [Head, ...ProcedureSegments<Rest>]
+  : readonly [Path];
+type Procedure = ProcedureSegments<RpcPath>;
 
 const READS: Record<ReadChangeKind, readonly Procedure[]> = {
   runs: [
@@ -15,6 +15,7 @@ const READS: Record<ReadChangeKind, readonly Procedure[]> = {
     ["usage", "breakdown"],
   ],
   routines: [["routines", "list"]],
+  computerProvider: [["computerProvider", "space", "get"]],
 };
 
 export const isReadChangeKind = (kind: string): kind is ReadChangeKind =>
@@ -22,9 +23,12 @@ export const isReadChangeKind = (kind: string): kind is ReadChangeKind =>
 
 /** Reads again what the server says may have changed; only screens showing it refetch. */
 export function spaceChanged(kind: ReadChangeKind, client = queryClient): Promise<void> {
-  const procedures = READS[kind].map((procedure) => procedure.join("."));
+  const procedures = READS[kind];
   return client.invalidateQueries({
     predicate: ({ queryKey: [path] }) =>
-      Array.isArray(path) && procedures.includes(path.slice(-2).join(".")),
+      Array.isArray(path) &&
+      procedures.some(
+        (procedure) => path.slice(-procedure.length).join("/") === procedure.join("/"),
+      ),
   });
 }

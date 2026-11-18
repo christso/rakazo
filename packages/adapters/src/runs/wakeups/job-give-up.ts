@@ -55,6 +55,7 @@ export const ABANDONED_LAST_ATTEMPT_ERROR = "The worker stopped during the last 
  * Graphile keeps a job that exhausted its retries forever, and its own maintenance scans them.
  * Delete them once they are old enough that nobody is still diagnosing the failure. Exhausted
  * `routine.retry` rows are notice requests, which their reconciler deletes after delivery.
+ * Connection-backed machine cleanup retains the only route to a billable machine until deletion succeeds.
  *
  * A failed attempt moves `run_at` to that moment plus backoff and leaves `updated_at` at the last
  * enqueue, so the later of the two is when the row was last touched; a job due in the future
@@ -91,6 +92,8 @@ export function createDeadJobPruner(
                and dead.updated_at < now() - make_interval(days => $1::int)
                and dead.run_at < now() - make_interval(days => $1::int)
                and tasks.identifier <> 'routine.retry'
+               and NOT (tasks.identifier = 'computer.machine-cleanup' AND
+                 COALESCE(dead.payload->'payload'->>'providerConnectionId', dead.payload->>'providerConnectionId') IS NOT NULL)
              order by dead.id
              limit $2
              for update of dead skip locked

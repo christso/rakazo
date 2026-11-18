@@ -36,6 +36,16 @@ export async function recordUnreferencedMachine(
   );
 }
 
+/** Paid creation must not proceed without a durable route to remove an abandoned machine. */
+export async function requireUnreferencedMachineRecord(
+  records: UnreferencedMachineRecords | undefined,
+  machine: UnreferencedMachine,
+  usedForMs = START_MS,
+): Promise<void> {
+  if (!records) throw new Error("Computer provisioning requires durable machine cleanup");
+  await writeRecord(records, machine, new Date(Date.now() + usedForMs + BACKUP_MARGIN_MS));
+}
+
 /** The record is all that deletes its machine later, so a write that fails is tried again. */
 async function writeRecord(
   records: UnreferencedMachineRecords | undefined,

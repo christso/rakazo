@@ -27,6 +27,7 @@ type Row = [
 const EXPECTED: Record<KnownSandboxKind, Row> = {
   none: [false, false, false, false, DEFAULT_SCREEN, "never", false, false],
   docker: [true, true, false, false, DEFAULT_SCREEN, "always", false, true],
+  hetzner: [true, false, false, false, DEFAULT_SCREEN, "never", true, true],
   e2b: [true, true, false, false, DEFAULT_SCREEN, "never", true, false],
   novita: [true, true, false, false, DEFAULT_SCREEN, "never", true, false],
   daytona: [true, true, false, false, DEFAULT_SCREEN, "never", true, false],
@@ -89,6 +90,7 @@ describe("sandbox kind capabilities", () => {
     expect(sandboxKindsWhere((entry) => entry.storedHomeIsBackup).sort()).toEqual([
       "desktop",
       "docker",
+      "hetzner",
       "wuying",
     ]);
     expect(sandboxKindsWhere((entry) => entry.runsOnUserMachine)).toEqual(["desktop"]);

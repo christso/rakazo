@@ -406,6 +406,7 @@ export async function touchRunningComputer(
     id: string;
     homeKey: string;
     providerRef: string;
+    providerConnectionId: string | null;
     kind: string;
     runningSince?: Date | null;
     controlHolder?: string;
@@ -993,6 +994,7 @@ function loadComputer(prisma: PrismaClient, computerId: string) {
       id: true,
       homeKey: true,
       providerRef: true,
+      providerConnectionId: true,
       kind: true,
       scope: true,
       state: true,

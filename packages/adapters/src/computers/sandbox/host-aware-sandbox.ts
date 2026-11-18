@@ -33,6 +33,7 @@ import {
 } from "./configured-sandbox.js";
 import type { SandboxProviderOptions } from "./sandbox-factory.js";
 import { createSandboxProvider } from "./sandbox-factory.js";
+import { loadComputerConnection } from "./space-computer-connections.js";
 
 export function sandboxKindForBot(envKind: string, computerHost: string | null | undefined) {
   if (envKind === "docker" && computerHost === "this-mac") return "desktop";
@@ -55,13 +56,25 @@ export async function createRunSandbox(
     base,
     () => loadComputerProviderSelection(prisma, secrets, true),
     {
+      connectionDb: prisma,
       onSecretChange: secrets.onChange?.bind(secrets),
+      loadConnection: (id, homeKey) => loadComputerConnection(prisma, secrets, id, homeKey),
       loadOwn: (homeKey) => loadComputerOwnerSettings(prisma, secrets, homeKey, true),
-      createProvider: (settings) =>
-        createBaseRunSandbox(settings.provider, {
+      createProvider: (settings) => {
+        const verified = computerProviderDescriptor(settings.provider).verify(settings.values);
+        return createBaseRunSandbox(settings.provider, {
           ...opts,
-          ...computerProviderDescriptor(settings.provider).verify(settings.values),
-        }),
+          ...verified,
+          ...(settings.connectionId
+            ? {
+                providerSettings: {
+                  ...verified.providerSettings,
+                  connectionIdentity: settings.connectionId,
+                },
+              }
+            : {}),
+        });
+      },
     },
   );
   // Startup never waits on the secret store or a saved provider: routing rereads them on first use.

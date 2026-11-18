@@ -191,6 +191,7 @@ describe("computer control leases", () => {
       homeKey: "bot-1",
       kind: "docker",
       providerRef: "provider-1",
+      providerConnectionId: null,
     };
     const context = {
       operationId: "op",
@@ -229,6 +230,7 @@ describe("computer control leases", () => {
       homeKey: "bot-1",
       kind: "docker",
       providerRef: "provider-1",
+      providerConnectionId: null,
     };
 
     await expect(
@@ -251,6 +253,7 @@ describe("computer control leases", () => {
       homeKey: "bot-1",
       kind: "docker",
       providerRef: "provider-1",
+      providerConnectionId: null,
     };
 
     await revokeScreenControl({ prisma, sandbox }, computer, contextStub(), "lease-1", {
@@ -267,7 +270,13 @@ describe("computer control leases", () => {
 
     await revokeScreenControl(
       { prisma, sandbox },
-      { id: "computer-1", homeKey: "bot-1", kind: "docker", providerRef: null },
+      {
+        id: "computer-1",
+        homeKey: "bot-1",
+        kind: "docker",
+        providerRef: null,
+        providerConnectionId: null,
+      },
       contextStub(),
       "lease-1",
     );

@@ -175,12 +175,12 @@ async function mutateRecording(
 export async function observeStopSnapshot(
   deps: TeachingSessionDeps,
   actor: Actor,
-  bot: { id: string; computer: { providerRef: string | null } | null },
+  bot: { id: string; computer: Parameters<typeof toComputerRef>[0] | null },
 ): Promise<TeachSnapshot | undefined> {
   if (!bot.computer?.providerRef) return undefined;
   try {
     const observation = await deps.sandbox.observe(
-      toComputerRef(bot.computer as never),
+      toComputerRef(bot.computer),
       computerContext(actor, bot.id, "skills.snapshot"),
     );
     const summary =
@@ -268,6 +268,7 @@ async function releaseTeachingComputerControl(
       homeKey: string;
       kind: string;
       providerRef: string | null;
+      providerConnectionId: string | null;
       controlHolder: string;
       controlBotId: string | null;
       controlLeaseId: string | null;
@@ -463,6 +464,7 @@ export async function applyTeachingDesktopInput(
     homeKey: string;
     kind: string;
     providerRef: string | null;
+    providerConnectionId: string | null;
     controlLeaseId: string | null;
   },
   mapped: TeachComputerInput,
@@ -606,7 +608,7 @@ export async function recordTeachingInputEvent(
 export async function captureTeachingSnapshot(
   deps: TeachingSessionDeps,
   actor: Actor,
-  bot: { id: string; computer: { id: string; kind: string; providerRef: string | null } | null },
+  bot: { id: string; computer: (Parameters<typeof toComputerRef>[0] & { id: string }) | null },
   skill: TaughtSkillRow,
 ): Promise<TaughtSkillRow> {
   const snapshot = await observeStopSnapshot(deps, actor, bot);

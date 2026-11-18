@@ -36,6 +36,42 @@ for desktop and fake deployments.
 The account form offers only providers that declare support for account-owned computers.
 Team Computers follow their owner's account choice; Private Computers use the deployment choice. See [Wuying setup](./wuying-computers.md) for that adapter's fields and requirements.
 
+### Cloud connections for a Space
+
+With computer settings enabled, the Space owner or an organization admin can configure a cloud
+connection in **Space settings → Computers** and explicitly allow paid computers. Choose a region
+and machine type, enter the provider API token and a separate random computer secret, and supply
+anonymously accessible app and desktop image references pinned as `registry/image@sha256:<digest>`.
+Use matching published app/computer releases: the app image includes the computer supervisor and
+the host egress installer. No provider-specific environment variables or Terraform deployment is
+required. The API, worker and web server must reach the VM's public IPv4 address on HTTPS port 443.
+
+Opening a new computer creates a Debian VM, installs Docker and the desktop runtime, applies host
+and metadata network restrictions, then waits for the authenticated supervisor and desktop to be
+ready. Initial setup can take up to 15 minutes. Per-machine TLS certificate pins and encrypted
+connection credentials protect shell, file, screen and terminal traffic. Pi stays in the API/worker;
+the VM runs the existing Linux desktop image with Chromium, Xvfb, Fluxbox and noVNC. The normal
+Computer panel and takeover controls use that desktop, independently of anyone's personal desktop.
+
+The connection applies to new computers. Existing computers retain their recorded connection until
+an explicit reset or move. **Default** uses the deployment's configured choice. Team and Private
+Computer modes still apply; select Private Computers, or set `COMPUTER_DEFAULT_MODE=dedicated`,
+to give each bot its own VM.
+
+Stop and idle shutdown power off the VM while retaining its disk, files and browser profiles.
+Stopped VMs remain billable; destroying the VM removes its disk and ends server charges. There is
+no automatic disk-expiry policy. Reset can destroy the old VM and provision another paid VM.
+A missing VM or unavailable connection is reported instead of silently using a different host.
+
+Space and account deletion retain connections while provisioning or machine cleanup is pending.
+Retry deletion after cleanup finishes; an exhausted cleanup job must be resolved before those
+credentials can be removed. During rolling upgrades, older processes cannot operate these
+connection-backed computers. Finish upgrading the API and workers before using the connection.
+
+Deterministic tests exercise provisioning reconciliation, the supervisor protocol, bootstrap shell,
+TLS pinning and screen proxy boundaries. Live VM creation, image pulls and desktop readiness still
+need an operator-approved cloud smoke test; the offline suite is not live-provider evidence.
+
 ## Choosing a provider
 
 The Electron desktop app is a client of the same API. Docker remains the default. For an app-managed local instance, the local operator can choose **Use this Mac** (macOS) or **Use this computer** (Windows/Linux). After native confirmation, an authenticated bridge sends commands from the Docker backend to Electron, where they run under your OS account. **Computer Access…** in the app menu changes the choice; **Revoke Local Computer Access** immediately disconnects active operations and revokes the saved permission. Local execution requires the desktop app to remain running. Connecting to an existing remote instance does not grant it access to your computer. Browser and mobile clients use the deployment’s configured computer; they do not expose their own host. `SANDBOX_PROVIDER=desktop` is a separate, development-only configuration for backends running directly on the intended host.

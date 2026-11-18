@@ -649,6 +649,7 @@ export function computerRoutes(ctx: RouterContext) {
             },
             undefined,
             session.headers,
+            session.tlsCertificateSha256,
           ),
         };
       }),
@@ -699,6 +700,7 @@ export function computerRoutes(ctx: RouterContext) {
             },
             undefined,
             session.headers,
+            session.tlsCertificateSha256,
           ),
           // The view is part of what a screen shows: taking or releasing control changes it.
           ...(session.singleUseSignIn
@@ -754,6 +756,7 @@ export function computerRoutes(ctx: RouterContext) {
               id: bot.computer.id,
               homeKey: bot.computer.homeKey,
               providerRef: bot.computer.providerRef,
+              providerConnectionId: bot.computer.providerConnectionId,
               kind: bot.computer.kind,
               runningSince: bot.computer.runningSince,
               controlHolder: bot.computer.controlHolder,

@@ -6,6 +6,7 @@ import { desktopComputer } from "../providers/computer/desktop/desktop-computer.
 import { dockerComputer } from "../providers/computer/docker/docker-computer.js";
 import { e2bComputer } from "../providers/computer/e2b/e2b-computer.js";
 import { fakeComputer } from "../providers/computer/fake/fake-computer.js";
+import { hetznerComputer } from "../providers/computer/hetzner/hetzner-computer.js";
 import { incusComputer } from "../providers/computer/incus/incus-computer.js";
 import { instaboxComputer } from "../providers/computer/instabox/instabox-computer.js";
 import { kubernetesComputer } from "../providers/computer/kubernetes/kubernetes-computer.js";
@@ -23,6 +24,7 @@ import type { ComputerProviderDefinition } from "./computer-provider-descriptor.
 export const computerProviders = {
   none: noneComputer,
   docker: dockerComputer,
+  hetzner: hetznerComputer,
   wuying: wuyingComputer,
   e2b: e2bComputer,
   novita: novitaComputer,

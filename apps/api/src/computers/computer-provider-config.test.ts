@@ -1,5 +1,6 @@
 import type { BackgroundJob, SandboxProvider } from "@rakazo/adapter-kit";
 import {
+  computerProviderDescriptor,
   computerProviderDescriptors,
   recordSecretCleanup,
   retrySecretCleanup,
@@ -695,3 +696,33 @@ vi.mock(
       "../../../../packages/adapters/src/providers/computer/fake/fake-computer-settings.test-support.js"
     ),
 );
+
+it("keeps paid provisioning out of legacy deployment and account settings", async () => {
+  const descriptor = computerProviderDescriptor("desktop");
+  descriptor.capabilities.requiresSpendingApproval = true;
+  try {
+    const deployment = makeDeps();
+    const account = makeAccountDeps();
+    expect(
+      (await getComputerProviderSettings(deployment.deps, actor)).providers.map(
+        (provider) => provider.id,
+      ),
+    ).not.toContain(descriptor.id);
+    expect(
+      (await getAccountComputerSettings(account.deps, actor)).providers.map(
+        (provider) => provider.id,
+      ),
+    ).not.toContain(descriptor.id);
+    const input = { provider: descriptor.id, values: testDesktop, approveSpending: true };
+    await expect(updateComputerProviderSettings(deployment.deps, actor, input)).rejects.toThrow(
+      "Configure this provider in Space settings",
+    );
+    await expect(updateAccountComputerSettings(account.deps, actor, input)).rejects.toThrow(
+      "Configure this provider in Space settings",
+    );
+    expect(deployment.deps.secrets.put).not.toHaveBeenCalled();
+    expect(account.deps.secrets.put).not.toHaveBeenCalled();
+  } finally {
+    delete descriptor.capabilities.requiresSpendingApproval;
+  }
+});

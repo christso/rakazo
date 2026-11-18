@@ -234,6 +234,64 @@ describeWithDatabase("API authorization and resource isolation", () => {
     ]);
   });
 
+  it("limits Space computer configuration to owners and organization admins", async () => {
+    const owner = await signup(app, `computer-owner-${stamp}@rakazo.test`, "Owner");
+    const member = await signup(app, `computer-member-${stamp}@rakazo.test`, "Member");
+    const admin = await signup(app, `computer-admin-${stamp}@rakazo.test`, "Admin");
+    const outsider = await signup(app, `computer-outsider-${stamp}@rakazo.test`, "Outsider");
+    const ownerActor = await rpc<Actor>(app, owner, "me");
+    const space = await db.space.findUniqueOrThrow({ where: { id: ownerActor.spaceId } });
+    for (const [cookie, role] of [
+      [member, "member"],
+      [admin, "admin"],
+    ] as const) {
+      const person = await rpc<Actor>(app, cookie, "me");
+      await db.member.create({
+        data: {
+          id: `computer-${role}-${stamp}`,
+          organizationId: space.organizationId,
+          userId: person.userId,
+          role,
+          createdAt: new Date(),
+        },
+      });
+    }
+    const settings = await rpc<{ providers: unknown[] }>(
+      app,
+      member,
+      "computerProvider/space/get",
+      {},
+      space.id,
+    );
+    expect(settings.providers).toEqual([]);
+    expect(
+      (await raw(app, member, "computerProvider/space/update", { provider: "default" }, space.id))
+        .status,
+    ).toBe(403);
+    await expectDenied(app, outsider, "computerProvider/space/get", {}, space.id);
+    await expectDenied(
+      app,
+      outsider,
+      "computerProvider/space/update",
+      { provider: "default" },
+      space.id,
+    );
+    for (const cookie of [owner, admin]) {
+      expect(
+        (
+          await rpc<{ provider: string }>(
+            app,
+            cookie,
+            "computerProvider/space/update",
+            { provider: "default" },
+            space.id,
+          )
+        ).provider,
+      ).toBe("default");
+    }
+    expect(await db.computerConnection.count({ where: { spaceId: space.id } })).toBe(0);
+  });
+
   it("rejects unauthenticated calls to every protected RPC family", async () => {
     const calls = exhaustiveProtectedCalls([
       ["me"],
@@ -396,6 +454,8 @@ describeWithDatabase("API authorization and resource isolation", () => {
       ["computer/commands"],
       ["computerProvider/get"],
       ["computerProvider/update", { provider: "default" }],
+      ["computerProvider/space/get"],
+      ["computerProvider/space/update", { provider: "default" }],
       ["computerProvider/account/get"],
       ["computerProvider/account/update", { provider: "default" }],
       ["memory/list", {}],

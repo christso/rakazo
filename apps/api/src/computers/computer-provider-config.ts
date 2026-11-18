@@ -41,13 +41,16 @@ export interface ComputerProviderConfigDeps {
 }
 
 const VERIFY_TIMEOUT_MS = 20_000;
+type ComputerSettingsScope = "deployment" | "account" | "space";
 
-function view(
+export function computerSettingsView(
   provider: string,
   saved: StoredComputerSettings | null,
   defaultProvider: string,
-  account = false,
-  enabled = true,
+  {
+    scope = "deployment",
+    enabled = true,
+  }: { scope?: ComputerSettingsScope; enabled?: boolean } = {},
 ): ComputerProviderSettings {
   if (!enabled) provider = "default";
   const values: Record<string, string> = {};
@@ -63,24 +66,34 @@ function view(
     defaultProvider,
     values,
     savedSecrets,
-    providers: enabled ? computerProviderDescriptors(account) : [],
+    providers: enabled
+      ? computerProviderDescriptors(scope === "account").filter(
+          (provider) => scope === "space" || !provider.capabilities.requiresSpendingApproval,
+        )
+      : [],
   };
 }
 
-async function checkedSettings(
+export async function checkedComputerSettings(
   deps: ComputerProviderConfigDeps,
   actor: Actor,
   input: ComputerProviderUpdate,
   previous: StoredComputerSettings | null,
-  account = false,
+  scope: ComputerSettingsScope = "deployment",
 ): Promise<StoredComputerSettings> {
   if (!computerProviderDescriptors().some((provider) => provider.id === input.provider))
     throw new ClientError("BAD_REQUEST", "Unknown computer provider");
+  const descriptor = computerProviderDescriptor(input.provider);
+  if (descriptor.capabilities.requiresSpendingApproval && scope !== "space")
+    throw new ClientError("BAD_REQUEST", "Configure this provider in Space settings");
+  if (descriptor.capabilities.requiresSpendingApproval && input.approveSpending !== true)
+    throw new ClientError("BAD_REQUEST", "Approve resource costs to activate this connection");
   try {
-    const descriptor = computerProviderDescriptor(input.provider);
-    if (account && !descriptor.capabilities.perAccount)
+    if (scope === "account" && !descriptor.capabilities.perAccount)
       throw new Error("Provider does not support account settings");
-    const values = { ...input.values };
+    const values = Object.fromEntries(
+      descriptor.fields.map((field) => [field.key, input.values[field.key] ?? ""]),
+    );
     const saved = computerSettingsForProvider(previous, input.provider)?.values ?? {};
     const destinationChanged = descriptor.fields.some(
       (field) => field.kind === "url" && (values[field.key] ?? "") !== (saved[field.key] ?? ""),
@@ -102,11 +115,12 @@ async function checkedSettings(
     }
     // Only the connection being left stays, for computers still on it; older ones are dropped.
     const connections: Record<string, Record<string, string>> | undefined =
-      !account && previous ? { [previous.provider]: previous.values } : undefined;
+      scope !== "account" && previous ? { [previous.provider]: previous.values } : undefined;
     if (connections) delete connections[input.provider];
     const settings = {
       provider: input.provider,
       values,
+      ...(descriptor.capabilities.requiresSpendingApproval ? { spendingApproved: true } : {}),
       ...(connections && Object.keys(connections).length ? { connections } : {}),
     };
     if (deps.verifyConnection) await deps.verifyConnection(settings, signal);
@@ -116,7 +130,7 @@ async function checkedSettings(
     // Provider failures and schema errors can contain credentials: log only the error's class.
     getLogger().warn("computer_provider.verify_failed", {
       provider: input.provider,
-      scope: account ? "account" : "deployment",
+      scope: scope === "account" ? "account" : "deployment",
       "user.id": actor.userId,
       "error.name": error instanceof Error ? error.name : typeof error,
     });
@@ -149,13 +163,9 @@ export async function getComputerProviderSettings(
 ): Promise<ComputerProviderSettings> {
   await requireAdmin(deps, actor.userId);
   const selection = await loadComputerProviderSelection(deps.prisma, deps.secrets);
-  return view(
-    selection.provider,
-    selection.settings,
-    deps.env.sandboxProvider,
-    false,
-    deploymentCanChoose(deps),
-  );
+  return computerSettingsView(selection.provider, selection.settings, deps.env.sandboxProvider, {
+    enabled: deploymentCanChoose(deps),
+  });
 }
 
 export async function updateComputerProviderSettings(
@@ -189,10 +199,12 @@ export async function updateComputerProviderSettings(
     );
     if (removed) await finishSecretCleanup(deps, removed);
     await refreshComputerProvider(deps.sandbox);
-    return view("default", null, deps.env.sandboxProvider, false, deploymentCanChoose(deps));
+    return computerSettingsView("default", null, deps.env.sandboxProvider, {
+      enabled: deploymentCanChoose(deps),
+    });
   }
   // Blank secrets keep the saved ones, so an admin never has to see them again.
-  const settings = await checkedSettings(deps, actor, input, existing.settings);
+  const settings = await checkedComputerSettings(deps, actor, input, existing.settings);
   // Owned by the deployment row, not a user or space, so no account deletion removes it.
   const stored = await encrypt(deps, actor, settings, DEPLOYMENT_COMPUTER_PROVIDER_RECORD);
   let replaced: SecretCleanup | undefined;
@@ -235,7 +247,7 @@ export async function updateComputerProviderSettings(
   }
   if (replaced) await finishSecretCleanup(deps, replaced);
   await refreshComputerProvider(deps.sandbox);
-  return view(input.provider, settings, deps.env.sandboxProvider);
+  return computerSettingsView(input.provider, settings, deps.env.sandboxProvider);
 }
 
 /** Where computers run while an account keeps the deployment default. */
@@ -256,15 +268,13 @@ export async function getAccountComputerSettings(
     loadSavedAccountComputerSettings(deps.prisma, deps.secrets, actor.userId),
     deploymentProvider(deps),
   ]);
-  return view(
-    saved?.provider ?? "default",
-    saved,
-    defaultProvider,
-    true,
+  return computerSettingsView(saved?.provider ?? "default", saved, defaultProvider, {
+    scope: "account",
     // An account with saved keys still sees the form, so it can go back to the default.
-    Boolean(deps.env.computerSettingsEnabled) &&
+    enabled:
+      Boolean(deps.env.computerSettingsEnabled) &&
       (accountCanChoose(defaultProvider) || Boolean(saved)),
-  );
+  });
 }
 
 export async function updateAccountComputerSettings(
@@ -303,7 +313,7 @@ export async function updateAccountComputerSettings(
       deps.secrets,
       actor.userId,
     );
-    saved = await checkedSettings(deps, actor, input, previous, true);
+    saved = await checkedComputerSettings(deps, actor, input, previous, "account");
     const stored = await encrypt(deps, actor, saved);
     try {
       replaced = await withTransactionRetry(() =>
@@ -333,13 +343,10 @@ export async function updateAccountComputerSettings(
   // A remote secret store keeps every saved value until it is deleted there too.
   await Promise.all(replaced.map((cleanup) => finishSecretCleanup(deps, cleanup)));
   await refreshComputerProvider(deps.sandbox);
-  return view(
-    saved?.provider ?? "default",
-    saved,
-    await deploymentProvider(deps),
-    true,
-    Boolean(deps.env.computerSettingsEnabled),
-  );
+  return computerSettingsView(saved?.provider ?? "default", saved, await deploymentProvider(deps), {
+    scope: "account",
+    enabled: Boolean(deps.env.computerSettingsEnabled),
+  });
 }
 
 function deploymentSecret(ref: string): SecretCleanup {

@@ -689,6 +689,9 @@ model Space {
   artifacts                   Artifact[]
   pages                       Page[]
   notificationPreferences     NotificationPreference[]
+  computerConnections         ComputerConnection[] @relation("SpaceComputerConnections")
+  computerConnectionId        String?
+  computerConnection          ComputerConnection? @relation("SelectedSpaceComputerConnection", fields: [computerConnectionId], references: [id], onDelete: SetNull)
   computers                   Computer[]
   computerRuns                ComputerRun[]
   externalEffects             ExternalEffect[]
@@ -1845,6 +1848,24 @@ model ComputerUpdate {
   @@map("computer_updates")
 }
 
+/// Immutable Space-owned credentials. Changing a Space selection leaves existing machines bound.
+model ComputerConnection {
+  id                 String @id
+  spaceId            String
+  space              Space @relation("SpaceComputerConnections", fields: [spaceId], references: [id], onDelete: Cascade)
+  provider           String
+  ciphertext         String
+  spendingApprovedBy String?
+  spendingApprovedAt DateTime?
+  createdAt          DateTime @default(now())
+  selectedBy         Space[] @relation("SelectedSpaceComputerConnection")
+  computers          Computer[]
+
+  @@unique([id, spaceId])
+  @@index([spaceId])
+  @@map("computer_connections")
+}
+
 model Computer {
   screenGeneration Int @default(0)
   id                      String                   @id @default(cuid())
@@ -1870,6 +1891,10 @@ model Computer {
   homeStorageRevision     String?
   kind                    String
   providerRef             String?
+  /// True by default protects rows created by older releases; current computer creation opts in.
+  providerConnectionPinned Boolean @default(true)
+  providerConnectionId    String?
+  providerConnection      ComputerConnection? @relation(fields: [providerConnectionId], references: [id], onDelete: Restrict)
   state                   String                   @default("stopped")
   controlHolder           String                   @default("none")
   controlLeaseId          String?

@@ -175,11 +175,21 @@ describe("ConfiguredSandbox", () => {
   it("reads an owner's desktop only for Team Computers", async () => {
     const secretRow = { id: "s1", ciphertext: "c1" };
     const findFirst = vi.fn(async () => secretRow);
-    const prisma = (scope: string) =>
-      ({
-        computer: { findUnique: async () => ({ userId: "u1", scope }) },
+    const prisma = (scope: string) => {
+      const db = {
+        computer: {
+          findUnique: async () => ({
+            userId: "u1",
+            scope,
+            providerRef: "existing",
+            providerConnectionPinned: true,
+          }),
+        },
         secret: { findFirst },
-      }) as unknown as PrismaClient;
+        $transaction: async (work: (tx: unknown) => unknown) => work(db),
+      };
+      return db as unknown as PrismaClient;
+    };
     const secrets = { load: async () => JSON.stringify(settings) };
     expect(await loadComputerOwnerSettings(prisma("team"), secrets, "team-k")).toEqual({
       ...settings,

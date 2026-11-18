@@ -49,6 +49,11 @@ vi.mock("./SpaceSettingOverrides", () => ({
 vi.mock("../../components/spaces/SpaceMembersSettings", () => ({
   SpaceMembersSettings: () => <div data-testid="space-members-settings" />,
 }));
+vi.mock("../../components/computers/ComputerProviderSettings", () => ({
+  ComputerProviderSettings: ({ scope }: { scope: string }) => (
+    <div data-testid="space-computers" data-scope={scope} />
+  ),
+}));
 
 const client = vi.hoisted(() => ({ spaces: {} }));
 vi.mock("../../lib/query/rpc", () => ({
@@ -134,6 +139,12 @@ afterEach(async () => {
 });
 
 describe("SpaceSettingsPanel", () => {
+  it("edits computers in the Space, including a personal Space that cannot be renamed", async () => {
+    await render({ space: { id: "space-a", name: "Personal", canRename: false } });
+    expect(
+      container.querySelector('[data-testid="space-computers"]')?.getAttribute("data-scope"),
+    ).toBe("space");
+  });
   it("renames the space when its name field is left", async () => {
     const onRename = vi.fn(async () => undefined);
     await render({ onRename });

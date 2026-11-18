@@ -8,6 +8,7 @@ import https from "node:https";
 import net from "node:net";
 import path from "node:path";
 import type { Duplex } from "node:stream";
+import type { TLSSocket } from "node:tls";
 import tls from "node:tls";
 import { wuyingScreenPolicy } from "@rakazo/adapters/wuying-screen-policy";
 import type { DesktopStackProbeResponse } from "@rakazo/contracts";
@@ -19,6 +20,7 @@ import {
   parseContentSecuritySources,
   parseCrispWebsiteId,
 } from "@rakazo/contracts/content-security-policy";
+import { connectPinnedTls, pinnedHttpsAgent } from "@rakazo/core/node/pinned-https";
 import {
   safeScreenProxyResponseHeaders,
   stripSensitiveHandshakeHeaders,
@@ -222,6 +224,9 @@ export function attachNovncProxy(server: WebServerHost, settings: WebServerSetti
           method: req.method,
           headers,
           ...(target.protocol === "https:" ? { servername: target.hostname } : {}),
+          ...(target.tlsCertificateSha256
+            ? { agent: pinnedHttpsAgent(target.tlsCertificateSha256) }
+            : {}),
         },
         (incoming) => {
           if ((incoming.statusCode ?? 502) >= 500 && scheduleRetry(incoming)) {
@@ -352,10 +357,38 @@ export function attachNovncProxy(server: WebServerHost, settings: WebServerSetti
       socket.destroy();
       return;
     }
-    const upstream =
-      target.protocol === "https:"
-        ? tls.connect({ port: target.port, host: target.hostname, servername: target.hostname })
-        : net.connect(target.port, target.hostname);
+    let upstream: net.Socket;
+    try {
+      upstream = target.tlsCertificateSha256
+        ? await new Promise<TLSSocket>((resolve, reject) => {
+            connectPinnedTls(
+              {
+                host: target.hostname,
+                port: target.port,
+                fingerprint: target.tlsCertificateSha256!,
+              },
+              (error, connected) => {
+                if (error) reject(error);
+                else resolve(connected!);
+              },
+            );
+          })
+        : target.protocol === "https:"
+          ? tls.connect({ port: target.port, host: target.hostname, servername: target.hostname })
+          : net.connect(target.port, target.hostname);
+    } catch (error) {
+      log.warn("screen.proxy.websocket_error", {
+        ...bindings,
+        "screen.side": "upstream",
+        "error.code": socketErrorCode(error),
+      });
+      socket.destroy();
+      return;
+    }
+    if (socket.destroyed) {
+      upstream.destroy();
+      return;
+    }
     let upgraded = false;
     let closed = false;
     const logClose = (side: "client" | "upstream") => {
@@ -403,7 +436,7 @@ export function attachNovncProxy(server: WebServerHost, settings: WebServerSetti
       stopChecking();
       socket.destroy();
     });
-    upstream.once(target.protocol === "https:" ? "secureConnect" : "connect", () => {
+    const forwardUpgrade = () => {
       const headerLines = [
         `${req.method ?? "GET"} ${target.path} HTTP/1.1`,
         `Host: ${target.hostname.includes(":") ? `[${target.hostname}]` : target.hostname}:${target.port}`,
@@ -468,7 +501,7 @@ export function attachNovncProxy(server: WebServerHost, settings: WebServerSetti
         upstream.pipe(socket);
       };
       upstream.on("data", forwardHandshake);
-    });
+    };
     upstream.on("error", (error) => {
       log.warn("screen.proxy.websocket_error", {
         ...bindings,
@@ -478,6 +511,8 @@ export function attachNovncProxy(server: WebServerHost, settings: WebServerSetti
       closeInitiator ??= "upstream";
       socket.destroy();
     });
+    if (target.tlsCertificateSha256) forwardUpgrade();
+    else upstream.once(target.protocol === "https:" ? "secureConnect" : "connect", forwardUpgrade);
   });
 }
 

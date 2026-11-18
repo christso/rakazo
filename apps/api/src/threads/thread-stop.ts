@@ -116,7 +116,13 @@ export function cancelThreadRuns(
     const computers = leases.length
       ? await tx.computer.findMany({
           where: { id: { in: [...new Set(leases.map((lease) => lease.computerId))] } },
-          select: { id: true, homeKey: true, kind: true, providerRef: true },
+          select: {
+            id: true,
+            homeKey: true,
+            kind: true,
+            providerRef: true,
+            providerConnectionId: true,
+          },
         })
       : [];
     // One terminal event per cancelled run, in the same commit as the status

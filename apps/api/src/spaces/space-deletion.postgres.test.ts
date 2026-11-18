@@ -9,6 +9,8 @@ import type {
   JobPublisher,
   SandboxProvider,
 } from "@rakazo/adapter-kit";
+import { machineCleanupJob, machineCleanupJobKey } from "@rakazo/adapter-kit";
+import { GraphileJobPublisher, retryMachineCleanup } from "@rakazo/adapters";
 import { deferred } from "@rakazo/core/test-async";
 import type { PrismaClient } from "@rakazo/db";
 import {
@@ -36,11 +38,13 @@ describePostgres("space deletion lease (PostgreSQL)", () => {
   let prisma: PrismaClient;
   let system: PrismaClient;
   let root: string;
+  let jobs: GraphileJobPublisher;
 
   beforeAll(async () => {
     db = createDb(databaseUrl!);
     prisma = db.prisma;
     system = asSystem(prisma);
+    jobs = new GraphileJobPublisher(db.pool, prisma);
     root = await mkdtemp(path.join(tmpdir(), "rakazo-space-deletion-"));
   });
 
@@ -51,6 +55,7 @@ describePostgres("space deletion lease (PostgreSQL)", () => {
     });
     await system.user.deleteMany({ where: { id: { in: users } } });
     await rm(root, { recursive: true, force: true });
+    await jobs.close();
     await db.prisma.$disconnect();
     await db.pool.end();
   });
@@ -88,7 +93,10 @@ describePostgres("space deletion lease (PostgreSQL)", () => {
     });
   }
 
-  function deps(sandbox: Pick<SandboxProvider, "destroy">): SpaceDeletionDeps {
+  function deps(
+    sandbox: Pick<SandboxProvider, "destroy">,
+    extra: Partial<SpaceDeletionDeps> = {},
+  ): SpaceDeletionDeps {
     return {
       prisma,
       sandbox: sandbox as SandboxProvider,
@@ -97,6 +105,7 @@ describePostgres("space deletion lease (PostgreSQL)", () => {
       memoryProviders: { resolve: async () => null },
       artifacts: { remove: vi.fn() } as unknown as ArtifactStore,
       dataDir: root,
+      ...extra,
     };
   }
 
@@ -104,9 +113,10 @@ describePostgres("space deletion lease (PostgreSQL)", () => {
     sandbox: Pick<SandboxProvider, "destroy">,
     actor: { userId: string; spaceId: string },
     spaceId: string,
+    extra: Partial<SpaceDeletionDeps> = {},
   ) =>
     runAsTenant({ spaceId, userId: actor.userId }, () =>
-      deleteSpaceWithContent(deps(sandbox), actor, spaceId),
+      deleteSpaceWithContent(deps(sandbox, extra), actor, spaceId),
     );
 
   /** Starts deleting the person's Space and holds it in its sandbox teardown. */
@@ -143,6 +153,101 @@ describePostgres("space deletion lease (PostgreSQL)", () => {
       UPDATE "leases" SET "fence" = nextval('leases_fence_seq') WHERE "key" = ${leaseKey(spaceId)}`;
 
   const nothingToDestroy = { destroy: vi.fn() };
+
+  it("deletes a leftover computer through its original connection", async () => {
+    const person = await owner();
+    const connectionId = `bound-${++sequence}-${suffix}`;
+    await system.computerConnection.create({
+      data: {
+        id: connectionId,
+        spaceId: person.spaceId,
+        provider: "fake",
+        ciphertext: "test-sealed-value",
+      },
+    });
+    const providerRef = `machine-${connectionId}`;
+    await computerIn(person, providerRef);
+    await system.computer.updateMany({
+      where: { spaceId: person.spaceId },
+      data: { providerConnectionId: connectionId },
+    });
+    const destroy = vi.fn(async () => undefined);
+    try {
+      await remove({ destroy }, { userId: person.userId, spaceId: person.spaceId }, person.spaceId);
+      expect(destroy).toHaveBeenCalledWith(
+        expect.objectContaining({ providerConnectionId: connectionId, providerRef }),
+        expect.anything(),
+      );
+    } finally {
+      await system.computer.deleteMany({ where: { spaceId: person.spaceId } });
+      await system.computerConnection.deleteMany({ where: { id: connectionId } });
+    }
+  });
+
+  it("keeps orphan cleanup credentials until the queued machine deletion completes", async () => {
+    const person = await owner();
+    const connectionId = `pending-${++sequence}-${suffix}`;
+    await system.computerConnection.create({
+      data: {
+        id: connectionId,
+        spaceId: person.spaceId,
+        provider: "fake",
+        ciphertext: "test-remote-value",
+      },
+    });
+    const homeKey = `home-${connectionId}`;
+    await system.computer.create({
+      data: {
+        spaceId: person.spaceId,
+        userId: person.userId,
+        scopeKey: homeKey,
+        homeKey,
+        kind: "fake",
+        providerConnectionId: connectionId,
+        state: "booting",
+      },
+    });
+    const machine = {
+      provider: "fake",
+      providerConnectionId: connectionId,
+      machineId: `orphan-${connectionId}`,
+      homeKey,
+    };
+    const key = machineCleanupJobKey(machine.provider, machine.machineId, connectionId);
+    await jobs.enqueue(machineCleanupJob(machine, new Date(Date.now() + 16 * 60_000)));
+    const forget = vi.fn(async () => undefined);
+    const extra = { jobs, secrets: { delete: forget, isRemote: () => true } };
+    const actor = { userId: person.userId, spaceId: person.spaceId };
+    try {
+      await expect(remove(nothingToDestroy, actor, person.spaceId, extra)).rejects.toThrow(
+        "Computer cleanup",
+      );
+      expect(
+        await system.computerConnection.findUnique({ where: { id: connectionId } }),
+      ).not.toBeNull();
+      expect(forget).not.toHaveBeenCalled();
+      const deleteMachine = vi.fn(async () => {
+        expect(
+          await system.computerConnection.findUnique({ where: { id: connectionId } }),
+        ).not.toBeNull();
+      });
+      await retryMachineCleanup(
+        { prisma, sandbox: { deleteMachine } as unknown as SandboxProvider },
+        machine,
+      );
+      expect(deleteMachine).toHaveBeenCalledWith(machine, expect.any(AbortSignal));
+      await jobs.cancel(key);
+      await remove(nothingToDestroy, actor, person.spaceId, extra);
+      expect(
+        await system.computerConnection.findUnique({ where: { id: connectionId } }),
+      ).toBeNull();
+      expect(forget).toHaveBeenCalled();
+    } finally {
+      await jobs.cancel(key);
+      await system.computer.deleteMany({ where: { spaceId: person.spaceId } });
+      await system.computerConnection.deleteMany({ where: { id: connectionId } });
+    }
+  });
 
   it("refuses someone who may not delete the Space before taking its lease", async () => {
     const ada = await owner();

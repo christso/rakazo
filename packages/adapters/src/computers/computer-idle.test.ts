@@ -42,6 +42,15 @@ import {
 import { BrowserStillRunningError } from "./screens/computer-screens.js";
 
 describe("sandbox idle", () => {
+  it("stops an idle computer through its recorded connection", async () => {
+    const harness = idleHarness();
+    harness.computer.providerConnectionId = "connection-a";
+    await sleepComputerIfIdle(harness.deps, harness.computer.id);
+    expect(harness.sandbox.stop.mock.calls[0]?.[0]).toMatchObject({
+      providerConnectionId: "connection-a",
+    });
+  });
+
   beforeEach(() => {
     vi.stubEnv("SANDBOX_IDLE_MS", undefined);
     vi.stubEnv("COMPUTER_MAX_ACTIVE_MS", undefined);
@@ -1966,6 +1975,7 @@ function idleHarness(
     homeKey: "team-workspace",
     homeRevision: "rev-before",
     providerRef: "computer",
+    providerConnectionId: null as string | null,
     kind: "e2b",
     state: "running",
     spaceId: "workspace",
@@ -2007,7 +2017,11 @@ function idleHarness(
         restorePending: false,
         screenGeneration: 0,
       })),
-      findUnique: vi.fn(async () => ({ ...computer })),
+      findUnique: vi.fn(async (query?: { select?: Record<string, boolean> }) =>
+        query?.select
+          ? Object.fromEntries(Object.entries(computer).filter(([key]) => query.select?.[key]))
+          : { ...computer },
+      ),
       updateMany: vi.fn(async (args) => {
         if (args.where.updatedAt && args.where.updatedAt.getTime() !== computer.updatedAt.getTime())
           return { count: 0 };

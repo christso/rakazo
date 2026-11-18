@@ -295,6 +295,7 @@ async function upsertComputerRecord(
       userId: input.userId,
       scope: input.mode,
       scopeKey,
+      providerConnectionPinned: false,
       homeKey: await availableHomeKey(prisma, input, scopeKey),
       kind: input.kind,
     },

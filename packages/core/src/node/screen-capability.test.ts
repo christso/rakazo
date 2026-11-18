@@ -28,6 +28,37 @@ const path = (url: string, interactive = false) =>
     ),
   ).pathname;
 describe("sealed screen capabilities", () => {
+  it("seals the certificate pin with the provider credentials for every resource", () => {
+    const pin = "A".repeat(43);
+    const url = new URL(
+      sealScreenCapability(
+        "https://203.0.113.10/embed.html",
+        "secret",
+        "https://app.example",
+        scope,
+        100,
+        { authorization: "Bearer synthetic-runtime-token" },
+        pin,
+      ),
+    );
+    expect(url.toString()).not.toContain(pin);
+    for (const resource of ["embed.html", "app/ui.js", "websockify"]) {
+      expect(
+        openScreenCapability(url.pathname.replace("embed.html", resource), "secret", 101)?.target
+          .tlsCertificateSha256,
+      ).toBe(pin);
+    }
+  });
+  it("rejects malformed pins and a pin on an unencrypted target", () => {
+    for (const [url, pin] of [
+      ["https://203.0.113.10/embed.html", "invalid"],
+      ["http://127.0.0.1:6100/embed.html", "A".repeat(43)],
+    ]) {
+      expect(() =>
+        sealScreenCapability(url!, "secret", "https://app.example", scope, 100, undefined, pin),
+      ).toThrow("certificate");
+    }
+  });
   it("seals provider credentials for page, asset, and websocket requests", () => {
     const upstream = "https://screen.example/vnc.html?path=websockify%3Ftoken%3Dfake-socket";
     const headers = { cookie: "provider_auth=fake-private-token" };
@@ -80,10 +111,14 @@ describe("sealed screen capabilities", () => {
     ).toThrow("Invalid screen authentication headers");
   });
 
-  it.each([false, true])(
-    "connects the shipped embed through one capability prefix (control=%s)",
-    (interactive) => {
-      const provider = new URL("http://127.0.0.1:49152/embed.html");
+  it.each(
+    [false, true].flatMap((interactive) =>
+      ["", "/desktop/32123"].map((base) => ({ interactive, base })),
+    ),
+  )(
+    "connects the shipped embed through one capability prefix ($interactive, $base)",
+    ({ interactive, base }) => {
+      const provider = new URL(`http://127.0.0.1:49152${base}/embed.html`);
       provider.searchParams.set("view_only", String(!interactive));
       provider.searchParams.set("path", "websockify?token=fake-socket-token");
       const url = new URL(
@@ -153,11 +188,82 @@ describe("sealed screen capabilities", () => {
       expect(socket.pathname).toBe(url.pathname.replace("/embed.html", "/websockify"));
       expect(socketUrl).not.toContain("fake-socket-token");
       expect(openScreenCapability(socket.pathname, "fake-secret", 101)?.target).toMatchObject({
-        path: "/websockify?token=fake-socket-token",
+        path: `${base}/websockify?token=fake-socket-token`,
         interactive,
       });
     },
   );
+  it("keeps nested screen assets, socket tokens and read-only policy inside their base", () => {
+    const url = new URL(
+      sealScreenCapability(
+        "https://203.0.113.10/desktop/32123/vnc.html?path=websockify%3Ftoken%3Dsynthetic-socket",
+        "secret",
+        "https://app.example",
+        scope,
+        100,
+        { authorization: "Bearer synthetic-gateway-token" },
+        "A".repeat(43),
+      ),
+    );
+    const socket = new URL(url.searchParams.get("path")!, url.origin);
+    expect(socket.pathname).toBe(url.pathname.replace("vnc.html", "websockify"));
+    expect(openScreenCapability(socket.pathname, "secret", 101)?.target.path).toBe(
+      "/desktop/32123/websockify?token=synthetic-socket",
+    );
+    expect(
+      openScreenCapability(`${url.pathname}?view_only=false`, "secret", 101)?.target.path,
+    ).toContain("view_only=true");
+    expect(
+      openScreenCapability(url.pathname.replace("vnc.html", "core/rfb.js"), "secret", 101)?.target
+        .path,
+    ).toBe("/desktop/32123/core/rfb.js");
+  });
+  it.each([
+    "/computers",
+    "/desktop/32124/embed.html",
+    "/desktop/32123/../32124/embed.html",
+    "/desktop/32123/%2e%2e/32124/embed.html",
+    "/desktop/32123/%2e%2e%2f32124/embed.html",
+    "/desktop/32123/%252e%252e%252f32124/embed.html",
+    "/desktop/32123/..%5c32124/embed.html",
+  ])("does not release gateway credentials outside the sealed screen directory: %s", (outside) => {
+    const url = new URL(
+      sealScreenCapability(
+        "https://203.0.113.10/desktop/32123/embed.html",
+        "secret",
+        "https://app.example",
+        scope,
+        100,
+        { authorization: "Bearer synthetic-gateway-token" },
+        "A".repeat(43),
+      ),
+    );
+    expect(
+      openScreenCapability(
+        url.pathname.replace("/desktop/32123/embed.html", outside),
+        "secret",
+        101,
+      ),
+    ).toBeNull();
+  });
+  it("preserves a nested terminal page and its relative websocket route", () => {
+    const url = new URL(
+      sealScreenCapability(
+        "https://203.0.113.10/desktop/32123/terminal.html?token=synthetic-terminal",
+        "secret",
+        "https://app.example",
+        scope,
+        100,
+      ),
+    );
+    expect(openScreenCapability(url.pathname, "secret", 101)?.target.path).toBe(
+      "/desktop/32123/terminal.html?token=synthetic-terminal",
+    );
+    expect(
+      openScreenCapability(url.pathname.replace("terminal.html", "websockify"), "secret", 101)
+        ?.target.path,
+    ).toBe("/desktop/32123/websockify?token=synthetic-terminal");
+  });
   it("hides provider credentials and binds scope and destination", () => {
     const value = path("https://screen.example/vnc.html");
     expect(value).not.toContain("fake-provider-token");

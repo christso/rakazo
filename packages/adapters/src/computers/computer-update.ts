@@ -115,6 +115,7 @@ export async function queueComputerUpdate(
         leaseId: computer.controlLeaseId,
         expiresAt: computer.controlLeaseExpiresAt,
         providerRef: computer.providerRef,
+        providerConnectionId: computer.providerConnectionId,
         kind: computer.kind,
         homeKey: computer.homeKey,
         spaceId: computer.spaceId,
@@ -312,6 +313,7 @@ type IdleTakeoverHandback = {
   leaseId: string | null;
   expiresAt: Date | null;
   providerRef: string | null;
+  providerConnectionId: string | null;
   kind: string;
   homeKey: string;
   spaceId: string;

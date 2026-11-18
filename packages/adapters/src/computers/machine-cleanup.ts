@@ -20,7 +20,10 @@ export function machineCleanupRecords(
 ): UnreferencedMachineRecords {
   return {
     record: (machine, deleteAt) => jobs.enqueue(machineCleanupJob(machine, deleteAt)),
-    clear: (machine) => jobs.cancel(machineCleanupJobKey(machine.provider, machine.machineId)),
+    clear: (machine) =>
+      jobs.cancel(
+        machineCleanupJobKey(machine.provider, machine.machineId, machine.providerConnectionId),
+      ),
   };
 }
 
@@ -61,7 +64,13 @@ async function deleteUnlessKept(
     deps.prisma.computer.findMany({
       where: {
         OR: [
-          { kind: provider, providerRef: machineId },
+          {
+            kind: provider,
+            providerRef: machineId,
+            ...(machine.providerConnectionId
+              ? { providerConnectionId: machine.providerConnectionId }
+              : {}),
+          },
           ...(homeKey ? [{ homeKey, state: "booting" }] : []),
         ],
       },

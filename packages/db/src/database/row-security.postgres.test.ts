@@ -37,6 +37,15 @@ type Tenant = {
 function rowsFor(t: Tenant, tag: string): Array<[string, Record<string, unknown>]> {
   return [
     [
+      "computerConnection",
+      {
+        id: `connection-${tag}-${t.spaceId}`,
+        spaceId: t.spaceId,
+        provider: "test",
+        ciphertext: "encrypted",
+      },
+    ],
+    [
       "spaceModelRoleChoice",
       {
         spaceId: t.spaceId,
@@ -661,6 +670,90 @@ describePostgres("row-level security (PostgreSQL)", () => {
       await owner.prisma.vaultCredential.deleteMany({ where: { id: { in: ids } } });
     }
   });
+
+  it.each([false, true, "privileged"] as const)(
+    "fences connection-backed computers from old workers, including system=%s",
+    async (system) => {
+      const tag = `computer-rollout-${system}-${suffix}`;
+      await owner.prisma.space.create({ data: { id: tag, organizationId, name: tag } });
+      await owner.prisma.computerConnection.create({
+        data: { id: tag, spaceId: tag, provider: "test", ciphertext: "test-cipher" },
+      });
+      const stamp = new Date("2026-01-01T00:00:00.000Z");
+      for (const name of ["bound", "legacy"]) {
+        await owner.prisma.computer.create({
+          data: {
+            id: `${tag}-${name}`,
+            spaceId: tag,
+            userId: a.userId,
+            scopeKey: `${tag}-${name}`,
+            homeKey: `${tag}-${name}`,
+            kind: "fake",
+            state: "booting",
+            providerRef: `${name}-reference`,
+            updatedAt: stamp,
+          },
+        });
+      }
+      // A claim made before binding must not activate after the connection is attached.
+      await owner.prisma.computer.update({
+        where: { id: `${tag}-bound` },
+        data: { providerConnectionId: tag, updatedAt: stamp },
+      });
+      const connect = () => (system === "privileged" ? owner.pool : app.pool).connect();
+      const client = await (system
+        ? runAsSystem("old computer worker rollout test", connect)
+        : runAsTenant({ spaceId: tag, userId: a.userId }, connect));
+      try {
+        await client.query("RESET app.computer_connection_version");
+        expect(
+          (await client.query('SELECT id FROM computers WHERE "spaceId" = $1 ORDER BY id', [tag]))
+            .rows,
+        ).toEqual(
+          system === "privileged"
+            ? [{ id: `${tag}-bound` }, { id: `${tag}-legacy` }]
+            : [{ id: `${tag}-legacy` }],
+        );
+        const activation = client.query(
+          `UPDATE computers SET kind = 'docker', "providerRef" = 'wrong-default', state = 'running'
+           WHERE id = $1 AND "updatedAt" = $2 RETURNING id`,
+          [`${tag}-bound`, stamp.toISOString()],
+        );
+        if (system === "privileged")
+          await expect(activation).rejects.toThrow("require an updated server");
+        else expect((await activation).rowCount).toBe(0);
+        expect(
+          (
+            await client.query("UPDATE computers SET state = 'running' WHERE id = $1", [
+              `${tag}-legacy`,
+            ])
+          ).rowCount,
+        ).toBe(1);
+        await expect(
+          client.query("DELETE FROM computer_connections WHERE id = $1", [tag]),
+        ).rejects.toThrow("require an updated server");
+        if (system)
+          await expect(client.query("DELETE FROM spaces WHERE id = $1", [tag])).rejects.toThrow(
+            "require an updated server",
+          );
+        expect(
+          await owner.prisma.computer.findUnique({ where: { id: `${tag}-bound` } }),
+        ).toMatchObject({
+          providerRef: "bound-reference",
+          providerConnectionId: tag,
+          state: "booting",
+        });
+        await client.query("SELECT set_config('app.computer_connection_version', '1', false)");
+        expect(
+          (await client.query("SELECT id FROM computers WHERE id = $1", [`${tag}-bound`])).rows,
+        ).toEqual([{ id: `${tag}-bound` }]);
+      } finally {
+        await client.query("SELECT set_config('app.computer_connection_version', '1', false)");
+        client.release();
+        await owner.prisma.space.delete({ where: { id: tag } });
+      }
+    },
+  );
 
   it.each([false, true])(
     "preserves legacy unrestricted use and fences restrictions, including system=%s",

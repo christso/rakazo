@@ -26,6 +26,11 @@ import {
 import { manageComputerWorkspaceDirectories } from "../computer-workspace.js";
 import { sandboxNotFoundError } from "./sandbox-errors.js";
 import { createSandboxProvider } from "./sandbox-factory.js";
+import {
+  bindSpaceComputerConnection,
+  loadComputerConnection,
+} from "./space-computer-connections.js";
+import { provisionSpaceComputer } from "./space-computer-provision.js";
 
 export const COMPUTER_PROVIDER_SECRET_KIND = "computer-provider";
 /** Record id binding the deployment's encrypted computer settings to its settings row. */
@@ -34,6 +39,8 @@ export const DEPLOYMENT_COMPUTER_PROVIDER_RECORD = "deployment-computer-provider
 const SETTINGS_TTL_MS = 5_000;
 export interface StoredComputerSettings {
   provider: string;
+  connectionId?: string;
+  spendingApproved?: boolean;
   values: Record<string, string>;
   /** Retain other deployment connections for computers already running there. */
   connections?: Record<string, Record<string, string>>;
@@ -55,7 +62,10 @@ export function parseStoredComputerSettings(plaintext: string): StoredComputerSe
       Object.values(value.values).some((v) => typeof v !== "string")
     )
       return null;
-    computerProviderDescriptor(value.provider).verify(value.values);
+    const descriptor = computerProviderDescriptor(value.provider);
+    descriptor.verify(value.values);
+    if (descriptor.capabilities.requiresSpendingApproval && value.spendingApproved !== true)
+      return null;
     const connections: Record<string, Record<string, string>> = {};
     if (value.connections) {
       for (const [id, values] of Object.entries(value.connections)) {
@@ -72,6 +82,7 @@ export function parseStoredComputerSettings(plaintext: string): StoredComputerSe
     }
     return {
       provider: value.provider,
+      ...(value.spendingApproved === true ? { spendingApproved: true } : {}),
       values: value.values,
       ...(Object.keys(connections).length ? { connections } : {}),
     };
@@ -96,6 +107,7 @@ async function decryptSettings(
     return null;
   }
   const settings = parseStoredComputerSettings(plaintext);
+  if (strict && !settings) throw new Error("Computer connection unavailable");
   return settings ? { ...settings, ciphertext: secret.ciphertext } : null;
 }
 export function computerSettingsForProvider(
@@ -128,6 +140,13 @@ export async function loadComputerProviderSelection(
         strict,
       )
     : null;
+  if (
+    strict &&
+    row?.computerProvider &&
+    row.computerProvider !== "default" &&
+    (!settings || settings.provider !== row.computerProvider)
+  )
+    throw new Error("Computer connection unavailable");
   return {
     provider:
       settings && settings.provider === row?.computerProvider ? settings.provider : "default",
@@ -158,6 +177,8 @@ export async function loadComputerOwnerSettings(
   homeKey: string,
   strict = false,
 ) {
+  const connectionId = await bindSpaceComputerConnection(prisma, homeKey);
+  if (connectionId) return loadComputerConnection(prisma, secrets, connectionId, homeKey);
   const computer = await runAsSystem("read computer owner", () =>
     prisma.computer.findUnique({ where: { homeKey }, select: { userId: true, scope: true } }),
   );
@@ -192,7 +213,9 @@ export class ConfiguredSandbox implements SandboxProvider {
     private readonly primary: SandboxProvider,
     private readonly load: () => Promise<ComputerProviderSelection>,
     private readonly options: {
+      connectionDb?: PrismaClient;
       loadOwn?: (homeKey: string) => Promise<StoredComputerSettings | null>;
+      loadConnection?: (id: string, homeKey: string) => Promise<StoredComputerSettings>;
       onSecretChange?: SecretStore["onChange"];
       createProvider?: (settings: StoredComputerSettings) => Promise<SandboxProvider>;
     } = {},
@@ -278,9 +301,15 @@ export class ConfiguredSandbox implements SandboxProvider {
     return settings;
   }
   private async route(
-    computer: Pick<ComputerRef, "kind" | "botId" | "providerRef">,
+    computer: Pick<ComputerRef, "kind" | "botId" | "providerRef" | "providerConnectionId">,
     fresh = false,
   ): Promise<SandboxProvider> {
+    if (computer.providerConnectionId) {
+      const settings = await this.connectionSettings(computer.providerConnectionId, computer.botId);
+      if (settings.provider !== computer.kind)
+        throw new Error("Computer connection provider mismatch");
+      return this.providerFor(settings, `connection:${settings.connectionId}`);
+    }
     // Kinds Settings never selects (Docker, a local host computer) can only belong to the primary.
     const descriptor = computerProviderRegistry.find((entry) => entry.id === computer.kind);
     if (!descriptor && (this.primary.ownsReference?.(computer) ?? true)) return this.primary;
@@ -318,8 +347,14 @@ export class ConfiguredSandbox implements SandboxProvider {
     // next start provisions where Settings now says.
     throw sandboxNotFoundError("The computer's provider connection is no longer configured");
   }
-  private async target(homeKey?: string) {
-    const own = homeKey ? await this.ownSettings(homeKey) : null;
+  private async connectionSettings(id: string, homeKey: string) {
+    if (!this.options.loadConnection) throw new Error("Computer connection unavailable");
+    const settings = await this.options.loadConnection(id, homeKey);
+    if (settings.connectionId !== id) throw new Error("Computer connection mismatch");
+    return settings;
+  }
+  private async target(homeKey?: string, fresh = false) {
+    const own = homeKey ? await this.ownSettings(homeKey, fresh) : null;
     if (own) return this.providerFor(own, homeKey!);
     // An unreadable store must not stop every computer from starting: use the last settings read.
     await this.current().catch((error) => {
@@ -334,7 +369,7 @@ export class ConfiguredSandbox implements SandboxProvider {
   }
 
   async provisionKind(homeKey?: string): Promise<ComputerRef["kind"]> {
-    const target = await this.target(homeKey);
+    const target = await this.target(homeKey, true);
     if (target !== this.primary) return target.describe().id;
     return (await this.primary.provisionKind?.(homeKey)) ?? this.primary.describe().id;
   }
@@ -343,12 +378,31 @@ export class ConfiguredSandbox implements SandboxProvider {
     request: Parameters<SandboxProvider["provision"]>[0],
     context: AdapterContext,
   ): Promise<ComputerRef> {
-    const target = await this.target(request.botId);
+    const settings = request.providerConnectionId
+      ? await this.connectionSettings(request.providerConnectionId, request.botId)
+      : await this.ownSettings(request.botId, true);
+    const target = settings?.connectionId
+      ? await this.providerFor(settings, `connection:${settings.connectionId}`)
+      : await this.target(request.botId);
     const kind = target.describe().id;
     // A reference from the other provider means nothing to this one.
     const expectedKind = (await target.provisionKind?.(request.botId)) ?? kind;
     const providerRef = request.providerKind === expectedKind ? request.providerRef : undefined;
-    return target.provision({ ...request, providerRef }, context);
+    const provision = (providerContext: AdapterContext) =>
+      target.provision({ ...request, providerRef }, providerContext);
+    const computer =
+      settings?.connectionId && this.options.connectionDb
+        ? await provisionSpaceComputer(
+            this.options.connectionDb,
+            settings.connectionId,
+            request.botId,
+            context,
+            provision,
+          )
+        : await provision(context);
+    return settings?.connectionId
+      ? { ...computer, providerConnectionId: settings.connectionId }
+      : computer;
   }
 
   async isRunning(computer: ComputerRef, context: AdapterContext) {
@@ -366,6 +420,7 @@ export class ConfiguredSandbox implements SandboxProvider {
   async environment(computer: ComputerRef, context: AdapterContext) {
     // Asked before a new or moving computer starts, so describe where it will start.
     const provider = await this.route(computer).catch(async (error: unknown) => {
+      if (computer.providerConnectionId) throw error;
       const target = await this.target(computer.botId);
       if (target.describe().id !== computer.kind) throw error;
       return target;
@@ -493,6 +548,7 @@ export class ConfiguredSandbox implements SandboxProvider {
   }
 
   billsWhileRunning(computer: ComputerRef): boolean {
+    if (computer.providerConnectionId) return true;
     // The primary bills its own kinds, such as a local host computer behind Docker.
     if (
       computer.kind === this.primary.describe().id ||
@@ -533,8 +589,9 @@ export class ConfiguredSandbox implements SandboxProvider {
 
   async deleteMachine(machine: UnreferencedMachine, signal: AbortSignal) {
     const provider = await this.route({
+      providerConnectionId: machine.providerConnectionId,
       kind: machine.provider,
-      botId: machine.homeKey ?? "",
+      botId: machine.providerConnectionId ? "" : (machine.homeKey ?? ""),
       providerRef: machine.machineId,
     });
     // The deployment's own provider answers for every kind Settings cannot select, so it may be

@@ -77,13 +77,18 @@ export type ComputerProviderField = ProviderSettingsField;
 export const ComputerProviderDescriptorSchema = z.object({
   id: z.string(),
   displayName: z.string(),
+  spendingApprovalMessage: z.string().optional(),
   fields: z.array(ComputerProviderFieldSchema),
-  capabilities: z.object({ perAccount: z.boolean() }),
+  capabilities: z.object({
+    perAccount: z.boolean(),
+    requiresSpendingApproval: z.boolean().optional(),
+  }),
 });
 export type ComputerProviderDescriptor = z.infer<typeof ComputerProviderDescriptorSchema>;
 export const ComputerProviderSettingsSchema = z.object({
   provider: z.string(),
   defaultProvider: z.string(),
+  connectionId: z.string().optional(),
   providers: z.array(ComputerProviderDescriptorSchema),
   values: z.record(z.string(), z.string()),
   savedSecrets: z.record(z.string(), z.boolean()),
@@ -91,6 +96,8 @@ export const ComputerProviderSettingsSchema = z.object({
 export type ComputerProviderSettings = z.infer<typeof ComputerProviderSettingsSchema>;
 export const ComputerProviderUpdateSchema = z.object({
   provider: z.string().trim().min(1).max(64),
+  approveSpending: z.boolean().optional(),
+  expectedConnectionId: z.string().min(1).max(128).nullable().optional(),
   values: z.record(z.string().max(64), z.string().trim().max(4096)).default({}),
 });
 export type ComputerProviderUpdate = z.infer<typeof ComputerProviderUpdateSchema>;

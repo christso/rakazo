@@ -462,6 +462,7 @@ export async function provisionComputer(
               homePath,
               providerRef: existing.providerRef ?? undefined,
               providerKind: existing.kind,
+              providerConnectionId: existing.providerConnectionId ?? undefined,
               // A save from an older release has no time; the provider keeps its own state then.
               savedAt:
                 existing.homeRevision === "empty"
@@ -587,6 +588,7 @@ export async function provisionComputer(
         data: {
           state: "running",
           providerRef: ref.providerRef,
+          ...(ref.providerConnectionId ? { providerConnectionId: ref.providerConnectionId } : {}),
           kind: ref.kind,
           restorePending: false,
           runningSince,
@@ -606,7 +608,10 @@ export async function provisionComputer(
         },
       });
       if (stored.count === 1)
-        await deps.jobs.cancelIn(tx, machineCleanupJobKey(ref.kind, ref.providerRef));
+        await deps.jobs.cancelIn(
+          tx,
+          machineCleanupJobKey(ref.kind, ref.providerRef, ref.providerConnectionId),
+        );
       return stored;
     });
     if (activated.count !== 1) {
@@ -667,6 +672,9 @@ export async function provisionComputer(
             ...(kept
               ? {
                   providerRef: kept.providerRef,
+                  ...(kept.providerConnectionId
+                    ? { providerConnectionId: kept.providerConnectionId }
+                    : {}),
                   kind: kept.kind,
                   restorePending: replaces(kept),
                 }
@@ -676,7 +684,10 @@ export async function provisionComputer(
         });
         // Stored, so its record goes too. One this write did not store keeps its record.
         if (kept && recorded.count === 1)
-          await deps.jobs.cancelIn(tx, machineCleanupJobKey(kept.kind, kept.providerRef));
+          await deps.jobs.cancelIn(
+            tx,
+            machineCleanupJobKey(kept.kind, kept.providerRef, kept.providerConnectionId),
+          );
       });
     } catch (recordError) {
       throw new AggregateError(
@@ -1386,6 +1397,9 @@ export async function replaceComputer(
       data: {
         state: "stopped",
         providerRef: null,
+        ...(mode === "reset"
+          ? { providerConnectionId: null, providerConnectionPinned: false }
+          : {}),
         controlHolder: "none",
         controlLeaseId: null,
         controlUserId: null,

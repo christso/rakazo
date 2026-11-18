@@ -1,23 +1,38 @@
 import { Trans, useLingui } from "@lingui/react/macro";
 import type { ComputerProviderSettings as Settings } from "@rakazo/contracts";
-import { Button, Field, FieldLabel, Input, OptionSelect } from "@rakazo/ui-web";
+import { Button, Checkbox, Field, FieldLabel, Input, OptionSelect } from "@rakazo/ui-web";
 import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@rakazo/ui-web/components/ui/collapsible";
+import { hashKey, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useId, useState } from "react";
+import type { SpaceQueries } from "../../lib/query/query";
 import { useSave, useSpaceQueries } from "../../lib/query/query";
 import type { RpcClient } from "../../lib/query/rpc";
-import { rpc } from "../../lib/query/rpc";
 import { errorText } from "../../lib/query/user-error";
 import { SuccessPop } from "../ai/primitives";
 
-type Draft = { provider: string; values: Record<string, string> };
+type Scope = "deployment" | "account" | "space";
+type Draft = {
+  provider: string;
+  values: Record<string, string>;
+  approveSpending?: boolean;
+  expectedConnectionId?: string | null;
+};
+type Form = { key: string; settings: Settings; draft: Draft; dirty: boolean };
 
 // The RPC client hands out a new object on every property read, so pick by scope, never hold it.
-function settingsApi(client: RpcClient, scope: "deployment" | "account") {
+function settingsApi(client: RpcClient, scope: Scope) {
+  if (scope === "space") return client.computerProvider.space;
   return scope === "account" ? client.computerProvider.account : client.computerProvider;
+}
+
+function settingsRead(queries: SpaceQueries, scope: Scope) {
+  if (scope === "space") return queries.computerProvider.space.get.queryOptions();
+  if (scope === "account") return queries.computerProvider.account.get.queryOptions();
+  return queries.computerProvider.get.queryOptions();
 }
 
 // Field labels come from the server in English; translate the ones the registry uses.
@@ -46,56 +61,78 @@ function useFieldLabel() {
   return (field: { key: string; label: string }) => labels[field.key] ?? field.label;
 }
 
-function draftFrom(settings: Settings): Draft {
-  return { provider: settings.provider, values: settings.values };
+function draftFrom(settings: Settings, scope: Scope): Draft {
+  return {
+    provider: settings.provider,
+    values: settings.values,
+    ...(scope === "space" ? { expectedConnectionId: settings.connectionId ?? null } : {}),
+  };
 }
 
 export function ComputerProviderSettings({
   scope,
   onProviderChange,
+  onBusyChange,
+  collapsible = false,
 }: {
-  scope: "deployment" | "account";
+  scope: Scope;
   onProviderChange?: (sandboxProvider: string) => void;
+  onBusyChange?: (busy: boolean) => void;
+  collapsible?: boolean;
 }) {
   const { t } = useLingui();
   const fieldLabel = useFieldLabel();
   const selectId = useId();
-  const [settings, setSettings] = useState<Settings | null>(null);
-  const [draft, setDraft] = useState<Draft | null>(null);
+  const approvalId = useId();
+  const [formState, setFormState] = useState<Form | null>(null);
   const [saved, setSaved] = useState(false);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const [approveSpending, setApproveSpending] = useState(false);
   const queries = useSpaceQueries();
+  const queryClient = useQueryClient();
+  const read = settingsRead(queries, scope);
+  const query = useQuery(read);
+  const key = hashKey(read.queryKey);
+  const formStateForScope = formState?.key === key ? formState : null;
+  const settings = formStateForScope?.settings;
+  const draft = formStateForScope?.draft;
+  const dirty = formStateForScope?.dirty ?? false;
+  const remoteChanged =
+    scope === "space" &&
+    query.data &&
+    draft &&
+    draft.expectedConnectionId !== (query.data.connectionId ?? null);
+  const loadError = query.error
+    ? errorText(query.error, t`Could not load computer settings`)
+    : null;
   const save = useSave({
-    save: (next: Draft, client) => settingsApi(client, scope).update(next),
+    save: async (next: Draft, client) => {
+      await queryClient.cancelQueries({ queryKey: read.queryKey });
+      return settingsApi(client, scope).update(next);
+    },
     // The deployment's provider is part of the account read.
     stale: scope === "deployment" ? [queries.me.key()] : [],
     onSaved: (next) => {
-      setSettings(next);
-      setDraft(draftFrom(next));
+      queryClient.setQueryData(read.queryKey, next);
+      setFormState({ key, settings: next, draft: draftFrom(next, scope), dirty: false });
       setSaved(true);
+      setApproveSpending(false);
       // An account's choice covers only its Team Computers, never what the deployment runs.
       if (scope === "deployment")
         onProviderChange?.(next.provider === "default" ? next.defaultProvider : next.provider);
     },
   });
   const pending = save.pending;
+  useEffect(() => onBusyChange?.(pending), [onBusyChange, pending]);
 
   useEffect(() => {
-    let alive = true;
-    settingsApi(rpc, scope)
-      .get()
-      .then((next) => {
-        if (!alive) return;
-        setSettings(next);
-        setDraft(draftFrom(next));
-      })
-      .catch((caught: unknown) => {
-        if (alive) setLoadError(errorText(caught, t`Could not load computer settings`));
-      });
-    return () => {
-      alive = false;
-    };
-  }, [scope, t]);
+    if (dirty) return;
+    setFormState(
+      query.data
+        ? { key, settings: query.data, draft: draftFrom(query.data, scope), dirty: false }
+        : null,
+    );
+    setApproveSpending(false);
+  }, [query.data, key, dirty, scope]);
 
   if (!draft || !settings) {
     return loadError ? (
@@ -107,18 +144,25 @@ export function ComputerProviderSettings({
 
   const set = (patch: Partial<Draft>) => {
     setSaved(false);
-    setDraft({ ...draft, ...patch });
+    setApproveSpending(false);
+    setFormState({ key, settings, draft: { ...draft, ...patch }, dirty: true });
   };
   const descriptor = settings.providers.find((provider) => provider.id === draft.provider);
+  const requiresApproval =
+    scope === "space" && descriptor?.capabilities.requiresSpendingApproval === true;
   if (settings.providers.length === 0) return null;
-  return (
+  const destinationChanged = descriptor?.fields.some(
+    (field) => field.kind === "url" && draft.values[field.key] !== settings.values[field.key],
+  );
+  const form = (
     <>
       <form
         className="mt-4 grid gap-3"
         data-testid="computer-provider-settings"
         onSubmit={(event) => {
           event.preventDefault();
-          save.run(draft);
+          if (remoteChanged || (requiresApproval && !approveSpending)) return;
+          save.run(requiresApproval ? { ...draft, approveSpending: true } : draft);
         }}
       >
         {/* Edits made while a save is in flight would be replaced by what it saved. */}
@@ -149,11 +193,7 @@ export function ComputerProviderSettings({
             const saved =
               draft.provider === settings.provider &&
               settings.savedSecrets[field.key] &&
-              !descriptor.fields.some(
-                (candidate) =>
-                  candidate.kind === "url" &&
-                  draft.values[candidate.key] !== settings.values[candidate.key],
-              );
+              !destinationChanged;
             const change = (value: string) =>
               set({ values: { ...draft.values, [field.key]: value } });
             return field.kind === "select" ? (
@@ -184,14 +224,70 @@ export function ComputerProviderSettings({
               />
             );
           })}
+          {requiresApproval ? (
+            <div className="grid gap-1">
+              <Field orientation="horizontal">
+                <Checkbox
+                  id={approvalId}
+                  checked={approveSpending}
+                  onCheckedChange={(checked) => {
+                    setApproveSpending(checked === true);
+                    setFormState({ key, settings, draft, dirty: true });
+                  }}
+                  aria-describedby={
+                    descriptor?.spendingApprovalMessage ? `${approvalId}-message` : undefined
+                  }
+                />
+                <FieldLabel htmlFor={approvalId}>
+                  <Trans>Allow paid computers</Trans>
+                </FieldLabel>
+              </Field>
+              {descriptor?.spendingApprovalMessage ? (
+                <p id={`${approvalId}-message`} className="text-body-sm text-muted-foreground">
+                  {descriptor.spendingApprovalMessage}
+                </p>
+              ) : null}
+            </div>
+          ) : null}
         </fieldset>
+        {remoteChanged ? (
+          <div className="grid gap-2 text-body-sm">
+            <p role="status">
+              <Trans>Computer settings changed. Reload before saving.</Trans>
+            </p>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="w-fit"
+              onClick={() => {
+                if (!query.data) return;
+                setFormState({
+                  key,
+                  settings: query.data,
+                  draft: draftFrom(query.data, scope),
+                  dirty: false,
+                });
+                setApproveSpending(false);
+                setSaved(false);
+                save.reset();
+              }}
+            >
+              <Trans>Reload settings</Trans>
+            </Button>
+          </div>
+        ) : null}
         {save.error ? (
           <p role="alert" className="text-body-sm text-destructive">
             {errorText(save.error, t`Could not save computer settings`)}
           </p>
         ) : null}
         <div className="flex items-center gap-3">
-          <Button type="submit" size="sm" disabled={pending}>
+          <Button
+            type="submit"
+            size="sm"
+            disabled={pending || remoteChanged || (requiresApproval && !approveSpending)}
+          >
             <Trans>Save</Trans>
           </Button>
           {saved ? <SuccessPop label={t`Saved`} /> : null}
@@ -209,6 +305,16 @@ export function ComputerProviderSettings({
         </Collapsible>
       ) : null}
     </>
+  );
+  return collapsible ? (
+    <Collapsible>
+      <CollapsibleTrigger className="text-body-sm font-medium">
+        <Trans>Computers</Trans>
+      </CollapsibleTrigger>
+      <CollapsibleContent>{form}</CollapsibleContent>
+    </Collapsible>
+  ) : (
+    form
   );
 }
 

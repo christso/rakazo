@@ -18,6 +18,7 @@ const state = vi.hoisted(() => ({
   focusCount: 0,
   rules: [] as { id: string }[],
   selectedSpace: "space-selected",
+  canManageComputers: false,
 }));
 type SwitchProps = {
   accessibilityLabel?: string;
@@ -41,6 +42,7 @@ const { element, toggle } = vi.hoisted(() => ({
 }));
 
 vi.mock("../layout/side-insets", () => ({ useSideInsets: () => ({}) }));
+vi.mock("../platform/app-foreground", () => ({ useAppForeground: () => true }));
 vi.mock("../appearance/appearance", () => ({ mobileTokens: () => ({}) }));
 vi.mock("../native/native", () => ({
   native: {},
@@ -154,12 +156,23 @@ beforeEach(async () => {
   state.focusCount = 0;
   state.rules = [];
   state.selectedSpace = "space-selected";
+  state.canManageComputers = false;
   state.push.mockReset();
   state.alert.mockReset();
   state.rpc
     .mockReset()
     .mockImplementation(async (proc: string, input?: Record<string, unknown>) => {
       if (proc === "spaceSettings/overrides") return state.overrides;
+      if (proc === "computerProvider/space/get")
+        return {
+          provider: "default",
+          defaultProvider: "docker",
+          providers: state.canManageComputers
+            ? [{ id: "test-cloud", displayName: "Test cloud", capabilities: {}, fields: [] }]
+            : [],
+          values: {},
+          savedSecrets: {},
+        };
       if (proc === "spaceSettings/setOverride") {
         const setting = input!.setting as string;
         state.overrides = input!.enabled
@@ -181,6 +194,27 @@ afterEach(() => {
   act(() => root.unmount());
   container.remove();
   vi.unstubAllGlobals();
+});
+
+it("opens computer settings for the edited Space when its connections can be managed", async () => {
+  state.canManageComputers = true;
+  await act(async () => {
+    await queryClient.invalidateQueries();
+  });
+  await act(flush);
+  const computers = [...container.querySelectorAll("button")].find(
+    (button) => button.textContent === "Computers",
+  );
+  expect(computers).toBeDefined();
+  await press(computers!);
+  expect(state.push).toHaveBeenCalledWith({
+    pathname: "/computer-provider",
+    params: { spaceId: "space-other" },
+  });
+  expect(state.rpc).toHaveBeenCalledWith("computerProvider/space/get", undefined, {
+    ...spaceContext,
+    signal: expect.any(AbortSignal),
+  });
 });
 
 it("follows the account until a setting is customized, then opens the same screen for the Space", async () => {

@@ -221,6 +221,7 @@ export type RunTeardownTarget = {
   homeKey: string;
   kind: string;
   providerRef: string | null;
+  providerConnectionId: string | null;
   botId: string;
   runId: string;
   fence: number;
@@ -245,7 +246,13 @@ export async function snapshotRunTeardownTargets(
 
   const computers = await tx.computer.findMany({
     where: { id: { in: [...new Set(leases.map((lease) => lease.computerId))] } },
-    select: { id: true, homeKey: true, kind: true, providerRef: true },
+    select: {
+      id: true,
+      homeKey: true,
+      kind: true,
+      providerRef: true,
+      providerConnectionId: true,
+    },
   });
   const computerById = new Map(computers.map((computer) => [computer.id, computer]));
   const targets: RunTeardownTarget[] = [];
@@ -254,8 +261,8 @@ export async function snapshotRunTeardownTargets(
     const computer = computerById.get(computerId);
     if (!computer || seen.has(`${computerId}:${runId}`)) return;
     seen.add(`${computerId}:${runId}`);
-    const { id, homeKey, kind, providerRef } = computer;
-    targets.push({ id, homeKey, kind, providerRef, botId, runId, fence });
+    const { id, homeKey, kind, providerRef, providerConnectionId } = computer;
+    targets.push({ id, homeKey, kind, providerRef, providerConnectionId, botId, runId, fence });
   };
   for (const lease of leases) addTarget(lease.computerId, lease.botId, lease.runId, lease.fence);
   return { leasedRunIds, targets };

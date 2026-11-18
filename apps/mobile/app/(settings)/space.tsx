@@ -18,6 +18,7 @@ import { mobileTokens } from "../../lib/appearance/appearance";
 import { useSideInsets } from "../../lib/layout/side-insets";
 import { native, useThemedStyles } from "../../lib/native/native";
 import { queryClient, rpcQuery, useSave } from "../../lib/query/query";
+import { useScreenQuery } from "../../lib/query/screen-query";
 import { settingsTarget } from "../../lib/query/settings-target";
 import { useApprovalSettings } from "../../lib/settings/approval-settings";
 
@@ -38,6 +39,9 @@ export default function SpaceSettings() {
   const overridesRead = rpcQuery("spaceSettings/overrides", undefined, space);
   const overridesQuery = useQuery({ ...overridesRead, enabled: isSpace }, queryClient);
   const overrides = overridesQuery.data ?? null;
+  const computers = useScreenQuery(rpcQuery("computerProvider/space/get", undefined, space), {
+    enabled: isSpace,
+  });
   const loadError = overridesQuery.error
     ? errorText(overridesQuery.error, t`Something went wrong. Try again.`)
     : null;
@@ -155,6 +159,18 @@ export default function SpaceSettings() {
                 onPress={() => open("confirmations")}
               />
             ) : null}
+          </SettingsGroup>
+        ) : null}
+        {computers.data?.providers.length ? (
+          <SettingsGroup>
+            <SettingsRow
+              title={t`Computers`}
+              accessibilityRole="button"
+              chevron="right"
+              onPress={() =>
+                router.push({ pathname: "/computer-provider", params: { spaceId: space } })
+              }
+            />
           </SettingsGroup>
         ) : null}
       </ScrollView>

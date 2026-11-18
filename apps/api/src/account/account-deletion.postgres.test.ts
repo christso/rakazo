@@ -10,10 +10,13 @@ import type {
   PortableFile,
   SandboxProvider,
 } from "@rakazo/adapter-kit";
+import { machineCleanupJob, machineCleanupJobKey } from "@rakazo/adapter-kit";
 import {
   checkpointAndRecordComputerWorkspace,
+  GraphileJobPublisher,
   ObjectAgentHomeStore,
   PrismaAgentHomeRecords,
+  retryMachineCleanup,
   teamBrowserProfileName,
 } from "@rakazo/adapters";
 import type { PrismaClient, SpaceKeyRecord, SpaceKeyStore } from "@rakazo/db";
@@ -49,6 +52,7 @@ describePostgres("account deletion on bot computers (PostgreSQL)", () => {
   let home: ObjectAgentHomeStore;
   let sandbox: ReturnType<typeof fakeSandbox>;
   let ids: ReturnType<typeof fixtureIds>;
+  let jobs: GraphileJobPublisher;
 
   const context: AdapterContext = {
     operationId: "test",
@@ -57,7 +61,11 @@ describePostgres("account deletion on bot computers (PostgreSQL)", () => {
     userId: "test",
     signal: new AbortController().signal,
   };
-  const deleteAccount = (userId: string, secrets?: SpaceDeletionDeps["secrets"]) =>
+  const deleteAccount = (
+    userId: string,
+    secrets?: SpaceDeletionDeps["secrets"],
+    publisher?: JobPublisher,
+  ) =>
     runAsSystem("account deletion test", () =>
       deleteAccountContent(
         {
@@ -66,7 +74,7 @@ describePostgres("account deletion on bot computers (PostgreSQL)", () => {
           memoryProviders: { resolve: async () => null },
           sandbox: sandbox as unknown as SandboxProvider,
           home,
-          jobs: { cancel: vi.fn() } as unknown as JobPublisher,
+          jobs: publisher ?? ({ cancel: vi.fn() } as unknown as JobPublisher),
           artifacts: { remove: vi.fn() } as unknown as ArtifactStore,
           events: createThreadEvents(prisma),
           dataDir: root,
@@ -92,6 +100,7 @@ describePostgres("account deletion on bot computers (PostgreSQL)", () => {
     const db = createDb(databaseUrl!);
     prisma = db.prisma;
     system = asSystem(prisma);
+    jobs = new GraphileJobPublisher(db.pool, prisma);
     close = async () => {
       await db.prisma.$disconnect();
       await db.pool.end();
@@ -99,6 +108,7 @@ describePostgres("account deletion on bot computers (PostgreSQL)", () => {
   });
 
   afterAll(async () => {
+    await jobs?.close();
     await close?.();
   });
 
@@ -248,6 +258,95 @@ describePostgres("account deletion on bot computers (PostgreSQL)", () => {
       await home.commit(homeKey, await staged(files), context);
     }
   }
+
+  it("routes leftover computer deletion through its original connection", async () => {
+    const connectionId = `bound-${suffix}`;
+    await system.computerConnection.create({
+      data: {
+        id: connectionId,
+        spaceId: ids.personalSpace,
+        provider: "fake",
+        ciphertext: "test-sealed-value",
+      },
+    });
+    const providerRef = `bound-machine-${suffix}`;
+    await system.computer.create({
+      data: {
+        spaceId: ids.personalSpace,
+        userId: ids.leaver,
+        scopeKey: providerRef,
+        homeKey: providerRef,
+        kind: "fake",
+        providerRef,
+        providerConnectionId: connectionId,
+      },
+    });
+    const destroy = vi.spyOn(sandbox, "destroy");
+    await deleteAccount(ids.leaver);
+    expect(destroy).toHaveBeenCalledWith(
+      expect.objectContaining({ providerRef, providerConnectionId: connectionId }),
+      expect.anything(),
+    );
+  });
+
+  it("retains connection credentials until an interrupted create's durable cleanup completes", async () => {
+    const connectionId = `pending-${suffix}`;
+    await system.computerConnection.create({
+      data: {
+        id: connectionId,
+        spaceId: ids.personalSpace,
+        provider: "fake",
+        ciphertext: "test-remote-value",
+      },
+    });
+    const homeKey = `pending-home-${suffix}`;
+    await system.computer.create({
+      data: {
+        spaceId: ids.personalSpace,
+        userId: ids.leaver,
+        scopeKey: homeKey,
+        homeKey,
+        kind: "fake",
+        state: "booting",
+        providerConnectionId: connectionId,
+      },
+    });
+    const machine = {
+      provider: "fake",
+      providerConnectionId: connectionId,
+      machineId: `orphan-${suffix}`,
+      homeKey,
+    };
+    const key = machineCleanupJobKey(machine.provider, machine.machineId, connectionId);
+    await jobs.enqueue(machineCleanupJob(machine, new Date(Date.now() + 16 * 60_000)));
+    const forget = vi.fn(async () => undefined);
+    const secrets = { delete: forget, isRemote: () => true };
+    try {
+      await expect(deleteAccount(ids.leaver, secrets, jobs)).rejects.toThrow("Computer cleanup");
+      expect(
+        await system.computerConnection.findUnique({ where: { id: connectionId } }),
+      ).not.toBeNull();
+      expect(forget).not.toHaveBeenCalled();
+      const deleteMachine = vi.fn(async () => {
+        expect(
+          await system.computerConnection.findUnique({ where: { id: connectionId } }),
+        ).not.toBeNull();
+      });
+      await retryMachineCleanup(
+        { prisma, sandbox: { deleteMachine } as unknown as SandboxProvider },
+        machine,
+      );
+      expect(deleteMachine).toHaveBeenCalledWith(machine, expect.any(AbortSignal));
+      await jobs.cancel(key);
+      await deleteAccount(ids.leaver, secrets, jobs);
+      expect(
+        await system.computerConnection.findUnique({ where: { id: connectionId } }),
+      ).toBeNull();
+      expect(forget).toHaveBeenCalled();
+    } finally {
+      await jobs.cancel(key);
+    }
+  });
 
   it("deletes every computer of the account and its own spaces, and only its folders elsewhere", async () => {
     const legacyKey = legacyTeamHomeKey(ids.sharedSpace);

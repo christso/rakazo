@@ -1,7 +1,9 @@
 import type { AdapterContext } from "@rakazo/adapter-kit";
 import {
   destroyBot,
+  finishSpaceComputerConnectionCleanup,
   forgetPageShareSecrets,
+  prepareSpaceComputerConnectionCleanup,
   removeAgentHome,
   removeDeletedBotsFromLegacyTeamHome,
   toComputerRef,
@@ -381,6 +383,7 @@ async function deleteClaimedSpaces(
       homeKey: true,
       kind: true,
       providerRef: true,
+      providerConnectionId: true,
       bots: { select: { id: true } },
     },
   });
@@ -410,6 +413,7 @@ async function deleteClaimedSpaces(
   for (const spaceId of input.spaceIds) {
     // Teardown abandoned at a deadline that finishes later leaves the rest to the next attempt.
     input.signal?.throwIfAborted();
+    const connectionCleanups = await prepareSpaceComputerConnectionCleanup(deps, spaceId);
     const deleted = await deleteClaimedSpace(deps.prisma, {
       spaceId,
       claimId: input.claimId,
@@ -421,6 +425,7 @@ async function deleteClaimedSpaces(
       input.onReleased?.(spaceId);
       continue;
     }
+    await finishSpaceComputerConnectionCleanup(deps, connectionCleanups);
     const cleanup = await Promise.allSettled(
       deleted.artifactKeys.map((storageKey) => deps.artifacts.remove(storageKey, context(spaceId))),
     );

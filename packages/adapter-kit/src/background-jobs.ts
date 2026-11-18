@@ -88,6 +88,7 @@ const payloadSchemas = {
     ref: z.string().min(1).optional(),
   }),
   "computer.machine-cleanup": z.object({
+    providerConnectionId: z.string().min(1).optional(),
     provider: z.string().min(1),
     machineId: z.string().min(1),
     homeKey: z.string().min(1).optional(),
@@ -360,8 +361,12 @@ export function connectionCleanupJob(
   };
 }
 
-export function machineCleanupJobKey(provider: string, machineId: string): string {
-  return `computer.machine-cleanup:${JSON.stringify([provider, machineId])}`;
+export function machineCleanupJobKey(
+  provider: string,
+  machineId: string,
+  providerConnectionId?: string,
+): string {
+  return `computer.machine-cleanup:${JSON.stringify(providerConnectionId ? [provider, machineId, providerConnectionId] : [provider, machineId])}`;
 }
 
 /**
@@ -376,7 +381,11 @@ export function machineCleanupJob(machine: UnreferencedMachine, availableAt: Dat
     name: "computer.machine-cleanup",
     payload: machine,
     availableAt,
-    replaceKey: machineCleanupJobKey(machine.provider, machine.machineId),
+    replaceKey: machineCleanupJobKey(
+      machine.provider,
+      machine.machineId,
+      machine.providerConnectionId,
+    ),
     maxAttempts: MACHINE_CLEANUP_MAX_ATTEMPTS,
   };
 }

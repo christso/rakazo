@@ -10,6 +10,7 @@
     "./host-computer-server": "./src/computers/host/host-computer-server.ts",
     "./host-screen": "./src/computers/screens/host-screen.ts",
     "./model-json": "./src/models/model-json.ts",
+    "./test-computer-settings": "./src/providers/computer/fake/fake-computer-settings.test-support.ts",
     "./wuying-screen-policy": "./src/providers/computer/wuying/wuying-screen-policy.ts",
     "./user-device-client": "./src/computers/host/user-device-client.ts"
   },
@@ -48,6 +49,7 @@
     "@opentelemetry/exporter-trace-otlp-http": "0.301.0",
     "@opentelemetry/resources": "3.1.0",
     "@opentelemetry/sdk-trace": "3.1.0",
+    "@peculiar/x509": "1.14.3",
     "@photon-ai/chat-adapter-imessage": "3.2.0",
     "@rakazo/adapter-kit": "workspace:*",
     "@rakazo/contracts": "workspace:*",

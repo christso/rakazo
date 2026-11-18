@@ -69,6 +69,16 @@
       "development": "./src/node/desktop-runtime.ts",
       "default": "./src/node/desktop-runtime.ts"
     },
+    "./node/pinned-https": {
+      "types": "./src/node/pinned-https.ts",
+      "development": "./src/node/pinned-https.ts",
+      "default": "./src/node/pinned-https.ts"
+    },
+    "./node/supervisor-identity": {
+      "types": "./src/node/supervisor-identity.ts",
+      "development": "./src/node/supervisor-identity.ts",
+      "default": "./src/node/supervisor-identity.ts"
+    },
     "./node/screen-capability": {
       "types": "./src/node/screen-capability.ts",
       "development": "./src/node/screen-capability.ts",

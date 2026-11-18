@@ -1,6 +1,7 @@
 import { Trans, useLingui } from "@lingui/react/macro";
 import { Button, Input } from "@rakazo/ui-web";
 import { useEffect, useId, useState } from "react";
+import { ComputerProviderSettings } from "../../components/computers/ComputerProviderSettings";
 import { SettingsGroup, SettingsRow } from "../../components/settings/SettingsRows";
 import { SpaceMembersSettings } from "../../components/spaces/SpaceMembersSettings";
 import { useSave } from "../../lib/query/query";
@@ -39,8 +40,9 @@ export function SpaceSettingsPanel({
   const pending = rename.pending;
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [overridesBusy, setOverridesBusy] = useState(false);
+  const [computersBusy, setComputersBusy] = useState(false);
   // A rename in flight holds the dialog open, so a failure is shown instead of lost on leaving.
-  const busy = pending || overridesBusy;
+  const busy = pending || overridesBusy || computersBusy;
   useEffect(() => {
     onBusyChange?.(busy);
   }, [busy, onBusyChange]);
@@ -104,6 +106,7 @@ export function SpaceSettingsPanel({
       ) : null}
       <SpaceMembersSettings space={space} onLeft={onLeft} />
       <SpaceSettingOverrides onClose={onClose} onBusyChange={setOverridesBusy} />
+      <ComputerProviderSettings scope="space" collapsible onBusyChange={setComputersBusy} />
       {space.canDelete ? (
         <Button
           variant="destructive"

@@ -135,6 +135,7 @@ export interface SandboxProvider {
       homePath: string;
       providerRef?: string;
       providerKind?: ComputerRef["kind"];
+      providerConnectionId?: string;
       /**
        * When the saved workspace a replacement would restore was read from the computer. A
        * provider that can only bring `providerRef` back from an older snapshot of its own
@@ -205,7 +206,7 @@ export interface SandboxProvider {
     computer: ComputerRef,
     request: TerminalRequest,
     context: AdapterContext,
-  ): Promise<{ url: string; headers?: Record<string, string> }>;
+  ): Promise<{ url: string; headers?: Record<string, string>; tlsCertificateSha256?: string }>;
   setScreenControl?(
     computer: ComputerRef,
     interactive: boolean,

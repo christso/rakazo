@@ -36,6 +36,7 @@ export interface AdapterContext {
  * the reference it would be stored as. `homeKey` names the computer it was created for.
  */
 export interface UnreferencedMachine {
+  providerConnectionId?: string;
   provider: string;
   machineId: string;
   homeKey?: string;
@@ -116,6 +117,8 @@ export interface ComputerRef {
   botId: string;
   kind: SandboxKind;
   providerRef: string;
+  /** Immutable connection owning this machine, independent of the Space’s current selection. */
+  providerConnectionId?: string;
   /** True when the provider created an empty replacement rather than reconnecting existing state. */
   fresh?: boolean;
   /** True when this call started a stopped computer. Providers that cannot tell leave it unset. */
@@ -159,6 +162,8 @@ export interface TerminalRequest {
 }
 
 export interface ScreenSession {
+  /** Certificate fingerprint for the authenticated server proxy only. */
+  tlsCertificateSha256?: string;
   /** Provider credentials for the server proxy only; never return these to clients. */
   headers?: Record<string, string>;
   url: string | null;

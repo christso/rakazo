@@ -34,6 +34,19 @@ it("marks only the reads a change kind covers as stale", async () => {
 it("knows which frames are read changes", () => {
   expect(isReadChangeKind("runs")).toBe(true);
   expect(isReadChangeKind("routines")).toBe(true);
+  expect(isReadChangeKind("computerProvider")).toBe(true);
   expect(isReadChangeKind("computerUpdates")).toBe(false);
   expect(isReadChangeKind("toString")).toBe(false);
+});
+
+it("refreshes the nested Space computer read without changing account or deployment reads", async () => {
+  const client = new QueryClient();
+  const space = key("computerProvider", "space", "get");
+  const account = key("computerProvider", "account", "get");
+  const deployment = key("computerProvider", "get");
+  for (const queryKey of [space, account, deployment]) client.setQueryData(queryKey, {});
+  await spaceChanged("computerProvider", client);
+  expect(client.getQueryState(space)?.isInvalidated).toBe(true);
+  expect(client.getQueryState(account)?.isInvalidated).toBe(false);
+  expect(client.getQueryState(deployment)?.isInvalidated).toBe(false);
 });

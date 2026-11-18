@@ -6,6 +6,7 @@ import {
   MAX_DESKTOP_DISPLAY,
   screenPorts,
 } from "@rakazo/core/node/desktop-runtime";
+import { sanitizeComputerIdentifier as sanitizeIdentifier } from "@rakazo/core/node/supervisor-identity";
 import type Docker from "dockerode";
 import type { ComputerLocale } from "./computer-locale.js";
 import { computerLocaleEnv } from "./computer-locale.js";
@@ -749,14 +750,7 @@ export function containerCreateOptions(input: ComputerCreateInput) {
   };
 }
 
-export function sanitizeIdentifier(botId: string) {
-  const safe = botId.replace(/[^a-zA-Z0-9_.-]/g, "").slice(0, 40);
-  return safe || "box";
-}
-
-export function containerNameFor(botId: string) {
-  return `rakazo-bot-${sanitizeIdentifier(botId)}`;
-}
+export { supervisorComputerName as containerNameFor } from "@rakazo/core/node/supervisor-identity";
 
 export function computerNetworkNameFor(botId: string) {
   // Keep distinct botIds on distinct networks even when sanitization collapses
