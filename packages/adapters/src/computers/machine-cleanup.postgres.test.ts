@@ -140,6 +140,32 @@ describePostgres("machine cleanup (PostgreSQL)", () => {
     await db.pool.end();
   });
 
+  it("recovers a submitted create from its durable, connection-scoped cleanup job", async () => {
+    const records = machineCleanupRecords(jobs, db.prisma);
+    const receipt = {
+      ...machine,
+      providerConnectionId: randomUUID(),
+      requiresCreateReconciliation: true,
+    } as const;
+    const { homeKey, provider, providerConnectionId } = receipt;
+    if (!homeKey) throw new Error("Missing fixture home key");
+    const query = () => records.pendingCreate!(provider, providerConnectionId, homeKey);
+    try {
+      await expect(query()).resolves.toBeUndefined();
+      await records.record(receipt, new Date(Date.now() + 900_000));
+      await expect(query()).resolves.toEqual(receipt);
+      await expect(
+        records.pendingCreate!(provider, "another-connection", homeKey),
+      ).resolves.toBeUndefined();
+      const acknowledged = { ...receipt, providerResourceId: randomUUID() };
+      await records.record(acknowledged, new Date(Date.now() + 900_000));
+      await expect(query()).resolves.toEqual(acknowledged);
+    } finally {
+      await records.clear(receipt);
+    }
+    await expect(query()).resolves.toBeUndefined();
+  });
+
   it("waits out the start, keeps the machine a computer stores, and deletes one no computer kept", async () => {
     await prisma.computer.update({ where: { id: computerId }, data: { state: "booting" } });
     await expect(cleanup()).rejects.toThrow("still in progress");

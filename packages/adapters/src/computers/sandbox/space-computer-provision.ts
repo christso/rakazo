@@ -5,6 +5,9 @@ import { runAsSystem, withLease } from "@rakazo/db";
 
 export const COMPUTER_CONNECTION_PROVISION_LEASE_PREFIX = "computer-provision:";
 
+export const computerConnectionProvisionKey = (connectionId: string, homeKey: string) =>
+  `${COMPUTER_CONNECTION_PROVISION_LEASE_PREFIX}${connectionId}:${homeKey}`;
+
 /** Keep credentials available until a provider call has settled, including before its first job. */
 export function provisionSpaceComputer(
   prisma: PrismaClient,
@@ -16,7 +19,7 @@ export function provisionSpaceComputer(
   return runAsSystem("protect an in-flight Space computer provisioning operation", () =>
     withLease(
       prisma,
-      `${COMPUTER_CONNECTION_PROVISION_LEASE_PREFIX}${connectionId}:${homeKey}`,
+      computerConnectionProvisionKey(connectionId, homeKey),
       {
         ttlMs: 30_000,
         signal: context.signal,

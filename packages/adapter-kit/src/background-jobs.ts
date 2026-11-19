@@ -89,6 +89,8 @@ const payloadSchemas = {
   }),
   "computer.machine-cleanup": z.object({
     providerConnectionId: z.string().min(1).optional(),
+    providerResourceId: z.string().min(1).optional(),
+    requiresCreateReconciliation: z.literal(true).optional(),
     provider: z.string().min(1),
     machineId: z.string().min(1),
     homeKey: z.string().min(1).optional(),

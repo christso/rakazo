@@ -15,6 +15,7 @@ import { noneComputer } from "../providers/computer/none/none-computer.js";
 import { novitaComputer } from "../providers/computer/novita/novita-computer.js";
 import { railwayComputer } from "../providers/computer/railway/railway-computer.js";
 import { remoteComputer } from "../providers/computer/remote-supervisor/remote-computer.js";
+import { vultrComputer } from "../providers/computer/vultr/vultr-computer.js";
 import { wuyingComputer } from "../providers/computer/wuying/wuying-computer.js";
 import type { ComputerProviderDefinition } from "./computer-provider-descriptor.js";
 
@@ -27,6 +28,7 @@ export const computerProviders = {
   docker: dockerComputer,
   "remote-supervisor": remoteComputer,
   hetzner: hetznerComputer,
+  vultr: vultrComputer,
   wuying: wuyingComputer,
   e2b: e2bComputer,
   novita: novitaComputer,

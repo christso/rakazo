@@ -29,6 +29,7 @@ const EXPECTED: Record<KnownSandboxKind, Row> = {
   "remote-supervisor": [true, true, false, false, DEFAULT_SCREEN, "never", true, true],
   docker: [true, true, false, false, DEFAULT_SCREEN, "always", false, true],
   hetzner: [true, false, false, false, DEFAULT_SCREEN, "never", true, true],
+  vultr: [true, false, false, false, DEFAULT_SCREEN, "never", true, true],
   e2b: [true, true, false, false, DEFAULT_SCREEN, "never", true, false],
   novita: [true, true, false, false, DEFAULT_SCREEN, "never", true, false],
   daytona: [true, true, false, false, DEFAULT_SCREEN, "never", true, false],
@@ -93,6 +94,7 @@ describe("sandbox kind capabilities", () => {
       "docker",
       "hetzner",
       "remote-supervisor",
+      "vultr",
       "wuying",
     ]);
     expect(sandboxKindsWhere((entry) => entry.runsOnUserMachine)).toEqual(["desktop"]);
