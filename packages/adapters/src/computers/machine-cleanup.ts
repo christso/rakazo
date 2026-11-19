@@ -5,10 +5,11 @@ import type {
   UnreferencedMachine,
   UnreferencedMachineRecords,
 } from "@rakazo/adapter-kit";
-import { machineCleanupJob, machineCleanupJobKey } from "@rakazo/adapter-kit";
+import { machineCleanupJob, machineCleanupJobKey, parseBackgroundJob } from "@rakazo/adapter-kit";
 import type { PrismaClient } from "@rakazo/db";
-import { runAsSystem } from "@rakazo/db";
+import { runAsSystem, withLease } from "@rakazo/db";
 import { getLogger } from "@rakazo/logging";
+import { computerConnectionProvisionKey } from "./sandbox/space-computer-provision.js";
 
 /** One try's provider budget; the queue's backoff spaces the tries. */
 const ATTEMPT_MS = 30_000;
@@ -17,14 +18,46 @@ const STARTING = "A start that may keep this machine is still in progress";
 /** Keeps each record as its keyed cleanup job, whose payload is the record. */
 export function machineCleanupRecords(
   jobs: Pick<JobPublisher, "enqueue" | "cancel">,
+  prisma?: PrismaClient,
 ): UnreferencedMachineRecords {
   return {
+    ...(prisma && {
+      pendingCreate: (provider, connectionId, homeKey) =>
+        pendingCreate(prisma, provider, connectionId, homeKey),
+    }),
     record: (machine, deleteAt) => jobs.enqueue(machineCleanupJob(machine, deleteAt)),
     clear: (machine) =>
       jobs.cancel(
         machineCleanupJobKey(machine.provider, machine.machineId, machine.providerConnectionId),
       ),
   };
+}
+
+/** The persisted cleanup job is also the receipt for a create the cloud might have accepted. */
+async function pendingCreate(
+  prisma: PrismaClient,
+  provider: string,
+  connectionId: string,
+  homeKey: string,
+) {
+  return runAsSystem("read a submitted computer creation", async () => {
+    const rows = await prisma.$queryRaw<Array<{ payload: unknown }>>`
+      SELECT COALESCE(j.payload::jsonb->'payload', j.payload::jsonb) AS payload
+      FROM graphile_worker._private_jobs j
+      JOIN graphile_worker._private_tasks t ON t.id = j.task_id
+      WHERE t.identifier = 'computer.machine-cleanup'
+        AND j.key IS NOT NULL
+        AND COALESCE(j.payload->'payload'->>'providerConnectionId', j.payload->>'providerConnectionId') = ${connectionId}
+        AND COALESCE(j.payload->'payload'->>'homeKey', j.payload->>'homeKey') = ${homeKey}
+        AND COALESCE(j.payload->'payload'->>'provider', j.payload->>'provider') = ${provider}
+      LIMIT 2`;
+    if (rows.length > 1) throw new Error("Computer creation has multiple receipts");
+    if (!rows[0]) return undefined;
+    const job = parseBackgroundJob("computer.machine-cleanup", rows[0].payload);
+    if (job.name !== "computer.machine-cleanup")
+      throw new Error("Invalid computer creation receipt");
+    return job.payload;
+  });
 }
 
 /**
@@ -39,7 +72,20 @@ export async function retryMachineCleanup(
   attempt?: BackgroundJobAttempt,
 ): Promise<void> {
   try {
-    await deleteUnlessKept(deps, machine);
+    const { providerConnectionId, homeKey } = machine;
+    const signal = AbortSignal.timeout(ATTEMPT_MS);
+    if (machine.requiresCreateReconciliation && providerConnectionId && homeKey) {
+      // A late create can be adopted or deleted, never concurrently. Acquire the same lease
+      // around the holder check and provider call that protects a start's reconciliation.
+      await runAsSystem("protect connection computer cleanup", () =>
+        withLease(
+          deps.prisma,
+          computerConnectionProvisionKey(providerConnectionId, homeKey),
+          { ttlMs: ATTEMPT_MS, signal },
+          (lease) => deleteUnlessKept(deps, machine, lease.signal),
+        ),
+      );
+    } else await deleteUnlessKept(deps, machine, signal);
   } catch (error) {
     if (attempt && attempt.number >= attempt.max)
       getLogger().error("sandbox.cleanup_exhausted", error, {
@@ -53,6 +99,7 @@ export async function retryMachineCleanup(
 async function deleteUnlessKept(
   deps: { prisma: PrismaClient; sandbox: SandboxProvider },
   machine: UnreferencedMachine,
+  signal: AbortSignal,
 ): Promise<void> {
   const { provider, machineId, homeKey } = machine;
   // One read, so it cannot fall between a start storing the machine and leaving "booting":
@@ -81,5 +128,5 @@ async function deleteUnlessKept(
   if (holders.length > 0) return;
   if (!deps.sandbox.deleteMachine)
     throw new Error("This computer provider cannot delete a machine by its id");
-  await deps.sandbox.deleteMachine(machine, AbortSignal.timeout(ATTEMPT_MS));
+  await deps.sandbox.deleteMachine(machine, signal);
 }

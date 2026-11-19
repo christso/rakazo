@@ -16,7 +16,7 @@ describe.each(computerProviderRegistry)("$id settings conformance", (descriptor)
         .filter((field) => field.required)
         .map((field) => [
           field.key,
-          field.placeholder ??
+          field.placeholder?.replace(/@sha256:…$/, `@sha256:${"0".repeat(64)}`) ??
             (field.kind === "url"
               ? "https://gateway.example.com/mcp"
               : field.kind === "select"

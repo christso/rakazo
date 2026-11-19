@@ -37,6 +37,10 @@ export interface AdapterContext {
  */
 export interface UnreferencedMachine {
   providerConnectionId?: string;
+  /** The cleanup job also fences further creates until this submission is resolved. */
+  requiresCreateReconciliation?: true;
+  /** Immutable provider ID once an uncertain creation resolves to a concrete machine. */
+  providerResourceId?: string;
   provider: string;
   machineId: string;
   homeKey?: string;

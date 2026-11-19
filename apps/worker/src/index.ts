@@ -189,7 +189,7 @@ async function main() {
     dataDir: env.dataDir,
     prisma,
     secrets,
-    unreferencedMachines: machineCleanupRecords(jobs),
+    unreferencedMachines: machineCleanupRecords(jobs, inMemoryJobs ? undefined : prisma),
   });
   const { messaging, installations: messagingInstallations } = installedMessaging(
     prisma,

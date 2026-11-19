@@ -397,7 +397,7 @@ async function buildApp(overrides: CreateAppOverrides): Promise<AppHandles> {
       dataDir: env.dataDir,
       prisma,
       secrets,
-      unreferencedMachines: machineCleanupRecords(jobs),
+      unreferencedMachines: machineCleanupRecords(jobs, inMemoryJobs ? undefined : prisma),
     }));
   const memoryProviders = new SpaceMemoryProviderResolver(prisma, secrets);
   const oauthLogins = new PiOAuthLogins<ModelCredential>(undefined, { prisma, secrets });

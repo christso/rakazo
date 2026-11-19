@@ -29,6 +29,7 @@ import {
 } from "../../providers/computer/novita/novita-sandbox.test-support.js";
 import { emulatedRailway } from "../../providers/computer/railway/railway-sandbox.test-support.js";
 import { emulatedRemoteRuntime } from "../../providers/computer/remote-supervisor/remote-supervisor.test-support.js";
+import { emulatedVultr } from "../../providers/computer/vultr/vultr-sandbox.test-support.js";
 import { FakeWuyingDesktop } from "../../providers/computer/wuying/wuying-sandbox.test-support.js";
 import { toComputerRef } from "../screens/computer-support.js";
 import { createSandboxProvider } from "./sandbox-factory.js";
@@ -42,6 +43,8 @@ vi.mock("../../network/undici-fetch.js", async (original) => ({
 }));
 
 let cloud: ReturnType<typeof emulatedHetzner>;
+let vultr: ReturnType<typeof emulatedVultr>;
+let vultrProvider: SandboxProvider;
 let previousCloudFetch: typeof fetch;
 let supervisor: Awaited<ReturnType<typeof emulatedDockerSupervisor>>;
 beforeAll(async () => {
@@ -54,7 +57,9 @@ beforeAll(async () => {
       return previousCloudFetch(input, init);
     throw new Error("Unexpected conformance fixture request");
   });
-  globalThis.fetch = cloud.fetch;
+  vultr = emulatedVultr(cloud.fetch);
+  vultrProvider = await vultr.provider();
+  globalThis.fetch = vultr.fetch;
 });
 afterAll(async () => {
   globalThis.fetch = previousCloudFetch;
@@ -105,6 +110,7 @@ const fixtures: Record<KnownSandboxKind, SandboxConformanceFixture> = {
     unsetEnv: true,
   },
   hetzner: { provider: () => cloud.provider(), workspace: true, unsetEnv: true },
+  vultr: { provider: () => vultrProvider, workspace: true, unsetEnv: true },
   fake: { provider: () => new FakeSandboxProvider(), workspace: true, unsetEnv: true },
   boat: { provider: () => fakeBoat(), workspace: true, unsetEnv: true },
   boxd: { provider: () => fakeBoxdProvider(), workspace: true, unsetEnv: true },

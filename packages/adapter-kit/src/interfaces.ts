@@ -283,6 +283,12 @@ export interface SandboxProvider {
 export interface UnreferencedMachineRecords {
   /** Records the machine, or moves its record: it is deleted at `deleteAt` unless a computer stores it first. */
   record(machine: UnreferencedMachine, deleteAt: Date): Promise<void>;
+  /** Recover the pre-submit record while holding the connection's home provisioning lease. */
+  pendingCreate?(
+    provider: string,
+    connectionId: string,
+    homeKey: string,
+  ): Promise<UnreferencedMachine | undefined>;
   /** Drops the record of a machine that is gone. */
   clear(machine: UnreferencedMachine): Promise<void>;
 }
