@@ -37,7 +37,9 @@ interface BootstrapOptions {
 /** Cloud-init installs the same supervisor and immutable desktop image as a local deployment. */
 export function computerCloudInit(options: BootstrapOptions) {
   const home = `/var/lib/rakazo/homes/${options.homeKey}`;
-  const nginx = `map $http_upgrade $connection_upgrade { default upgrade; '' close; }
+  // Nginx must fit the full Bearer header plus hash entry overhead.
+  const nginx = `map_hash_bucket_size 128;
+map $http_upgrade $connection_upgrade { default upgrade; '' close; }
 map $http_authorization $runtime_authorized { default 0; "Bearer ${options.token}" 1; }
 server {
   listen 443 ssl;
@@ -51,7 +53,7 @@ server {
     proxy_read_timeout 3600s;
     proxy_buffering off;
   }
-  location ~ ^/desktop/(?<desktop_port>[0-9]{4,5})/(?<desktop_path>.*)$ {
+  location ~ "^/desktop/(?<desktop_port>[0-9]{4,5})/(?<desktop_path>.*)$" {
     proxy_pass http://127.0.0.1:$desktop_port/$desktop_path$is_args$args;
     proxy_http_version 1.1;
     proxy_set_header Upgrade $http_upgrade;
