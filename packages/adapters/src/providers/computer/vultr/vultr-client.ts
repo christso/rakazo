@@ -6,8 +6,8 @@ import type {
 } from "../../../computers/sandbox/cloud-runtime/cloud-runtime-sandbox.js";
 
 const API = "https://api.vultr.com/v2";
-// The bookworm x64 image supports cloud-init and the same runtime as the other cloud VM adapter.
-const DEBIAN_12_X64 = 2136;
+// The Debian 13 guest completes the runtime image pull on Vultr. Its Debian 12 image stalled.
+const DEBIAN_13_X64 = 2625;
 
 const resourceId = z.string().uuid();
 const instanceShape = z.object({
@@ -99,7 +99,7 @@ export class VultrClient implements CloudMachineClient {
         plan: this.plan,
         label: name,
         hostname: name,
-        os_id: DEBIAN_12_X64,
+        os_id: DEBIAN_13_X64,
         user_data: Buffer.from(userData).toString("base64"),
         tags: Object.entries(labels).map(([key, value]) => `${key}=${value}`),
         activation_email: false,

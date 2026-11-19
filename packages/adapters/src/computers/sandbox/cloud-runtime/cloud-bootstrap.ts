@@ -67,6 +67,9 @@ server {
     "#!/bin/sh",
     "set -eu",
     "umask 077",
+    ". /etc/os-release",
+    'test "$ID" = debian',
+    'case "$VERSION_CODENAME" in bookworm|trixie) ;; *) exit 1 ;; esac',
     "apt-get update",
     "DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates curl gpg nginx iptables",
     // Bookworm's Docker 20.10 cannot unpack OCI zstd layers from Rakazo's published runtime.
@@ -75,7 +78,7 @@ server {
     "chmod 0644 /etc/apt/keyrings/docker.asc",
     'docker_key=$(gpg --batch --show-keys --with-colons /etc/apt/keyrings/docker.asc | awk -F: \'$1 == "pub" { primary=1 } $1 == "fpr" && primary { print $10; primary=0 }\')',
     'test "$docker_key" = 9DC858229FC7DD38854AE2D88D81803C0EBFCD88',
-    "printf '%s\\n' 'deb [signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian bookworm stable' > /etc/apt/sources.list.d/docker.list",
+    "printf 'deb [signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian %s stable\\n' \"$VERSION_CODENAME\" > /etc/apt/sources.list.d/docker.list",
     "apt-get update",
     "DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends docker-ce",
     "systemctl enable --now docker",

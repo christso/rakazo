@@ -67,7 +67,7 @@ export function emulatedVultr(fallback?: typeof globalThis.fetch) {
       if (
         body.region !== settings.region ||
         body.plan !== settings.plan ||
-        body.os_id !== 2136 ||
+        body.os_id !== 2625 ||
         body.backups !== "disabled" ||
         body.enable_ipv6 !== false ||
         body.activation_email !== false ||
