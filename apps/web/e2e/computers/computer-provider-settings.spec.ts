@@ -59,8 +59,14 @@ test("a Space owner explicitly authorizes a cloud computer connection", async ({
     .click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   const settings = page.getByTestId("space-settings");
-  await settings.getByRole("button", { name: "Computers", exact: true }).click();
   const form = settings.getByTestId("computer-provider-settings");
+  await expect(form.getByLabel("New computers run on")).toBeVisible();
+  const viewport = page.viewportSize();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(form.getByLabel("New computers run on")).toBeVisible();
+  await form.getByLabel("New computers run on").scrollIntoViewIfNeeded();
+  await captureScreenshot(page, testInfo, "space-computers-open");
+  if (viewport) await page.setViewportSize(viewport);
   await chooseOption(form.getByLabel("New computers run on"), "Test cloud");
   await form.getByLabel("API key").fill("example-api-key");
   await expect(form.getByRole("button", { name: "Save", exact: true })).toBeDisabled();

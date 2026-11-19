@@ -307,7 +307,7 @@ export function ComputerProviderSettings({
     </>
   );
   return collapsible ? (
-    <Collapsible>
+    <Collapsible defaultOpen>
       <CollapsibleTrigger className="text-body-sm font-medium">
         <Trans>Computers</Trans>
       </CollapsibleTrigger>
