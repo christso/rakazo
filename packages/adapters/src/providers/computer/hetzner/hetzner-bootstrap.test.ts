@@ -1,6 +1,14 @@
 import { execFileSync } from "node:child_process";
 import { createHash, X509Certificate } from "node:crypto";
-import { chmodSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { expect, it } from "vitest";
@@ -34,19 +42,35 @@ it("runs the bootstrap in a real shell and starts the published supervisor with 
       file.path.endsWith("rakazo-runtime.conf"),
     )!.content;
     const log = path.join(root, "commands.jsonl");
-    symlinkSync("/bin/chmod", path.join(root, "chmod"));
-    for (const command of ["apt-get", "systemctl", "install", "docker", "rm", "nginx"]) {
+    mkdirSync(path.join(root, "apt/keyrings"), { recursive: true });
+    mkdirSync(path.join(root, "apt/sources.list.d"));
+    for (const command of ["chmod", "awk", "grep"]) {
+      symlinkSync(`/usr/bin/${command}`, path.join(root, command));
+    }
+    for (const command of [
+      "apt-get",
+      "systemctl",
+      "install",
+      "docker",
+      "rm",
+      "nginx",
+      "curl",
+      "gpg",
+      "ufw",
+    ]) {
       const file = path.join(root, command);
       writeFileSync(
         file,
-        `#!${process.execPath}\nrequire("node:fs").appendFileSync(process.env.CAPTURE_COMMANDS,JSON.stringify({command:${JSON.stringify(command)},args:process.argv.slice(2),token:process.env.SANDBOX_SUPERVISOR_TOKEN})+"\\n");\nif (process.argv.includes("/app/infra/compose/restrict-computer-egress.sh")) process.stdout.write('#!/bin/sh\\nprintf \\'%s\\\\n\\' \\'{"command":"egress","args":[]}\\' >> "$CAPTURE_COMMANDS"\\nexit "'+(process.env.FAIL_EGRESS_TEST ?? "0")+'"\\n');\n`,
+        `#!${process.execPath}\nrequire("node:fs").appendFileSync(process.env.CAPTURE_COMMANDS,JSON.stringify({command:${JSON.stringify(command)},args:process.argv.slice(2),token:process.env.SANDBOX_SUPERVISOR_TOKEN})+"\\n");\nif (${JSON.stringify(command)} === "curl") require("node:fs").writeFileSync(process.argv.at(-1), "fake-key");\nif (${JSON.stringify(command)} === "gpg") process.stdout.write("pub:\\nfpr:::::::::"+(process.env.DOCKER_TEST_KEY ?? "9DC858229FC7DD38854AE2D88D81803C0EBFCD88")+":\\n");\nif (${JSON.stringify(command)} === "ufw" && process.argv.includes("status")) process.stdout.write("Status: active\\n");\nif (process.argv.includes("/app/infra/compose/restrict-computer-egress.sh")) process.stdout.write('#!/bin/sh\\nprintf \\'%s\\\\n\\' \\'{"command":"egress","args":[]}\\' >> "$CAPTURE_COMMANDS"\\nexit "'+(process.env.FAIL_EGRESS_TEST ?? "0")+'"\\n');\n`,
       );
       chmodSync(file, 0o700);
     }
     const file = path.join(root, "bootstrap.sh");
     writeFileSync(
       file,
-      script.replaceAll("/usr/local/sbin/rakazo-computer-egress", path.join(root, "egress.sh")),
+      script
+        .replaceAll("/etc/apt", path.join(root, "apt"))
+        .replaceAll("/usr/local/sbin/rakazo-computer-egress", path.join(root, "egress.sh")),
     );
     execFileSync("/bin/sh", [file], {
       env: { PATH: root, CAPTURE_COMMANDS: log, SANDBOX_SUPERVISOR_TOKEN: "fake-runtime-token" },
@@ -80,9 +104,14 @@ it("runs the bootstrap in a real shell and starts the published supervisor with 
     expect(calls.findIndex((call) => call.command === "egress")).toBeLessThan(
       calls.findIndex((call) => call.command === "docker" && call.args.includes("rakazo-runtime")),
     );
-    expect(calls.find((call) => call.command === "install").args).toContain(
-      "/var/lib/rakazo/homes/bot-a",
-    );
+    expect(
+      calls.some(
+        (call) => call.command === "install" && call.args.includes("/var/lib/rakazo/homes/bot-a"),
+      ),
+    ).toBe(true);
+    expect(
+      calls.some((call) => call.command === "ufw" && call.args.join(" ") === "allow 443/tcp"),
+    ).toBe(true);
     expect(nginx).toContain("if ($runtime_authorized = 0) { return 403; }");
     expect(nginx).toContain("proxy_set_header Upgrade $http_upgrade;");
     expect(nginx).toContain("listen 443 ssl;");
@@ -103,6 +132,14 @@ it("runs the bootstrap in a real shell and starts the published supervisor with 
     expect(
       refused.some((call) => call.command === "docker" && call.args.includes("rakazo-runtime")),
     ).toBe(false);
+    writeFileSync(log, "");
+    expect(() =>
+      execFileSync("/bin/sh", [file], {
+        env: { PATH: root, CAPTURE_COMMANDS: log, DOCKER_TEST_KEY: "unexpected" },
+        stdio: "pipe",
+      }),
+    ).toThrow();
+    expect(readFileSync(log, "utf8")).not.toContain("docker-ce");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
