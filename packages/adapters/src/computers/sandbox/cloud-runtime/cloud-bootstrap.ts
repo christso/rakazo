@@ -70,6 +70,8 @@ server {
     "apt-get update",
     "DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends docker.io nginx iptables",
     "systemctl enable --now docker",
+    // Some cloud images enable UFW with only SSH open.
+    "if command -v ufw >/dev/null && LC_ALL=C ufw status | grep -qx 'Status: active'; then ufw allow 443/tcp; fi",
     `install -d -m 750 -o 1000 -g 1000 ${shellQuote(home)}`,
     `docker pull ${shellQuote(options.computerImage)}`,
     `docker pull ${shellQuote(options.appImage)}`,
