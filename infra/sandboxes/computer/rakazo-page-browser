@@ -1043,6 +1043,7 @@ class PageBrowser:
                 (box,) = self.ab.batch([["get", "box", f"@{ref}"]],
                                       timeout=max(0.001, deadline - time.monotonic()) if scrolled else 20.0)
                 if scrolled:
+                    offscreen_box = None
                     while time.monotonic() < deadline:
                         previous = box
                         time.sleep(min(POLL_SECONDS, max(0.0, deadline - time.monotonic())))
@@ -1063,9 +1064,14 @@ class PageBrowser:
                                     return site, found
                                 box = checked_box
                             except Offscreen:
-                                pass
-                    # No stable visible target was established within the call's scroll budget.
+                                offscreen_box = box
+                    if offscreen_box is not None and box == offscreen_box:
+                        raise Settled("The click target is outside the viewport after scrolling. "
+                                      "Take a fresh snapshot before continuing.")
+                    # No stable target was established within the call's scroll budget.
                     box = None
+            except Settled:
+                raise
             except Exception:  # noqa: BLE001
                 box = None
             try:
@@ -1101,7 +1107,11 @@ class PageBrowser:
                 node = self.control(step["ref"])
             except Settled:
                 continue
-            site, found = self.click_purchase(step["ref"], node)
+            try:
+                site, found = self.click_purchase(step["ref"], node)
+            except Settled:
+                # Execution stops here too if the target is still offscreen. It checks again before pressing.
+                break
             if found:
                 # One card approves one click: a later purchase click in the batch is refused, and asks.
                 steps, first = [index], found

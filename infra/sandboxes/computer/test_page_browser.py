@@ -701,8 +701,8 @@ class PurchaseTest(unittest.TestCase):
 
     def test_a_control_out_of_view_is_scrolled_to_before_it_is_checked(self):
         browser = pays(FakeAgentBrowser())
-        FakePurchases.offscreen = {"e8"}
-        FakePurchases.shows = PAY
+        box = browser.boxes["e8"]
+        browser.boxes["e8"] = [{**box, "y": 1500}, box]
         self.assertEqual(self.act([{"kind": "click", "ref": "e8"}], browser)["error"], helper.PURCHASE_REFUSED)
         self.assertEqual(browser.actions(), [["scrollintoview", "@e8"]])
 
@@ -778,13 +778,19 @@ class PurchaseTest(unittest.TestCase):
         self.assertLessEqual(now[0], helper.SCROLL_SETTLE_SECONDS + 0.01)
         self.assertFalse(any(command[0] == "click" for command in browser.actions()))
 
-    def test_a_control_still_out_of_view_after_scrolling_asks_what_the_page_shows(self):
+    def test_a_control_still_out_of_view_after_scrolling_neither_asks_nor_clicks(self):
         browser = FakeAgentBrowser()
         browser.boxes["e8"] = {"ref": "e8", "x": 10, "y": 1500, "width": 40, "height": 20}
-        FakePurchases.shows = PAY
+        FakePurchases.shows = {**PAY, "reason": "payment_page", "label": "Pay using Gift Card"}
+        actions = [{"kind": "click", "ref": "e8"}]
         with patch.object(helper.time, "sleep"):
-            result = page(browser).purchase_check({"actions": [{"kind": "click", "ref": "e8"}]})
-        self.assertEqual(result["purchase"]["label"], PAY["label"])
+            result = page(browser).purchase_check({"actions": actions})
+            acted = self.act(actions, browser)
+        self.assertIsNone(result["purchase"])
+        self.assertFalse(acted["uncertain"])
+        self.assertEqual(acted["completed"], 0)
+        self.assertIn("outside the viewport", acted["error"])
+        self.assertFalse(any(command[0] == "click" for command in browser.actions()))
 
     def test_a_batch_shares_one_scroll_wait_budget_when_targets_remain_out_of_view(self):
         browser = FakeAgentBrowser()
