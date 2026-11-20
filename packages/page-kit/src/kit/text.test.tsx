@@ -337,22 +337,20 @@ describe("links and legend", () => {
   });
 
   it("draws the names comparison points at as grey dashed lines, in their place", () => {
-    const markup = html(
+    const host = mount(
       <Legend names={["Daily visits", "7-day average", "Signups"]} comparison={[1]} />,
     );
-    const items = markup.match(/<li [\s\S]*?<\/li>/g)!;
-    expect(items.map((item) => item.replace(/<[^>]+>/g, ""))).toEqual([
+    const items = [...host.querySelectorAll("li")];
+    expect(items.map((item) => item.textContent)).toEqual([
       "Daily visits",
       "7-day average",
       "Signups",
     ]);
-    expect(items.map((item) => item.includes('stroke-dasharray="3 2"'))).toEqual([
-      false,
-      true,
-      false,
-    ]);
-    expect(items[1]).toContain("color:var(--rk-other)");
-    expect(items[2]).toContain("color:var(--rk-c3)");
+    expect(
+      items.map((item) => item.querySelector("line")?.getAttribute("stroke-dasharray")),
+    ).toEqual([null, "3 2", null]);
+    expect(items[1]?.style.color).toBe("var(--rk-other)");
+    expect(items[2]?.style.color).toBe("var(--rk-c3)");
     expect(html(<Legend names={[]} />)).toBe("");
   });
 });

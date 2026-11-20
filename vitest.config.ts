@@ -73,7 +73,7 @@ export default defineConfig({
       // source; stub them out in tests (they never render anyway).
       ...["react-native-fit-image", "@react-native-vector-icons/material-design-icons"].map(
         (dep) => ({
-          find: new RegExp(`^${dep.replace(/[/]/g, "\\/")}$`),
+          find: new RegExp(`^${RegExp.escape(dep)}$`),
           replacement: fileURLToPath(
             new URL("./packages/chat-ui/src/native-test-stubs.tsx", import.meta.url),
           ),

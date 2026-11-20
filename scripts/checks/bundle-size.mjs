@@ -16,10 +16,11 @@ const LARGEST_SHOWN = 8;
 function webStartupFiles(dist) {
   const html = readFileSync(path.join(dist, "index.html"), "utf8");
   const files = new Set();
-  for (const [tag, name] of html.matchAll(/<(script|link)\b[^>]*>/g)) {
+  for (const [tag, name] of html.matchAll(/<(script|link)\b[^>]*>/gi)) {
     const attribute = (key) => tag.match(new RegExp(`\\s${key}="([^"]*)"`))?.[1];
-    const url = name === "script" ? attribute("src") : attribute("href");
-    const loads = name === "script" || /^(modulepreload|stylesheet)$/.test(attribute("rel") ?? "");
+    const isScript = name.toLowerCase() === "script";
+    const url = isScript ? attribute("src") : attribute("href");
+    const loads = isScript || /^(modulepreload|stylesheet)$/.test(attribute("rel") ?? "");
     if (loads && url?.startsWith("/") && !url.startsWith("//")) files.add(url.slice(1));
   }
   return [...files];

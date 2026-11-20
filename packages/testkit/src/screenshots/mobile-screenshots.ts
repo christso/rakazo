@@ -207,24 +207,26 @@ function startDeviceControlServer(
   prisma: PrismaClient,
   fixture: Awaited<ReturnType<typeof seedFixture>>,
 ): Server {
-  const routes: Record<string, () => Promise<unknown>> = {
-    "/expand-notifications": () => adb(["shell", "cmd", "statusbar", "expand-notifications"]),
-    "/share-text": () =>
-      adb([
-        "shell",
-        "am start -a android.intent.action.SEND -t text/plain",
-        "--es android.intent.extra.TEXT 'Shared from another app'",
-        "-n com.rakazo.app/.MainActivity",
-      ]),
-    "/ring": () => ringFromResearcher(prisma, fixture),
-    "/connect-voice": () =>
-      rpc(app, fixture.cookie, "voice/connect", {
-        provider: "scripted",
-        apiKey: "fixture-voice-key",
-      }),
-  };
+  const routes = new Map<string, () => Promise<unknown>>(
+    Object.entries({
+      "/expand-notifications": () => adb(["shell", "cmd", "statusbar", "expand-notifications"]),
+      "/share-text": () =>
+        adb([
+          "shell",
+          "am start -a android.intent.action.SEND -t text/plain",
+          "--es android.intent.extra.TEXT 'Shared from another app'",
+          "-n com.rakazo.app/.MainActivity",
+        ]),
+      "/ring": () => ringFromResearcher(prisma, fixture),
+      "/connect-voice": () =>
+        rpc(app, fixture.cookie, "voice/connect", {
+          provider: "scripted",
+          apiKey: "fixture-voice-key",
+        }),
+    }),
+  );
   const server = createServer((req, res) => {
-    const route = req.method === "GET" ? routes[req.url ?? ""] : undefined;
+    const route = req.method === "GET" ? routes.get(req.url ?? "") : undefined;
     if (!route) {
       res.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
       res.end("not found");
@@ -236,7 +238,7 @@ function startDeviceControlServer(
         res.end("ok");
       },
       (error: unknown) => {
-        console.error(`Device control ${req.url} failed`, error);
+        console.error("Device control failed", { path: req.url, error });
         res.writeHead(500, { "content-type": "text/plain; charset=utf-8" });
         res.end("failed");
       },

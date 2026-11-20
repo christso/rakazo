@@ -41,7 +41,10 @@ function namespacePath(containerTag: string, suffix = ""): string {
 
 function requestUrl(baseUrl: string, path: string): string {
   const url = parseServiceBaseUrl(baseUrl);
-  url.pathname = `${url.pathname.replace(/\/+$/, "")}${path}`;
+  const pathname = url.pathname;
+  let end = pathname.length;
+  while (pathname[end - 1] === "/") end--;
+  url.pathname = `${pathname.slice(0, end)}${path}`;
   return url.href;
 }
 
