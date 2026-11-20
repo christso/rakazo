@@ -30,7 +30,6 @@ The source disk remains authoritative until a ready snapshot is recorded. An acc
 
 The implementation starts from fork commit `22322b622`. Existing orchestration lives in `computer-idle.ts`, `computer-lifecycle.ts`, and `space-computer-connection-cleanup.ts`. The two provider clients share `CloudRuntimeSandbox`. Herdr's provider plugins establish the snapshot-before-delete order. Rakazo also needs to preserve Space connection routing and shared computer ownership.
 
-
 ## Verification and handoff
 
 - Offline tests cover the Space default, failed snapshot, lost create responses, restore reconciliation, deletion retries, and foreign snapshots. PostgreSQL tests cover policy validation, tenant isolation, and retaining the computer row while a snapshot receipt exists. Chromium verifies the Space control and save payload.
