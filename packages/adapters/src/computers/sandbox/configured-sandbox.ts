@@ -30,7 +30,7 @@ import {
   bindSpaceComputerConnection,
   loadComputerConnection,
 } from "./space-computer-connections.js";
-import { provisionSpaceComputer } from "./space-computer-provision.js";
+import { protectSpaceComputer, provisionSpaceComputer } from "./space-computer-provision.js";
 
 export const COMPUTER_PROVIDER_SECRET_KIND = "computer-provider";
 /** Record id binding the deployment's encrypted computer settings to its settings row. */
@@ -578,13 +578,31 @@ export class ConfiguredSandbox implements SandboxProvider {
   async stop(
     computer: ComputerRef,
     context: AdapterContext,
-    options?: { discardUnsaved?: boolean },
+    options?: Parameters<SandboxProvider["stop"]>[2],
   ) {
-    return (await this.route(computer)).stop(computer, context, options);
+    const provider = await this.route(computer);
+    if (options?.hibernate && this.options.connectionDb && computer.providerConnectionId)
+      return provisionSpaceComputer(
+        this.options.connectionDb,
+        computer.providerConnectionId,
+        computer.botId,
+        context,
+        (ctx) => provider.stop(computer, ctx, options),
+      );
+    return provider.stop(computer, context, options);
   }
 
   async destroy(computer: ComputerRef, context: AdapterContext) {
-    return (await this.route(computer)).destroy(computer, context);
+    const provider = await this.route(computer);
+    if (this.options.connectionDb && computer.providerConnectionId)
+      return protectSpaceComputer(
+        this.options.connectionDb,
+        computer.providerConnectionId,
+        computer.botId,
+        context,
+        (ctx) => provider.destroy(computer, ctx),
+      );
+    return provider.destroy(computer, context);
   }
 
   async deleteMachine(machine: UnreferencedMachine, signal: AbortSignal) {

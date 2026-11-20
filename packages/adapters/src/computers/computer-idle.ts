@@ -26,11 +26,12 @@ import {
   recordComputerRunSeen,
   THREAD_LOCK_TRANSACTION_OPTIONS,
 } from "@rakazo/db";
-import { getLogger } from "@rakazo/logging";
+import { bestEffort, getLogger } from "@rakazo/logging";
 import { activeCodingAgent } from "../cloud-agents/coding-agent-activity.js";
 import { HomeSaveConflictError } from "../storage/home-object-store.js";
 import { diskUpdate, measureComputerDisk } from "./computer-disk.js";
 import { screenLeaseIdForRun, toComputerRef } from "./computer-lifecycle.js";
+import { computerProviderDescriptor } from "./computer-provider-registry.js";
 import { checkpointComputerWorkspace } from "./computer-workspace.js";
 import { sandboxAllowanceUsedUp } from "./sandbox/sandbox-allowance.js";
 import { isSandboxDamagedError, isSandboxGoneError } from "./sandbox/sandbox-errors.js";
@@ -481,11 +482,27 @@ export async function sleepComputerIfIdle(
     : activeControl
       ? [...QUEUE_HOLDING_RUN_STATUSES]
       : QUEUE_HOLDING_RUN_STATUSES.filter((status) => status !== "waiting_takeover");
+  const shouldHibernate =
+    !limitReached &&
+    !activeControl &&
+    !!computer.providerConnectionId &&
+    computer.space?.computerIdlePolicy === "hibernate" &&
+    computerProviderDescriptor(computer.kind).capabilities.hibernate === true;
+  let alreadyStopped = false;
+  if ((shouldHibernate || computer.hibernationProtected) && deps.sandbox.isStopped) {
+    const signal = AbortSignal.timeout(STATUS_CHECK_TIMEOUT_MS);
+    alreadyStopped =
+      (await bestEffort(
+        "check whether the cloud computer is stopped",
+        withAbort(deps.sandbox.isStopped(ref, { ...ctx, signal }), signal),
+      )) === true;
+  }
   const runHolds = () =>
     allowanceUsed
       ? Promise.resolve(null)
       : findActiveRun(deps.prisma, computerId, activeStatuses, limitReached);
   const backgroundHolds = async () =>
+    !alreadyStopped &&
     !allowanceUsed &&
     ((!limitReached && (await hasActiveBackgroundWork(deps.sandbox, ref, ctx, computerId))) ||
       (await activeCodingAgent(deps.sandbox, ref, ctx, sandboxIdleMs())) !== undefined);
@@ -495,7 +512,12 @@ export async function sleepComputerIfIdle(
       : takeoverGraceEndsAt(deps.prisma, computerId);
   const runHeld = Boolean(await runHolds());
   const takeoverHeldUntil = runHeld ? null : await graceEndsAt();
-  if (!runHeld && !takeoverHeldUntil && (await suspendStoppedComputer(deps, computer, ref, ctx))) {
+  if (
+    !shouldHibernate &&
+    !runHeld &&
+    !takeoverHeldUntil &&
+    (await suspendStoppedComputer(deps, computer, ref, ctx))
+  ) {
     return;
   }
   if (runHeld || takeoverHeldUntil || (await backgroundHolds())) {
@@ -530,19 +552,19 @@ export async function sleepComputerIfIdle(
 
   // Read beside the save so the warning and the next run's note show what the last run left,
   // including when the save fails because build output outgrew it.
-  const disk = measureComputerDisk(deps.sandbox, ref, ctx).then((measured) =>
-    measured ? diskUpdate(measured) : {},
-  );
+  const disk = alreadyStopped
+    ? Promise.resolve({})
+    : measureComputerDisk(deps.sandbox, ref, ctx).then((measured) =>
+        measured ? diskUpdate(measured) : {},
+      );
   let damaged = false;
   try {
-    const revision = await checkpointComputerWorkspace(
-      deps.home,
-      deps.sandbox,
-      computer.homeKey,
-      ref,
-      ctx,
-      { prisma: deps.prisma, computer },
-    );
+    const revision = alreadyStopped
+      ? undefined
+      : await checkpointComputerWorkspace(deps.home, deps.sandbox, computer.homeKey, ref, ctx, {
+          prisma: deps.prisma,
+          computer,
+        });
     const saved =
       revision === undefined
         ? { count: 1 }
@@ -563,7 +585,7 @@ export async function sleepComputerIfIdle(
       return;
     }
   } catch (error) {
-    if (isSandboxGoneError(error)) {
+    if (isSandboxGoneError(error) && !computer.hibernationProtected) {
       // Nothing is left to checkpoint or stop. Retrying would fail the same way every idle
       // window, so clear the dead ref and let the next use boot from the last saved revision.
       const cleared = await deps.prisma.computer.updateMany({
@@ -660,7 +682,12 @@ export async function sleepComputerIfIdle(
   try {
     // Nothing on a damaged computer can be read, so a provider that cannot save it either stops
     // it anyway, keeping its last good copy, rather than leave it running.
-    await deps.sandbox.stop(ref, ctx, damaged ? { discardUnsaved: true } : undefined);
+    if (!alreadyStopped || shouldHibernate)
+      await deps.sandbox.stop(
+        ref,
+        ctx,
+        damaged ? { discardUnsaved: true } : shouldHibernate ? { hibernate: true } : undefined,
+      );
   } catch (error) {
     await deps.prisma.computer.updateMany({
       where: suspensionClaim,
@@ -1007,6 +1034,8 @@ function loadComputer(prisma: PrismaClient, computerId: string) {
       runningSince: true,
       homeRevisionAt: true,
       updatedAt: true,
+      space: { select: { computerIdlePolicy: true } },
+      hibernationProtected: true,
     },
   });
 }

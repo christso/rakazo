@@ -125,6 +125,8 @@ export interface ComputerRef {
   providerConnectionId?: string;
   /** True when the provider created an empty replacement rather than reconnecting existing state. */
   fresh?: boolean;
+  /** This start recovered the whole disk from the provider, including the workspace. */
+  diskRestored?: boolean;
   /** True when this call started a stopped computer. Providers that cannot tell leave it unset. */
   started?: boolean;
 }
@@ -965,6 +967,7 @@ export interface BackgroundJobPayloads {
   /** Run a failed routine run once more; the payload names the failed run. */
   "routine.retry": { runId: string };
   "computer.sleep": { computerId: string };
+  "computer.teardown": { computerId: string };
   "computer.update": { updateId: string };
   "computer.control-expire": { computerId: string; leaseId: string };
   "skill.teaching-expire": { skillId: string };

@@ -265,7 +265,7 @@ export interface SandboxProvider {
   stop(
     computer: ComputerRef,
     context: AdapterContext,
-    options?: { discardUnsaved?: boolean },
+    options?: { discardUnsaved?: boolean; hibernate?: boolean },
   ): Promise<void>;
   destroy(computer: ComputerRef, context: AdapterContext): Promise<void>;
   /**

@@ -33,6 +33,7 @@ import {
   scheduleComputerSleep,
   sleepComputerIfIdle,
 } from "../../computers/computer-idle.js";
+import { retryComputerTeardown } from "../../computers/computer-teardown.js";
 import { performComputerUpdate } from "../../computers/computer-update.js";
 import { retryMachineCleanup } from "../../computers/machine-cleanup.js";
 import {
@@ -228,6 +229,7 @@ export function createBackgroundJobHandlers(deps: {
     "computer.update": asOwner(updatedComputer, async ({ updateId }) => {
       await performComputerUpdate(deps, updateId);
     }),
+    "computer.teardown": ({ computerId }) => retryComputerTeardown(deps, computerId),
     "computer.sleep": asOwner(computer, async (payload) => {
       await sleepComputerIfIdle(deps, payload.computerId);
     }),

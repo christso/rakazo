@@ -160,6 +160,52 @@ describePostgres("Space computer connections (PostgreSQL)", () => {
     await expect(deps.secrets.load(row.ciphertext, "another-id")).rejects.toThrow();
   });
 
+  it("enables hibernation only for supported Space connections", async () => {
+    expect((await load(actor(0))).idlePolicy).toBe("keep-vm");
+    const input = { provider: "desktop", values, idlePolicy: "hibernate" as const };
+    await expect(save(actor(0), input)).rejects.toThrow("cannot hibernate");
+    const descriptor = computerProviderDescriptor("desktop");
+    descriptor.capabilities.hibernate = true;
+    try {
+      expect((await save(actor(0), input)).idlePolicy).toBe("hibernate");
+      expect((await load(actor(0, sibling))).idlePolicy).toBe("keep-vm");
+      expect((await save(actor(0), { provider: "default", values: {} })).idlePolicy).toBe(
+        "keep-vm",
+      );
+    } finally {
+      delete descriptor.capabilities.hibernate;
+    }
+  });
+
+  it("keeps a computer and its connection until the snapshot receipt is removed", async () => {
+    const selected = await save();
+    const homeKey = `hibernate-${suffix}`;
+    const computer = await system.computer.create({
+      data: {
+        spaceId: space,
+        userId: userIds[0]!,
+        scopeKey: homeKey,
+        homeKey,
+        kind: "desktop",
+        providerConnectionId: selected.connectionId,
+        hibernationProtected: true,
+      },
+    });
+    try {
+      const receipt = await system.computerDiskSnapshot.create({
+        data: { marker: homeKey, computerId: computer.id, sourceId: "test-vm", phase: "capturing" },
+      });
+      await expect(
+        asActor(actor(0), () => db.prisma.computerDiskSnapshot.findMany()),
+      ).resolves.toEqual([]);
+      await expect(system.computer.delete({ where: { id: computer.id } })).rejects.toThrow();
+      expect(receipt.snapshotSeen).toBe(false);
+    } finally {
+      await system.computerDiskSnapshot.deleteMany({ where: { computerId: computer.id } });
+      await system.computer.delete({ where: { id: computer.id } });
+    }
+  });
+
   it("requires explicit spending approval before verification and records who approved", async () => {
     const descriptor = computerProviderDescriptor("desktop");
     descriptor.capabilities.requiresSpendingApproval = true;

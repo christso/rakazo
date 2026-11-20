@@ -1,5 +1,5 @@
 import { Trans, useLingui } from "@lingui/react/macro";
-import type { ComputerProviderSettings as Settings } from "@rakazo/contracts";
+import type { ComputerIdlePolicy, ComputerProviderSettings as Settings } from "@rakazo/contracts";
 import { Button, Checkbox, Field, FieldLabel, Input, OptionSelect } from "@rakazo/ui-web";
 import {
   Collapsible,
@@ -19,6 +19,7 @@ type Draft = {
   provider: string;
   values: Record<string, string>;
   approveSpending?: boolean;
+  idlePolicy?: ComputerIdlePolicy;
   expectedConnectionId?: string | null;
 };
 type Form = { key: string; settings: Settings; draft: Draft; dirty: boolean };
@@ -65,7 +66,9 @@ function draftFrom(settings: Settings, scope: Scope): Draft {
   return {
     provider: settings.provider,
     values: settings.values,
-    ...(scope === "space" ? { expectedConnectionId: settings.connectionId ?? null } : {}),
+    ...(scope === "space"
+      ? { expectedConnectionId: settings.connectionId ?? null, idlePolicy: settings.idlePolicy }
+      : {}),
   };
 }
 
@@ -84,6 +87,7 @@ export function ComputerProviderSettings({
   const fieldLabel = useFieldLabel();
   const selectId = useId();
   const approvalId = useId();
+  const idlePolicyId = useId();
   const [formState, setFormState] = useState<Form | null>(null);
   const [saved, setSaved] = useState(false);
   const [approveSpending, setApproveSpending] = useState(false);
@@ -178,6 +182,12 @@ export function ComputerProviderSettings({
                 set({
                   provider,
                   values: provider === settings.provider ? settings.values : {},
+                  idlePolicy:
+                    scope === "space"
+                      ? provider === settings.provider
+                        ? settings.idlePolicy
+                        : "keep-vm"
+                      : undefined,
                 })
               }
               options={[
@@ -224,6 +234,27 @@ export function ComputerProviderSettings({
               />
             );
           })}
+          {scope === "space" && descriptor?.capabilities.hibernate ? (
+            <Field>
+              <FieldLabel htmlFor={idlePolicyId}>
+                <Trans>When computers are idle</Trans>
+              </FieldLabel>
+              <OptionSelect
+                id={idlePolicyId}
+                value={draft.idlePolicy ?? "keep-vm"}
+                onValueChange={(idlePolicy) => set({ idlePolicy })}
+                options={[
+                  { value: "keep-vm", label: t`Keep VM` },
+                  { value: "hibernate", label: t`Hibernate and release` },
+                ]}
+              />
+              {draft.idlePolicy === "hibernate" ? (
+                <p className="text-body-sm text-muted-foreground">
+                  <Trans>Snapshot storage can incur charges. Waking takes longer.</Trans>
+                </p>
+              ) : null}
+            </Field>
+          ) : null}
           {requiresApproval ? (
             <div className="grid gap-1">
               <Field orientation="horizontal">

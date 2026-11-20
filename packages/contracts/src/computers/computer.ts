@@ -74,6 +74,9 @@ export type ComputerReleaseReason = z.infer<typeof ComputerReleaseReasonSchema>;
 
 export const ComputerProviderFieldSchema = ProviderSettingsFieldSchema;
 export type ComputerProviderField = ProviderSettingsField;
+export const ComputerIdlePolicySchema = z.enum(["keep-vm", "hibernate"]);
+export type ComputerIdlePolicy = z.infer<typeof ComputerIdlePolicySchema>;
+
 export const ComputerProviderDescriptorSchema = z.object({
   id: z.string(),
   displayName: z.string(),
@@ -81,6 +84,7 @@ export const ComputerProviderDescriptorSchema = z.object({
   fields: z.array(ComputerProviderFieldSchema),
   capabilities: z.object({
     perAccount: z.boolean(),
+    hibernate: z.boolean().optional(),
     requiresSpendingApproval: z.boolean().optional(),
     spaceOnly: z.boolean().optional(),
   }),
@@ -90,6 +94,7 @@ export const ComputerProviderSettingsSchema = z.object({
   provider: z.string(),
   defaultProvider: z.string(),
   connectionId: z.string().optional(),
+  idlePolicy: ComputerIdlePolicySchema.optional(),
   providers: z.array(ComputerProviderDescriptorSchema),
   values: z.record(z.string(), z.string()),
   savedSecrets: z.record(z.string(), z.boolean()),
@@ -98,6 +103,7 @@ export type ComputerProviderSettings = z.infer<typeof ComputerProviderSettingsSc
 export const ComputerProviderUpdateSchema = z.object({
   provider: z.string().trim().min(1).max(64),
   approveSpending: z.boolean().optional(),
+  idlePolicy: ComputerIdlePolicySchema.optional(),
   expectedConnectionId: z.string().min(1).max(128).nullable().optional(),
   values: z.record(z.string().max(64), z.string().trim().max(4096)).default({}),
 });

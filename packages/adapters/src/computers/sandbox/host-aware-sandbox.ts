@@ -67,6 +67,7 @@ export async function createRunSandbox(
           ...verified,
           ...(settings.connectionId
             ? {
+                hibernationDb: prisma,
                 providerSettings: {
                   ...verified.providerSettings,
                   connectionIdentity: settings.connectionId,
@@ -345,7 +346,11 @@ export class HostAwareSandbox implements SandboxProvider {
     );
   }
 
-  stop(computer: ComputerRef, context: AdapterContext, options?: { discardUnsaved?: boolean }) {
+  stop(
+    computer: ComputerRef,
+    context: AdapterContext,
+    options?: Parameters<SandboxProvider["stop"]>[2],
+  ) {
     return this.route(computer).stop(computer, context, options);
   }
 

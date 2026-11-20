@@ -10,12 +10,14 @@ import type {
 import { ipVersion, isNonPublicAddress } from "@rakazo/contracts";
 import { deadlineSignal, pollUntil } from "@rakazo/core";
 import { supervisorComputerName } from "@rakazo/core/node/supervisor-identity";
+import type { PrismaClient } from "@rakazo/db";
 import { bestEffort } from "@rakazo/logging";
 import { requireUnreferencedMachineRecord } from "../sandbox-cleanup.js";
 import { sandboxNotFoundError } from "../sandbox-errors.js";
 import { gatewayScreenTransport, pinnedGatewayFetch } from "../supervisor/gateway-transport.js";
 import { SupervisorSandboxProvider } from "../supervisor/supervisor-sandbox.js";
 import { computerCloudInit, runtimeCertificate, validateCloudImages } from "./cloud-bootstrap.js";
+import { CloudDiskHibernation } from "./cloud-disk-hibernation.js";
 
 const READY_MS = 15 * 60_000;
 const CREATE_UNCONFIRMED = "The submitted computer creation is not yet confirmed.";
@@ -26,12 +28,30 @@ export interface CloudMachine {
   ipv4?: string | null;
 }
 
+export interface CloudDiskSnapshot {
+  id: string;
+  marker: string;
+  status: "pending" | "ready" | "failed";
+}
+
+export interface CloudDiskSnapshots {
+  create(machineId: CloudMachine["id"], marker: string, signal: AbortSignal): Promise<string>;
+  find(marker: string, signal: AbortSignal): Promise<CloudDiskSnapshot | null>;
+  get(id: string, signal: AbortSignal): Promise<CloudDiskSnapshot | null>;
+  delete(id: string, signal: AbortSignal): Promise<void>;
+  createWasRejected(error: unknown): boolean;
+}
+
 export interface CloudMachineClient {
+  snapshots?: CloudDiskSnapshots;
   find(name: string, signal: AbortSignal): Promise<CloudMachine | null>;
   findByLabels(labels: Record<string, string>, signal: AbortSignal): Promise<CloudMachine | null>;
   get(id: CloudMachine["id"], signal: AbortSignal): Promise<CloudMachine | null>;
   create(
-    input: { name: string; labels: Record<string, string>; userData: string },
+    input: { name: string; labels: Record<string, string> } & (
+      | { userData: string; snapshotId?: never }
+      | { snapshotId: string; userData?: never }
+    ),
     signal: AbortSignal,
   ): Promise<CloudMachine>;
   start(id: CloudMachine["id"], signal: AbortSignal): Promise<void>;
@@ -54,6 +74,7 @@ const encode = (value: Reference) =>
 
 export class CloudRuntimeSandbox extends SupervisorSandboxProvider {
   private readonly connection: string;
+  private readonly hibernation?: CloudDiskHibernation;
   private readonly transports = new Map<string, typeof fetch>();
 
   constructor(
@@ -61,11 +82,14 @@ export class CloudRuntimeSandbox extends SupervisorSandboxProvider {
     private readonly client: CloudMachineClient,
     private readonly settings: Record<string, string>,
     private readonly machines?: UnreferencedMachineRecords,
+    hibernationDb?: PrismaClient,
   ) {
     super("https://runtime.invalid", "runtime-placeholder", providerKind, (input, init) =>
       this.runtimeRequest(input, init),
     );
     this.connection = digest(settings.connectionIdentity ?? "");
+    if (hibernationDb && client.snapshots)
+      this.hibernation = new CloudDiskHibernation(hibernationDb, client, client.snapshots);
   }
 
   billsWhileRunning() {
@@ -107,8 +131,10 @@ export class CloudRuntimeSandbox extends SupervisorSandboxProvider {
     const pending = previous ? undefined : await this.pendingCreate(request.botId);
     const pendingRef = pending && this.reference(pending.machineId);
     if (pendingRef) this.assertContext(pendingRef, request.botId, context.spaceId);
+    const target = previous && this.hibernateTarget(previous, request.botId, context.spaceId);
+    const restored = target && (await this.hibernation?.wake(target, signal));
     let server = previous
-      ? await this.findGeneration(previous, signal)
+      ? (restored ?? (await this.findGeneration(previous, signal)))
       : pendingRef
         ? pending.providerResourceId
           ? await this.client.get(pending.providerResourceId, signal)
@@ -139,12 +165,13 @@ export class CloudRuntimeSandbox extends SupervisorSandboxProvider {
     const instanceId = server.id;
     server = await pollUntil(
       async () => {
-        const found = this.client.createWasRejected
-          ? await this.client.get(instanceId, signal)
-          : await this.findGeneration(ref, signal);
+        const found =
+          restored || this.client.createWasRejected
+            ? await this.client.get(instanceId, signal)
+            : await this.findGeneration(ref, signal);
         if (!found) {
           // A new instance can have an acknowledged ID before the provider starts serving reads.
-          if (!previous && this.client.createWasRejected) return false;
+          if (restored || (!previous && this.client.createWasRejected)) return false;
           throw sandboxNotFoundError("Cloud computer no longer exists");
         }
         this.assertOwner(found, ref);
@@ -181,6 +208,7 @@ export class CloudRuntimeSandbox extends SupervisorSandboxProvider {
       { ...request, homePath: `/var/lib/rakazo/homes/${request.botId}` },
       { ...context, signal },
     );
+    if (restored && target) await this.hibernation?.confirmWake(target, server, signal);
     const providerRef = encode(ref);
     return {
       id: providerRef,
@@ -188,7 +216,8 @@ export class CloudRuntimeSandbox extends SupervisorSandboxProvider {
       botId: request.botId,
       kind: this.providerKind,
       fresh,
-      started,
+      started: started || Boolean(restored),
+      ...(server.labels["rakazo-resume"] && { diskRestored: true }),
     };
   }
 
@@ -197,7 +226,14 @@ export class CloudRuntimeSandbox extends SupervisorSandboxProvider {
     return server.status === "running" && super.isRunning(computer, context);
   }
   async isStopped(computer: ComputerRef, context: AdapterContext) {
-    return (await this.serverFor(computer, context)).status === "off";
+    const ref = this.reference(computer.providerRef);
+    const target = this.hibernateTarget(ref, computer.botId, context.spaceId);
+    const server = await this.findGeneration(ref, context.signal);
+    if (server) {
+      this.assertOwner(server, ref);
+      return server.status === "off";
+    }
+    return (await this.hibernation?.isReleased(target)) ?? false;
   }
 
   override async connectScreen(
@@ -212,7 +248,36 @@ export class CloudRuntimeSandbox extends SupervisorSandboxProvider {
     const session = await super.connectTerminal(...args);
     return { ...session, ...(await this.screenTransport(session.url, args[0], args[2])) };
   }
-  override async stop(computer: ComputerRef, context: AdapterContext) {
+  override async stop(
+    computer: ComputerRef,
+    context: AdapterContext,
+    options?: Parameters<SandboxProvider["stop"]>[2],
+  ): Promise<void> {
+    if (options?.hibernate && this.hibernation) {
+      const ref = this.reference(computer.providerRef);
+      const target = this.hibernateTarget(ref, computer.botId, context.spaceId);
+      return this.hibernation.hibernate(
+        target,
+        context.signal,
+        async (signal) => {
+          const server = await this.findGeneration(ref, signal);
+          if (server) this.assertOwner(server, ref);
+          return server;
+        },
+        async (signal) => {
+          const ctx = { ...context, signal };
+          let exitCode: number | undefined;
+          for await (const event of this.execute(
+            computer,
+            { argv: ["sync"], timeoutMs: 15_000 },
+            ctx,
+          ))
+            if (event.type === "exit") exitCode = event.code;
+          if (exitCode !== 0) throw new Error("The cloud computer could not flush its disk");
+          await this.stop(computer, ctx);
+        },
+      );
+    }
     const server = await this.serverFor(computer, context);
     if (server.status === "off") return;
     await this.client.stop(server.id, context.signal);
@@ -225,7 +290,8 @@ export class CloudRuntimeSandbox extends SupervisorSandboxProvider {
   }
   override async destroy(computer: ComputerRef, context: AdapterContext) {
     const ref = this.reference(computer.providerRef);
-    this.assertContext(ref, computer.botId, context.spaceId);
+    const target = this.hibernateTarget(ref, computer.botId, context.spaceId);
+    await this.hibernation?.destroy(target, context.signal);
     await this.remove(ref, context.signal);
   }
   async deleteMachine(machine: UnreferencedMachine, signal: AbortSignal) {
@@ -233,6 +299,16 @@ export class CloudRuntimeSandbox extends SupervisorSandboxProvider {
     if (!machine.homeKey || digest(machine.homeKey) !== ref.home)
       throw new Error("Cloud computer ownership mismatch");
     await this.remove(ref, signal, machine);
+  }
+
+  private hibernateTarget(ref: Reference, home: string, spaceId: string) {
+    this.assertContext(ref, home, spaceId);
+    return {
+      labels: this.labels(ref),
+      home,
+      spaceId,
+      connectionId: this.settings.connectionIdentity!,
+    };
   }
 
   private async remove(ref: Reference, parent: AbortSignal, pending?: UnreferencedMachine) {

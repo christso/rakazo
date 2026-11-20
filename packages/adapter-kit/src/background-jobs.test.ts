@@ -28,6 +28,7 @@ function handlers(): BackgroundJobHandlers {
     "routine.retry": vi.fn(async () => undefined),
     "computer.update": vi.fn(async () => undefined),
     "computer.sleep": vi.fn(async () => undefined),
+    "computer.teardown": vi.fn(async () => undefined),
     "computer.control-expire": vi.fn(async () => undefined),
     "skill.teaching-expire": vi.fn(async () => undefined),
     "run.forget-secrets": vi.fn(async () => undefined),

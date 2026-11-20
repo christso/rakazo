@@ -1,4 +1,5 @@
 import type { UnreferencedMachineRecords } from "@rakazo/adapter-kit";
+import type { PrismaClient } from "@rakazo/db";
 import type { CloudMachine } from "../../../computers/sandbox/cloud-runtime/cloud-runtime-sandbox.js";
 import { CloudRuntimeSandbox } from "../../../computers/sandbox/cloud-runtime/cloud-runtime-sandbox.js";
 import type { CloudServer } from "./hetzner-client.js";
@@ -9,22 +10,27 @@ function machine(server: CloudServer | null): CloudMachine | null {
 }
 
 export class HetznerSandboxProvider extends CloudRuntimeSandbox {
-  constructor(settings: Record<string, string>, machines?: UnreferencedMachineRecords) {
+  constructor(
+    settings: Record<string, string>,
+    machines?: UnreferencedMachineRecords,
+    hibernationDb?: PrismaClient,
+  ) {
     const client = new HetznerClient(settings.apiToken ?? "");
     super(
       "hetzner",
       {
+        snapshots: client.snapshots,
         find: async (name, signal) => machine(await client.find(name, signal)),
         findByLabels: async (labels, signal) => machine(await client.findByLabels(labels, signal)),
         get: async (id, signal) => machine(await client.server(Number(id), signal)),
-        async create({ name, labels, userData }, signal) {
+        async create({ name, labels, userData, snapshotId }, signal) {
           const { server } = await client.request<{ server: CloudServer }>(
             "POST",
             "/servers",
             signal,
             {
               name,
-              image: "debian-12",
+              image: snapshotId ? Number(snapshotId) : "debian-12",
               location: settings.location,
               server_type: settings.serverType,
               user_data: userData,
@@ -51,6 +57,7 @@ export class HetznerSandboxProvider extends CloudRuntimeSandbox {
       },
       settings,
       machines,
+      hibernationDb,
     );
     this.credentials = settings;
   }
