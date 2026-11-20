@@ -58,6 +58,11 @@ import {
 } from "./connector-safety.js";
 import { checkConnectorSource } from "./connector-source.js";
 import { executeGraphqlOperation, GraphqlConfigSchema } from "./graphql-connectors.js";
+import {
+  installDiscoveryFailed,
+  isUnavailableInstallCall,
+  unavailableInstallError,
+} from "./installed-connector-unavailable.js";
 
 const ModelHeaderName = HeaderName.refine(
   (name) => !isSensitiveHeader(name),
@@ -166,9 +171,12 @@ export class InstalledConnectorProvider implements ConnectorProvider {
     sessionScope?: string;
     sessionPool?: RemoteMcpSessionCache;
     sessionRunId?: string;
+    elicitation: true;
   } {
-    if (!context.runId) return {};
+    // Sources people add (tool gateways among them) may stop a tool to ask the person.
+    if (!context.runId) return { elicitation: true };
     return {
+      elicitation: true,
       sessionScope: `${context.spaceId} ${context.userId} ${context.runId} ${install.id}`,
       sessionPool: this.mcpSessions,
       sessionRunId: context.runId,
@@ -240,10 +248,11 @@ export class InstalledConnectorProvider implements ConnectorProvider {
     remote: RemoteRequestPolicy,
   ): Promise<ConnectorTool[]> {
     const catalogGroup = catalogGroupLabel(install.name, install.kind, install.id);
+    let credential: string | undefined;
     try {
       if (install.kind === "mcp") {
         const config = McpConfigSchema.parse(install.config);
-        const credential = await this.loadCredential(install, context);
+        credential = await this.loadCredential(install, context);
         const tools = await listRemoteMcpTools({
           ...remote,
           endpoint: install.source,
@@ -299,8 +308,11 @@ export class InstalledConnectorProvider implements ConnectorProvider {
           },
         }));
       }
-    } catch {
+    } catch (error) {
+      // A cancelled run says nothing about the source.
+      if (context.signal?.aborted) return [];
       // One unavailable user-installed source must not hide the other tools.
+      return installDiscoveryFailed(install, catalogGroup, error, credential);
     }
     return [];
   }
@@ -334,6 +346,10 @@ export class InstalledConnectorProvider implements ConnectorProvider {
       yield { type: "error", message: "Installed connector is unavailable" };
       return;
     }
+    if (isUnavailableInstallCall(call.route?.toolName)) {
+      yield unavailableInstallError(install);
+      return;
+    }
     let credential: string | undefined;
     try {
       credential = await this.loadCredential(install, context);
@@ -347,6 +363,11 @@ export class InstalledConnectorProvider implements ConnectorProvider {
           signal: context.signal,
           // Sources people add (gateways such as Executor) run tools that take minutes.
           longToolCalls: true,
+          asker: {
+            owner: context.runId ?? context.operationId,
+            source: install.name,
+            ask: context.askPerson,
+          },
           ...this.mcpSessionOptions(context, install),
         };
         const result = await callRemoteMcpTool(

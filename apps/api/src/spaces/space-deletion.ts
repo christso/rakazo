@@ -6,7 +6,7 @@ import type {
   SandboxProvider,
   SecretStore,
 } from "@rakazo/adapter-kit";
-import type { MemoryProviderResolver } from "@rakazo/adapters";
+import type { MeetingCalendarService, MemoryProviderResolver } from "@rakazo/adapters";
 import {
   destroyBot,
   finishSpaceComputerConnectionCleanup,
@@ -16,6 +16,7 @@ import {
   toComputerRef,
 } from "@rakazo/adapters";
 import type { Actor } from "@rakazo/contracts";
+import { ClientError } from "@rakazo/core";
 import type { HeldLease, PrismaClient } from "@rakazo/db";
 import {
   assertLeaseHeld,
@@ -29,12 +30,14 @@ import {
   recordComputerRunEnd,
   releaseSpaceDeletionClaim,
   renewSpaceDeletionClaim,
+  runAsSystem,
   SPACE_DELETION_CLAIM_TIMEOUT_MS,
   SpaceDeletionInProgressError,
   withLease,
 } from "@rakazo/db";
 import { getLogger } from "@rakazo/logging";
-import { rehomeItemsLeaving } from "./availability.js";
+import { rehomeItemsLeaving } from "./name-claims.js";
+import type { afterSpaceDeparture } from "./space-departure.js";
 
 /** Bound for one bot or sandbox teardown. Providers may ignore the abort signal, so without a
  * deadline a hung destroy would keep the lease renewed forever and block recovery. */
@@ -54,9 +57,43 @@ export type SpaceDeletionDeps = {
   artifacts: ArtifactStore;
   dataDir: string;
   messagingInstallations?: Parameters<typeof destroyBot>[0]["messagingInstallations"];
+  meetings?: Parameters<typeof destroyBot>[0]["meetings"] &
+    Parameters<typeof afterSpaceDeparture>[0]["meetings"];
+  meetingCalendar?: Pick<
+    MeetingCalendarService,
+    "disconnectSpace" | "disconnectOwner" | "disconnectUser"
+  >;
   /** Removes deleted page links' tokens from a remote secret store. */
   secrets?: Pick<SecretStore, "delete"> & Partial<Pick<SecretStore, "isRemote">>;
 };
+
+/** Keep provider handles available until the disconnect has been confirmed. */
+export async function disconnectMeetingCalendarsForDeletion(
+  { prisma, meetingCalendar }: Pick<SpaceDeletionDeps, "prisma" | "meetingCalendar">,
+  scope: { spaceId: string } | { userId: string },
+) {
+  const requireDisconnected = async (cause?: unknown) => {
+    const remaining = await runAsSystem("check meeting calendar teardown before deletion", () =>
+      prisma.meetingCalendarConnection.findFirst({ where: scope, select: { id: true } }),
+    );
+    if (remaining) {
+      throw new ClientError(
+        "SERVICE_UNAVAILABLE",
+        "Disconnect meeting calendars before deleting.",
+        undefined,
+        { cause },
+      );
+    }
+  };
+  try {
+    if ("spaceId" in scope) await meetingCalendar?.disconnectSpace(scope.spaceId);
+    else await meetingCalendar?.disconnectUser(scope.userId);
+  } catch (cause) {
+    await requireDisconnected(cause);
+    throw cause;
+  }
+  await requireDisconnected();
+}
 
 /**
  * The owner-only rules live in the db layer. One attempt at a time holds the Space's lease, and
@@ -125,6 +162,9 @@ export async function deleteSpaceWithContent(
       lease.signal.throwIfAborted();
     };
 
+    // A pending calendar disconnect is safe to retry before structural teardown begins.
+    await disconnectMeetingCalendarsForDeletion(deps, { spaceId });
+    lease.signal.throwIfAborted();
     for (const bot of await listClaimedSpaceBots(deps.prisma, claimedInput)) {
       try {
         await teardown(

@@ -25,6 +25,7 @@ import {
   ProsCons,
   Quote,
   Sum,
+  slugify,
   TableOfContents,
 } from "./text.js";
 import { computeDAGLayout, useSource, useTheme } from "./theme.js";
@@ -232,6 +233,30 @@ describe("structure", () => {
   });
 });
 
+describe("slugify", () => {
+  it.each([
+    ["ダッシュボード", "ダッシュボード"],
+    ["नमस्ते", "नमस्ते"],
+    ["สวัสดี", "สวัสดี"],
+    ["ガ", "ガ"],
+    ["Café", "cafe"],
+    ["Hello 世界", "hello-世界"],
+  ])("keeps the anchor for %s readable", (heading, slug) => {
+    expect(slugify(heading)).toBe(slug);
+  });
+
+  it("keeps a composed kana distinct from its base character", () => {
+    expect(slugify("ガ")).not.toBe(slugify("カ"));
+  });
+
+  it("caps a long astral heading by code point, leaving it well formed", () => {
+    const slug = slugify("𠀀".repeat(70));
+    // encodeURIComponent throws on a lone surrogate, so this checks well-formedness.
+    expect(() => encodeURIComponent(slug)).not.toThrow();
+    expect(Array.from(slug)).toHaveLength(64);
+  });
+});
+
 describe("TableOfContents", () => {
   const items = Array.from({ length: 16 }, (_, index) => ({
     label: `Part ${index + 1}`,
@@ -312,22 +337,20 @@ describe("links and legend", () => {
   });
 
   it("draws the names comparison points at as grey dashed lines, in their place", () => {
-    const markup = html(
+    const host = mount(
       <Legend names={["Daily visits", "7-day average", "Signups"]} comparison={[1]} />,
     );
-    const items = markup.match(/<li [\s\S]*?<\/li>/g)!;
-    expect(items.map((item) => item.replace(/<[^>]+>/g, ""))).toEqual([
+    const items = [...host.querySelectorAll("li")];
+    expect(items.map((item) => item.textContent)).toEqual([
       "Daily visits",
       "7-day average",
       "Signups",
     ]);
-    expect(items.map((item) => item.includes('stroke-dasharray="3 2"'))).toEqual([
-      false,
-      true,
-      false,
-    ]);
-    expect(items[1]).toContain("color:var(--rk-other)");
-    expect(items[2]).toContain("color:var(--rk-c3)");
+    expect(
+      items.map((item) => item.querySelector("line")?.getAttribute("stroke-dasharray")),
+    ).toEqual([null, "3 2", null]);
+    expect(items[1]?.style.color).toBe("var(--rk-other)");
+    expect(items[2]?.style.color).toBe("var(--rk-c3)");
     expect(html(<Legend names={[]} />)).toBe("");
   });
 });

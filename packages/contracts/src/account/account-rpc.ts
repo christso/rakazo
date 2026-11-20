@@ -7,14 +7,20 @@ import { botId } from "../rpc/inputs.js";
 import { SettingsScopeSchema } from "../settings-scope.js";
 import { ExportManifestSchema } from "./account-export.js";
 import { AiConsentQuerySchema, AiConsentStatusSchema } from "./ai-consent.js";
-import { AnalyticsScreenInput } from "./analytics.js";
+import { AnalyticsModelSignInStepInput, AnalyticsScreenInput } from "./analytics.js";
 import { AuditEventListInputSchema, AuditEventPageSchema } from "./audit-events.js";
 import { AppBootstrapSchema, MeSchema, SignupSurveySchema } from "./me.js";
 import { AppLocaleSchema, AvatarStyleSchema, TimeZoneSchema } from "./preferences.js";
 import { SecurityEventListInputSchema, SecurityEventSchema } from "./security-events.js";
 
 export const accountRpc = {
-  analytics: { screen: oc.input(AnalyticsScreenInput).output(z.object({ ok: z.literal(true) })) },
+  analytics: {
+    screen: oc.input(AnalyticsScreenInput).output(z.object({ ok: z.literal(true) })),
+    /** A step of a subscription sign-in only the app can see. */
+    modelSignInStep: oc
+      .input(AnalyticsModelSignInStepInput)
+      .output(z.object({ ok: z.literal(true) })),
+  },
   aiConsent: {
     status: oc.input(AiConsentQuerySchema).output(AiConsentStatusSchema),
     allow: oc
@@ -67,13 +73,18 @@ export const accountRpc = {
   security: {
     events: oc.input(SecurityEventListInputSchema).output(z.array(SecurityEventSchema)),
   },
-  /** The organization's audit log, newest first. Organization owners and admins only. */
+  /** The organization's audit log, newest first: everyone's for owners and admins, a member's own otherwise. */
   audit: {
     events: oc.input(AuditEventListInputSchema).output(AuditEventPageSchema),
   },
   onboarding: {
     /** Record the optional signup survey; an empty submission marks it skipped. */
     signupSurvey: oc.input(SignupSurveySchema).output(z.object({ ok: z.literal(true) })),
+    /**
+     * The Space's first-run bot, created and greeted when the Space has never held a chat; null
+     * once it has (or had) other bots, so deleting them never brings it back.
+     */
+    firstBot: oc.output(z.object({ botId: Id.nullable() })),
     /** Seed the first-run greeting into the bot's thread (focus card is separate). */
     start: oc.input(z.object({ botId: Id })).output(z.object({ ok: z.literal(true) })),
     /** Post the focus choice card when the thread is still idle. */

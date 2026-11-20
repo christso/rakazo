@@ -9,7 +9,6 @@ const mock = vi.hoisted(() => ({
 vi.mock("./context.js", () => ({
   dataDir: mock.dataDir,
   docker: { listContainers: async () => [], createContainer: mock.createContainer },
-  ensureComputerImage: async () => undefined,
   inspectSupervisorContainer: async () => undefined,
   supervisorInfo: undefined,
   supervisorToken: "synthetic-runtime-token",
@@ -24,7 +23,7 @@ vi.mock("./context.js", () => ({
 }));
 vi.mock("./egress.js", () => ({
   computerEgressMode: "restricted",
-  ensureRestrictedEgressEnforced: async () => undefined,
+  ensureComputerEgress: async () => undefined,
 }));
 vi.mock("./networks.js", async (original) => ({
   ...(await original<typeof import("./networks.js")>()),

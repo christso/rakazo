@@ -9,6 +9,8 @@ import { Id, ThinkingLevelSchema } from "../ids.js";
 import { AgentImportSetupItemSchema } from "../integrations/agent-import-setup.js";
 import { McpTransportSchema } from "../integrations/mcp.js";
 import { McpAppCspSchema } from "../integrations/mcp-app.js";
+import { OutgoingDraft } from "../integrations/outgoing-draft.js";
+import { ToolQuestionSchema } from "../integrations/tool-question.js";
 
 export const MessageRole = z.enum(["user", "bot", "system"]);
 export const BotMessageIntent = z.enum(["request", "result", "question", "status", "fyi"]);
@@ -45,6 +47,10 @@ const ChartBlock = z
       message: `Chart data exceeds the ${MAX_CHART_DATA_ROWS.toLocaleString("en-US")}-row limit`,
     });
   });
+
+/** What a routine row in the chat says happened. */
+export const RoutineEventChange = z.enum(["created", "updated", "enabled", "disabled", "deleted"]);
+export type RoutineEventChange = z.infer<typeof RoutineEventChange>;
 
 export const SecretAskPurpose = z.enum(["otp", "password", "api_key"]);
 export type SecretAskPurpose = z.infer<typeof SecretAskPurpose>;
@@ -84,6 +90,7 @@ export const MessageBlock = z.discriminatedUnion("kind", [
     kind: z.literal("ask"),
     text: z.string(),
     approvalEffectId: Id.optional(),
+    outgoingDraft: OutgoingDraft.optional(),
     instructionUpdate: z
       .object({
         botId: Id,
@@ -124,6 +131,8 @@ export const MessageBlock = z.discriminatedUnion("kind", [
     answerMessageId: z.string().optional(),
     /** A secret request the user dismissed instead of answering. */
     dismissed: z.literal(true).optional(),
+    /** An approval nobody answered before an unattended run's card expired; it was not done. */
+    expired: z.literal(true).optional(),
     /** A login the user used for this run only instead of saving it. */
     remembered: z.literal(false).optional(),
     actions: z
@@ -193,6 +202,15 @@ export const MessageBlock = z.discriminatedUnion("kind", [
   }),
   z.object({ kind: z.literal("meta"), text: z.string() }),
   /**
+   * A routine was created, changed, switched on or off, or deleted. The name only, never the
+   * prompt, and no `text` field on purpose: clients word the row, and the model never sees it.
+   */
+  z.object({
+    kind: z.literal("routine_event"),
+    change: RoutineEventChange,
+    name: z.string().max(200),
+  }),
+  /**
    * Marks a user message as what woke the bot (a webhook, an email, a chat message). Its text
    * block is the bot's full prompt, so chats, previews and search leave the message out.
    */
@@ -202,6 +220,8 @@ export const MessageBlock = z.discriminatedUnion("kind", [
     text: z.string(),
     /** Provider-generated tool status rather than assistant-authored narration. */
     activity: z.literal(true).optional(),
+    /** The person sees this text as the reply while it is written, so a call can say it then. */
+    shown: z.literal(true).optional(),
     pendingToolNames: z.array(z.string()).optional(),
   }),
   z.object({
@@ -314,6 +334,21 @@ export const MessageBlock = z.discriminatedUnion("kind", [
     toolResult: z.record(z.string(), z.any()),
     csp: McpAppCspSchema.optional(),
     prefersBorder: z.boolean().optional(),
+  }),
+  z.object({
+    /**
+     * A tool's server asking the person something while its call waits (MCP elicitation). Only
+     * the run's own user answers it, and only while the call is open; the call ends it as
+     * expired otherwise.
+     */
+    kind: z.literal("tool_question"),
+    question: ToolQuestionSchema,
+    status: z.enum(["pending", "accepted", "declined", "expired"]),
+    expiresAt: z.string(),
+    /** The waiting call's one-time key: an answer is sealed to it, so only that call reads it. */
+    publicKey: z.string().max(64),
+    /** The person's values sealed to `publicKey`, held only until the waiting call takes them. */
+    sealedValues: z.string().max(100_000).optional(),
   }),
   z.object({
     /** A page the bot saved. Title and version are as sent; read the page for its latest. */

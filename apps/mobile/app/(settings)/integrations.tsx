@@ -88,6 +88,7 @@ import {
 import { useSideInsets } from "../../lib/layout/side-insets";
 import { native, useThemedStyles } from "../../lib/native/native";
 import { iosAtLeast } from "../../lib/native/native-controls";
+import { openExternalUrl } from "../../lib/platform/open-url";
 
 export default function Integrations() {
   const sideInsets = useSideInsets();
@@ -942,6 +943,18 @@ export default function Integrations() {
           <Text numberOfLines={1} style={styles.title}>
             {label}
           </Text>
+          {item.chatApp && !connected ? (
+            <Text style={styles.secondary}>
+              {t`Tools for your bot.`}{" "}
+              <Text
+                accessibilityRole="link"
+                onPress={() => router.push("/messaging")}
+                style={styles.inlineLink}
+              >
+                {t`Chat from ${ph({ name: label })}`}
+              </Text>
+            </Text>
+          ) : null}
         </View>
         {renderCatalogActions(item, label)}
       </>
@@ -1130,6 +1143,7 @@ export default function Integrations() {
                 onRename={(row) => void renameAccount(row)}
                 onRevoke={(row) => void revokeAccount(row)}
                 onConnect={() => void connect(detailItem)}
+                onOpenChatApp={() => router.push("/messaging")}
               />
             ) : (
               <>
@@ -1250,7 +1264,7 @@ export default function Integrations() {
                   <NativeActionButton
                     fill={false}
                     label={t`Submit a plugin`}
-                    onPress={() => void Linking.openURL(SUBMIT_PLUGIN_URL)}
+                    onPress={() => void openExternalUrl(SUBMIT_PLUGIN_URL)}
                     prominence="quiet"
                     size="compact"
                     variant="text"

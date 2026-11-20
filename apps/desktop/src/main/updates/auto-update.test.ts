@@ -90,6 +90,19 @@ describe("classifyUpdaterFailure", () => {
     }
   });
 
+  it("stays silent when the release host fails or rate limits the feed", () => {
+    for (const statusCode of [429, 500, 502, 503]) {
+      const error = Object.assign(new Error(`${statusCode} \nmethod: GET url: <feed>`), {
+        statusCode,
+      });
+      expect(classifyUpdaterFailure(error)).toEqual({ kind: "offline", message: null });
+    }
+    const forbidden = Object.assign(new Error("403 \nmethod: GET url: <feed>"), {
+      statusCode: 403,
+    });
+    expect(classifyUpdaterFailure(forbidden).kind).toBe("other");
+  });
+
   it("treats an unreachable Linux signature fetch as offline, not a fault", () => {
     expect(classifyUpdaterFailure(new SignatureUnreachableError())).toEqual({
       kind: "offline",
@@ -121,6 +134,7 @@ describe("classifyUpdaterFailure", () => {
     for (const message of [
       "ditto: /private/update/Rakazo.app/x.js.map: No space left on device\nditto: Couldn't read pkzip signature.",
       "未能完成该操作。设备上无剩余空间: 设备上无剩余空间",
+      "No se pudo completar la operación. No queda espacio en el dispositivo: No queda espacio en el dispositivo",
     ]) {
       expect(classifyUpdaterFailure(new Error(message)), message).toEqual({
         kind: "disk-full",
@@ -355,6 +369,34 @@ describe("DesktopUpdateController", () => {
       availableVersion: "0.2.0",
       percent: 100,
     });
+  });
+
+  it("tells subscribers about each step so the menu can show progress", async () => {
+    let fake: ReturnType<typeof fakeUpdater>;
+    fake = fakeUpdater({
+      checkForUpdates: vi.fn(async () => {
+        fake.emit("checking-for-update");
+        fake.emit("update-available", { version: "0.2.0" });
+      }),
+      downloadUpdate: vi.fn(async () => {
+        fake.emit("download-progress", { percent: 40 });
+        fake.emit("update-downloaded", { version: "0.2.0" });
+      }),
+    });
+    const controller = new DesktopUpdateController(packaged, async () => fake.updater, clock);
+    const seen: string[] = [];
+    controller.subscribe((state) => seen.push(`${state.phase}:${state.percent ?? "-"}`));
+
+    await controller.check(true);
+    await vi.waitFor(() => expect(controller.state().phase).toBe("ready"));
+
+    expect(seen).toEqual([
+      "checking:-",
+      "available:-",
+      "downloading:0",
+      "downloading:40",
+      "ready:100",
+    ]);
   });
 
   it("joins manual downloads to the automatic download already in flight", async () => {
