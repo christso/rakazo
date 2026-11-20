@@ -7,6 +7,7 @@ import {
   isAllowedAttachmentMimeType,
   isAttachmentImageMimeType,
 } from "@rakazo/contracts";
+import { sliceWellFormed } from "../primitives/utf8.js";
 import { isApprovalAskBlock, isSecretAskBlock } from "../runs/action-approval.js";
 
 export class AttachmentValidationError extends Error {
@@ -185,7 +186,7 @@ export function toolStepsHistoryText(
   const lines = shown.map((step) => {
     const name =
       !full && step.label.length > TOOL_STEP_LABEL_MAX_CHARS
-        ? `${step.label.slice(0, TOOL_STEP_LABEL_MAX_CHARS)}…`
+        ? `${sliceWellFormed(step.label, TOOL_STEP_LABEL_MAX_CHARS)}…`
         : step.label;
     const counted = Number(step.count) > 1 ? `${name} ×${step.count}` : name;
     const outcome = toolStepOutcomeText(step);
@@ -193,7 +194,7 @@ export function toolStepsHistoryText(
     const whole = typeof step.note === "string" ? step.note.replace(/\s+/g, " ").trim() : "";
     const note =
       !full && whole.length > TOOL_STEP_NOTE_MAX_CHARS
-        ? `${whole.slice(0, TOOL_STEP_NOTE_MAX_CHARS)}…`
+        ? `${sliceWellFormed(whole, TOOL_STEP_NOTE_MAX_CHARS)}…`
         : whole;
     return note ? `- ${label}: ${note}` : `- ${label}`;
   });
@@ -302,6 +303,17 @@ function blockHistoryText(block: MessageBlock): string {
       missed: "the user did not answer",
     }[block.status];
     return `[you called the user about: ${block.reason}; ${outcome}]${block.status === "answered" ? `\n${block.opening}` : ""}`;
+  }
+  // Whether the person answered a tool's question, never what was asked or sent: the question
+  // is the server's own text and the answer went to the server.
+  if (block.kind === "tool_question") {
+    const outcome = {
+      pending: "waiting for the user",
+      accepted: "the user answered",
+      declined: "the user declined",
+      expired: "the user did not answer",
+    }[block.status];
+    return `[${block.question.source} asked the user a question during a tool call; ${outcome}]`;
   }
   if ("text" in block && typeof block.text === "string") return block.text;
   return "";

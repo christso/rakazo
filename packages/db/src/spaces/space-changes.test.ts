@@ -1,8 +1,7 @@
+import { SpaceChangeKind } from "@rakazo/contracts";
 import { flush } from "@rakazo/core/test-async";
 import { describe, expect, it } from "vitest";
 import { followSpaceChanges, publishSpaceChange } from "./space-changes.js";
-
-const initialKinds = ["computerUpdates", "runs", "routines", "computerProvider"];
 
 function fakeFanout() {
   const subscribers = new Map<string, Set<(payload: string) => void>>();
@@ -25,7 +24,8 @@ function fakeFanout() {
 
 async function opened(iterator: AsyncGenerator<string>) {
   const kinds = [];
-  for (let i = 0; i < initialKinds.length; i += 1) kinds.push((await iterator.next()).value);
+  for (let i = 0; i < SpaceChangeKind.options.length; i += 1)
+    kinds.push((await iterator.next()).value);
   return kinds;
 }
 
@@ -33,7 +33,7 @@ describe("followSpaceChanges", () => {
   it("signals every kind on open, then each change in its own Space only", async () => {
     const fanout = fakeFanout();
     const iterator = followSpaceChanges(fanout as never, "space-1");
-    expect(await opened(iterator)).toEqual(initialKinds);
+    expect(await opened(iterator)).toEqual(SpaceChangeKind.options);
 
     const next = iterator.next();
     let signalled = false;
@@ -75,12 +75,12 @@ describe("followSpaceChanges", () => {
     expect(fanout.topics()).toEqual([]);
   });
 
-  it("ignores unknown payloads and hears the previous release's computer update topic", async () => {
+  it("ignores unknown payloads", async () => {
     const fanout = fakeFanout();
     const iterator = followSpaceChanges(fanout as never, "space-1");
     await opened(iterator);
     await fanout.publish("space-changes:space-1", "billing");
-    await fanout.publish("computer-updates:space-1", "");
+    await publishSpaceChange(fanout as never, "space-1", "computerUpdates");
     expect((await iterator.next()).value).toBe("computerUpdates");
     await iterator.return(undefined);
   });
@@ -90,7 +90,7 @@ describe("followSpaceChanges", () => {
     const iterator = followSpaceChanges(fanout as never, "space-1");
     await opened(iterator);
     await fanout.publish("space-changes:space-1", "");
-    expect(await opened(iterator)).toEqual(initialKinds);
+    expect(await opened(iterator)).toEqual(SpaceChangeKind.options);
     await iterator.return(undefined);
   });
 });

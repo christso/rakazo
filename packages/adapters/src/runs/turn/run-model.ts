@@ -5,8 +5,20 @@ import type {
   ModelCredentialFailedState,
   ModelCredentialRetireReason,
 } from "@rakazo/adapter-kit";
-import { OPENAI_COMPATIBLE_PROVIDER_ID } from "@rakazo/contracts";
+import {
+  canonicalPiProviderId,
+  creditOfferingFromConnectionId,
+  OPENAI_COMPATIBLE_PROVIDER_ID,
+} from "@rakazo/contracts";
 import { MISSING_MODEL_RUN_ERROR } from "@rakazo/core";
+import {
+  approvedModelCreditOffering,
+  modelCreditOfferings,
+} from "../../model-credits/offerings.js";
+import {
+  approvedModelCreditMaterial,
+  ModelCreditConnectionUnavailableError,
+} from "../../model-credits/routing.js";
 import {
   HostedModelCreditsRequiredError,
   hostedModelCreditObserver,
@@ -27,6 +39,11 @@ import {
   retireToReconnectMarker,
   withModelCredentialLock,
 } from "../../models/model-credential-refresh.js";
+import {
+  MODEL_PROVIDER_NOT_ALLOWED_ERROR,
+  modelProviderAllowed,
+  modelProviderAllowlist,
+} from "../../models/model-provider-allowlist.js";
 import { resolveMemberMainModel, selectConfiguredModel } from "../../models/model-roles.js";
 import type { StoredModelSecret } from "../../models/model-secret.js";
 import { parseModelSecret, secretValuesToRedact } from "../../models/model-secret.js";
@@ -34,7 +51,9 @@ import {
   enabledOpenAiCompatibleModelIds,
   findConnectedModelCredential,
   hasHostedModelCredits,
+  ModelConnectionGoneError,
   PINNED_PROVIDER_NOT_CONNECTED,
+  UNKNOWN_PROVIDER_MODEL,
   UnavailableModelForAuthError,
   validateConnectedModelChoice,
   validateModelAuthAvailability,
@@ -56,6 +75,7 @@ export function runtimeFallbackModel(runtime: AgentRuntime) {
 export function isTerminalModelSetupError(error: unknown): boolean {
   return (
     error instanceof UnavailableModelForAuthError ||
+    error instanceof ModelCreditConnectionUnavailableError ||
     error instanceof HostedModelCreditsRequiredError ||
     isRetiredModelCredentialError(error) ||
     (error instanceof Error &&
@@ -134,7 +154,7 @@ function assertCompatibleModelEnabled(
   if (secret.kind !== "openai_compatible") return;
   if (secret.enabledModelIds !== undefined) {
     if (!enabledOpenAiCompatibleModelIds(secret, credential.defaultModel).includes(modelId)) {
-      throw new UnavailableModelForAuthError("Unknown model for that provider");
+      throw new UnavailableModelForAuthError(UNKNOWN_PROVIDER_MODEL);
     }
     return;
   }
@@ -156,11 +176,32 @@ export async function modelCreditBillingEnabled(
 
 export async function resolveModelKey(...args: Parameters<typeof resolveModelKeyMaterial>) {
   const [deps, userId, spaceId, , provider] = args;
-  const billingEnabled = await modelCreditBillingEnabled(deps);
+  const operatorFunded = args[7]?.operatorFunded === true;
+  if (operatorFunded && (args[3] || args[7]?.creditOfferingId || args[7]?.requireStoredSecret))
+    throw new UnavailableModelForAuthError("Conflicting model funding sources");
+  const billingEnabled = !operatorFunded && (await modelCreditBillingEnabled(deps));
   const scope = { userId, spaceId };
-  if (billingEnabled && (await hasHostedModelCredits(deps.prisma, scope, provider))) {
+  if (
+    modelCreditOfferings() &&
+    !args[3] &&
+    args[7]?.requireStoredSecret &&
+    !args[7]?.creditOfferingId
+  )
+    throw new UnavailableModelForAuthError("Selected personal connection is unavailable");
+  if (!args[3] && billingEnabled && (await hasHostedModelCredits(deps.prisma, scope, provider))) {
     args[3] = null;
     // Funded managed backups use deployment credentials just like the primary.
+    args[7] = { ...args[7], requireStoredSecret: false };
+  }
+  const creditOfferingId = args[7]?.creditOfferingId;
+  if (creditOfferingId) {
+    if (
+      args[3] ||
+      !billingEnabled ||
+      approvedModelCreditOffering(provider, args[5])?.id !== creditOfferingId ||
+      !(await hasHostedModelCredits(deps.prisma, scope, provider, true))
+    )
+      throw new UnavailableModelForAuthError("Selected credit offering is unavailable");
     args[7] = { ...args[7], requireStoredSecret: false };
   }
   const credential = args[3];
@@ -181,9 +222,22 @@ export async function resolveModelKey(...args: Parameters<typeof resolveModelKey
   if (!material.apiKey?.trim() && !runtimeKey?.trim() && !keyless) {
     throw new UnavailableModelForAuthError(MISSING_MODEL_RUN_ERROR);
   }
+  const apiKey = material.apiKey ?? runtimeKey;
+  if (apiKey) args[6]?.([apiKey]);
   const callObserver =
     !credential && billingEnabled ? await hostedModelCreditObserver(deps.prisma, scope) : undefined;
-  return { ...material, apiKey: material.apiKey ?? runtimeKey, callObserver };
+  const fundingOfferingId =
+    creditOfferingId ??
+    (!operatorFunded && !credential
+      ? approvedModelCreditOffering(provider, args[5])?.id
+      : undefined);
+  return {
+    ...material,
+    apiKey,
+    redact: [...new Set([...material.redact, ...(apiKey ? [apiKey] : [])])],
+    callObserver,
+    connectionId: fundingOfferingId ? `credits:${fundingOfferingId}` : credential?.id,
+  };
 }
 
 async function resolveModelKeyMaterial(
@@ -200,13 +254,17 @@ async function resolveModelKeyMaterial(
   provider: string,
   modelId: string,
   registerSecrets?: (values: string[]) => void,
-  { requireStoredSecret = false }: { requireStoredSecret?: boolean } = {},
+  {
+    requireStoredSecret = false,
+    operatorFunded = false,
+  }: { requireStoredSecret?: boolean; creditOfferingId?: string; operatorFunded?: boolean } = {},
 ): Promise<{
   apiKey?: string;
   accountId?: string;
   gatewayId?: string;
   projectId?: string;
   region?: string;
+  zeroDataRetention?: boolean;
   baseUrl?: string;
   apiProtocol?: AgentRunRequest["model"]["apiProtocol"];
   headers?: Record<string, string>;
@@ -230,16 +288,21 @@ async function resolveModelKeyMaterial(
   redact: string[];
 }> {
   if (credential) {
+    if (canonicalPiProviderId(credential.provider) !== canonicalPiProviderId(provider))
+      throw new UnavailableModelForAuthError("Model connection does not match provider");
+    if (!modelProviderAllowed(modelProviderAllowlist(), credential.provider))
+      throw new UnavailableModelForAuthError(MODEL_PROVIDER_NOT_ALLOWED_ERROR);
     return withModelCredentialLock(credential.secretId, async () => {
       const row = await deps.prisma.secret.findFirst({
         where: { id: credential.secretId, userId, spaceId: null },
       });
       if (!row) {
-        if (await modelCreditBillingEnabled(deps))
-          throw new Error("Connect that model provider again.");
-        if (requireStoredSecret) throw new Error("Backup model credential is no longer available");
+        if (modelCreditOfferings() || (await modelCreditBillingEnabled(deps)))
+          throw new ModelConnectionGoneError("Connect that model provider again.");
+        if (requireStoredSecret)
+          throw new ModelConnectionGoneError("Backup model credential is no longer available");
         if (credential.provider === OPENAI_COMPATIBLE_PROVIDER_ID) {
-          throw new UnavailableModelForAuthError("Unknown model for that provider");
+          throw new UnavailableModelForAuthError(UNKNOWN_PROVIDER_MODEL);
         }
         cloudflareProviderEnv({ provider });
         return { apiKey: deploymentKeyFor(deps, provider), redact: [] };
@@ -308,18 +371,23 @@ async function resolveModelKeyMaterial(
       const settings = connectionModelSettings(resolved.secret, provider, modelId, credential);
       // The account catalog knows what a Codex model reads; elsewhere the model's setting
       // decides wherever the bundled catalog cannot.
+      // Live-only models have no static reasoning or context card to fall back to.
+      // Keep explicit context limits; enable thinking when the account advertises efforts.
       const acceptsImages = liveCodex?.supportsImages ?? settings.images;
       const accountId = resolved.secret.kind === "api_key" ? resolved.secret.accountId : undefined;
       const gatewayId = resolved.secret.kind === "api_key" ? resolved.secret.gatewayId : undefined;
       cloudflareProviderEnv({ provider, accountId, gatewayId });
       const projectId = resolved.secret.kind === "api_key" ? resolved.secret.projectId : undefined;
       const region = resolved.secret.kind === "api_key" ? resolved.secret.region : undefined;
+      const zeroDataRetention =
+        resolved.secret.kind === "api_key" ? resolved.secret.zeroDataRetention : undefined;
       return {
         apiKey: resolved.apiKey,
         accountId,
         gatewayId,
         projectId,
         region,
+        zeroDataRetention,
         baseUrl,
         apiProtocol:
           resolved.secret.kind === "openai_compatible" ? resolved.secret.apiProtocol : undefined,
@@ -327,8 +395,8 @@ async function resolveModelKeyMaterial(
         allowPrivateEndpoint,
         cacheCapabilities:
           resolved.secret.kind !== "oauth" ? resolved.secret.cacheCapabilities : undefined,
-        contextWindow: settings.contextWindow,
-        reasoning: settings.reasoning,
+        contextWindow: settings.contextWindow ?? liveCodex?.contextWindow,
+        reasoning: liveCodex?.reasoningEfforts.length ? true : settings.reasoning,
         maxTokens: settings.maxTokens,
         acceptsImages,
         maxImagesPerPrompt: settings.maxImagesPerPrompt,
@@ -358,7 +426,23 @@ async function resolveModelKeyMaterial(
       };
     });
   }
-  if (requireStoredSecret) throw new Error("Backup model credential is no longer available");
+  if (requireStoredSecret)
+    throw new ModelConnectionGoneError("Backup model credential is no longer available");
+  if (modelCreditOfferings() && !operatorFunded) {
+    if (!(await modelCreditBillingEnabled(deps)))
+      throw new UnavailableModelForAuthError(MISSING_MODEL_RUN_ERROR);
+    // Credits a member chose follow the allowlist like their own connections do.
+    if (!modelProviderAllowed(modelProviderAllowlist(), provider))
+      throw new UnavailableModelForAuthError(MODEL_PROVIDER_NOT_ALLOWED_ERROR);
+    const material = await approvedModelCreditMaterial(
+      deps.prisma,
+      deps.secretStore,
+      provider,
+      modelId,
+    );
+    registerSecrets?.(material!.redact);
+    return material!;
+  }
   cloudflareProviderEnv({ provider });
   return { apiKey: deploymentKeyFor(deps, provider), redact: [] };
 }
@@ -366,14 +450,16 @@ async function resolveModelKeyMaterial(
 /** Translate resolved credentials and capabilities consistently for every run path. */
 export function resolvedModelRunFields(
   resolved: Awaited<ReturnType<typeof resolveModelKey>>,
-): Omit<AgentRunRequest["model"], "provider" | "id" | "connectionId" | "thinkingLevel"> {
+): Omit<AgentRunRequest["model"], "provider" | "id" | "thinkingLevel"> {
   return {
+    connectionId: resolved.connectionId,
     apiKey: resolved.oauth ? undefined : resolved.apiKey,
     callObserver: resolved.callObserver,
     ...(resolved.accountId ? { accountId: resolved.accountId } : {}),
     ...(resolved.gatewayId ? { gatewayId: resolved.gatewayId } : {}),
     ...(resolved.projectId ? { projectId: resolved.projectId } : {}),
     ...(resolved.region ? { region: resolved.region } : {}),
+    ...(resolved.zeroDataRetention ? { zeroDataRetention: true } : {}),
     baseUrl: resolved.baseUrl,
     apiProtocol: resolved.apiProtocol,
     headers: resolved.headers,
@@ -408,6 +494,25 @@ export async function resolveConnectedModelKey(
   requireStoredSecret = false,
   credentialId?: string,
 ) {
+  // Before validation, which can probe a stored connection's live catalog: a refused
+  // provider is not contacted, and its refusal is not replaced by a failed probe.
+  if (!modelProviderAllowed(modelProviderAllowlist(), provider)) {
+    throw new UnavailableModelForAuthError(MODEL_PROVIDER_NOT_ALLOWED_ERROR);
+  }
+  const creditOfferingId = creditOfferingFromConnectionId(credentialId);
+  if (creditOfferingId) {
+    const resolved = await resolveModelKey(
+      deps,
+      scope.userId,
+      scope.spaceId,
+      null,
+      provider,
+      modelId,
+      registerSecrets,
+      { creditOfferingId },
+    );
+    return { credential: null, resolved };
+  }
   const hostedProvider = (await modelCreditBillingEnabled(deps))
     ? resolveDeploymentModel().provider
     : undefined;
@@ -428,7 +533,9 @@ export async function resolveConnectedModelKey(
     modelId,
     { credentialId },
   );
-  if (!credential && provider !== hostedProvider) throw new Error(PINNED_PROVIDER_NOT_CONNECTED);
+  if (credentialId && !credential) throw new Error(PINNED_PROVIDER_NOT_CONNECTED);
+  if (!credential && provider !== hostedProvider && !approvedModelCreditOffering(provider, modelId))
+    throw new Error(PINNED_PROVIDER_NOT_CONNECTED);
   const resolved = await resolveModelKey(
     deps,
     scope.userId,
@@ -437,7 +544,7 @@ export async function resolveConnectedModelKey(
     provider,
     modelId,
     registerSecrets,
-    { requireStoredSecret },
+    { requireStoredSecret: requireStoredSecret && Boolean(credentialId || credential) },
   );
   return { credential, resolved };
 }
@@ -536,6 +643,13 @@ export async function resolveRunModel(
     credential,
     provider,
     id,
+    undefined,
+    {
+      creditOfferingId: creditOfferingFromConnectionId(selected.connectionId),
+      requireStoredSecret: Boolean(
+        selected.connectionId && !creditOfferingFromConnectionId(selected.connectionId),
+      ),
+    },
   );
   return {
     provider,

@@ -10,6 +10,7 @@ on:
       - "scripts/security/**"
       - "patches/**"
       - "pnpm-lock.yaml"
+      # Its auditConfig lists the advisories the audit ignores.
       - "pnpm-workspace.yaml"
       # Its packageManager field picks the pnpm that runs the audit.
       - "package.json"

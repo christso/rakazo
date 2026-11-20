@@ -32,18 +32,30 @@ const responseSchema = z.object({
     .optional(),
 });
 
+/** The hosts that serve the decision protocol. */
+export const DECISION_HOSTS = ["openrouter", "typesafe"] as const;
+export type DecisionHost = (typeof DECISION_HOSTS)[number];
+export const isDecisionHost = (value: string): value is DecisionHost =>
+  (DECISION_HOSTS as readonly string[]).includes(value);
+
 /** Two implementations of the same decision protocol; endpoint and auth never come from model output. */
 export class HttpDecisionProvider implements DecisionProvider {
   constructor(
-    private readonly provider: "openrouter" | "typesafe",
+    private readonly provider: DecisionHost,
     private readonly options: DecisionProviderOptions,
   ) {
     if (!options.apiKey.trim()) throw new DecisionProviderError("authentication");
+    // Only OpenRouter can restrict routing; a host that cannot is never sent the request.
+    if (options.zeroDataRetention && provider !== "openrouter")
+      throw new DecisionProviderError("invalid");
   }
 
   async decide(request: DecisionRequest, context: AdapterContext): Promise<DecisionResult> {
     context.signal.throwIfAborted();
-    const body = JSON.stringify(request);
+    // OpenRouter refuses the call when no endpoint for the model retains nothing.
+    const body = JSON.stringify(
+      this.options.zeroDataRetention ? { ...request, provider: { zdr: true } } : request,
+    );
     const callId = randomUUID();
     const pricing = decisionModel(this.provider, request.model);
     // Byte count plus a generous protocol allowance bounds tokenizer expansion.
@@ -55,7 +67,7 @@ export class HttpDecisionProvider implements DecisionProvider {
       modelId: request.model,
       operationKind: "setup",
       inputTokensEstimate,
-      maxOutputTokens: 0,
+      maxOutputTokens: null,
       maxCostUsd: pricing ? decisionInputCost(pricing, inputTokensEstimate) : undefined,
     });
     let result: Pick<DecisionResult, "model" | "answers">;
@@ -178,17 +190,20 @@ export class HttpDecisionProvider implements DecisionProvider {
             ),
           );
         }
-        if (usage)
-          await this.options.onUsage?.({
-            type: "usage",
-            ...usage,
-            provider: this.provider,
-            model: request.model,
-            callId,
-          });
       } finally {
-        if (reservation) await this.options.callObserver?.afterCall(reservation, usage);
+        if (reservation) {
+          const priced = await this.options.callObserver?.afterCall(reservation, usage);
+          if (priced) usage = priced;
+        }
       }
+      if (usage)
+        await this.options.onUsage?.({
+          type: "usage",
+          ...usage,
+          provider: this.provider,
+          model: request.model,
+          callId,
+        });
     }
     return { ...result, usage: usage ?? undefined };
   }

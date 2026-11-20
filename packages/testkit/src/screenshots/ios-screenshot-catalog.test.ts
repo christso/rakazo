@@ -15,6 +15,9 @@ const UNCOVERED: Record<string, string> = {
   "computer-provider":
     "requires a Space with computer provider settings; the catalog fixtures connect none",
   "integration-setup": "redirects to Integrations",
+  "meeting-calendar": "the catalog fixtures do not enable a meeting calendar",
+  "meeting-transcript": "the catalog fixtures produce no meeting transcripts",
+  meetings: "the catalog fixtures do not enable a meeting provider",
   "model-settings": "opens only for a model the catalog cannot describe; the fixtures connect none",
   "notification-open": "resolves the notification account, then redirects to its destination",
   share: "Android only: iOS has no share extension yet",

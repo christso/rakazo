@@ -70,7 +70,8 @@ beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   state.selected = "space-1";
   state.params = {};
-  state.generation = 1;
+  // Each fixture starts a new session. The route caches the owner within a generation.
+  state.generation++;
   state.verifyOwner.mockReset().mockResolvedValue({
     apiBase: "https://app.example.test",
     userId: "user-1",
@@ -165,4 +166,14 @@ it("does not use the previous session's owner while a new session is being verif
   expect(container.textContent).toContain("Sign in to open this notification");
   expect(container.textContent).not.toContain("thread:");
   expect(state.selectSpace).not.toHaveBeenCalled();
+});
+
+it("draws the next chat in its first commit once a chat confirmed the account", async () => {
+  await render();
+  act(() => root.unmount());
+  root = createRoot(container);
+
+  act(() => root.render(createElement(ThreadRoute)));
+
+  expect(container.textContent).toBe("thread:user-1");
 });
