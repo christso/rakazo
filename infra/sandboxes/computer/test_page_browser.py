@@ -701,8 +701,8 @@ class PurchaseTest(unittest.TestCase):
 
     def test_a_control_out_of_view_is_scrolled_to_before_it_is_checked(self):
         browser = pays(FakeAgentBrowser())
-        FakePurchases.offscreen = {"e8"}
-        FakePurchases.shows = PAY
+        box = browser.boxes["e8"]
+        browser.boxes["e8"] = [{**box, "y": 1500}, box]
         self.assertEqual(self.act([{"kind": "click", "ref": "e8"}], browser)["error"], helper.PURCHASE_REFUSED)
         self.assertEqual(browser.actions(), [["scrollintoview", "@e8"]])
 
@@ -778,13 +778,19 @@ class PurchaseTest(unittest.TestCase):
         self.assertLessEqual(now[0], helper.SCROLL_SETTLE_SECONDS + 0.01)
         self.assertFalse(any(command[0] == "click" for command in browser.actions()))
 
-    def test_a_control_still_out_of_view_after_scrolling_asks_what_the_page_shows(self):
+    def test_a_control_still_out_of_view_after_scrolling_neither_asks_nor_clicks(self):
         browser = FakeAgentBrowser()
         browser.boxes["e8"] = {"ref": "e8", "x": 10, "y": 1500, "width": 40, "height": 20}
-        FakePurchases.shows = PAY
+        FakePurchases.shows = {**PAY, "reason": "payment_page", "label": "Pay using Gift Card"}
+        actions = [{"kind": "click", "ref": "e8"}]
         with patch.object(helper.time, "sleep"):
-            result = page(browser).purchase_check({"actions": [{"kind": "click", "ref": "e8"}]})
-        self.assertEqual(result["purchase"]["label"], PAY["label"])
+            result = page(browser).purchase_check({"actions": actions})
+            acted = self.act(actions, browser)
+        self.assertIsNone(result["purchase"])
+        self.assertFalse(acted["uncertain"])
+        self.assertEqual(acted["completed"], 0)
+        self.assertIn("outside the viewport", acted["error"])
+        self.assertFalse(any(command[0] == "click" for command in browser.actions()))
 
     def test_a_batch_shares_one_scroll_wait_budget_when_targets_remain_out_of_view(self):
         browser = FakeAgentBrowser()
@@ -952,6 +958,14 @@ class DesktopPurchaseTest(unittest.TestCase):
         # Outside the browser window: nothing on the page is pressed.
         found, _ = self.purchases({"pagePoint": {"x": -5, "y": 6, "inside": False}})
         self.assertIsNone(found.desktop({"points": [{"x": 1, "y": 2}]}))
+
+    def test_desktop_click_places_zoomed_points_using_the_physical_display(self):
+        found, asked = self.purchases({"pagePoint": {"x": 1200, "y": 600, "inside": True},
+                                     "purchaseAt(1200, 600": {"purchase": PAY, "frames": False}})
+        with patch.object(helper.subprocess, "check_output", return_value=b"1280 800\n") as geometry:
+            self.assertEqual(found.desktop({"points": [{"x": 800, "y": 487}]}), PAY)
+        geometry.assert_called_once()
+        self.assertIn(("page", "pagePoint(800, 487, [1280, 800])"), asked)
 
     def test_a_key_or_a_click_that_cannot_be_placed_asks_when_the_page_shows_a_payment(self):
         shows = {**PAY, "reason": "payment_page"}

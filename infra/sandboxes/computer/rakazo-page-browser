@@ -1043,6 +1043,7 @@ class PageBrowser:
                 (box,) = self.ab.batch([["get", "box", f"@{ref}"]],
                                       timeout=max(0.001, deadline - time.monotonic()) if scrolled else 20.0)
                 if scrolled:
+                    offscreen_box = None
                     while time.monotonic() < deadline:
                         previous = box
                         time.sleep(min(POLL_SECONDS, max(0.0, deadline - time.monotonic())))
@@ -1063,9 +1064,14 @@ class PageBrowser:
                                     return site, found
                                 box = checked_box
                             except Offscreen:
-                                pass
-                    # No stable visible target was established within the call's scroll budget.
+                                offscreen_box = box
+                    if offscreen_box is not None and box == offscreen_box:
+                        raise Settled("The click target is outside the viewport after scrolling. "
+                                      "Take a fresh snapshot before continuing.")
+                    # No stable target was established within the call's scroll budget.
                     box = None
+            except Settled:
+                raise
             except Exception:  # noqa: BLE001
                 box = None
             try:
@@ -1101,7 +1107,11 @@ class PageBrowser:
                 node = self.control(step["ref"])
             except Settled:
                 continue
-            site, found = self.click_purchase(step["ref"], node)
+            try:
+                site, found = self.click_purchase(step["ref"], node)
+            except Settled:
+                # Execution stops here too if the target is still offscreen. It checks again before pressing.
+                break
             if found:
                 # One card approves one click: a later purchase click in the batch is refused, and asks.
                 steps, first = [index], found
@@ -2203,15 +2213,27 @@ PURCHASE_HELPERS = r"""
   // panel or docked tools: anything else moves the page, so a spot cannot be placed.
   const TOOLBAR_HEIGHT = 87;
   window.__rakazoPurchase = {
-    // Where a point of the screen (x, y) is in this page, or null when that cannot be told (a zoomed page,
-    // a scaled screen, a window with more than the toolbar).
-    pagePoint(x, y) {
-      if (window.devicePixelRatio !== 1 || !Number.isFinite(x) || !Number.isFinite(y)) return null;
-      if (window.outerWidth !== window.innerWidth
-          || Math.abs(window.outerHeight - window.innerHeight - TOOLBAR_HEIGHT) > 2) return null;
-      const side = (window.outerWidth - window.innerWidth) / 2;
-      const at = [x - (window.screenX + side), y - (window.screenY + window.outerHeight - window.innerHeight - side)];
-      return { x: at[0], y: at[1], inside: at[0] >= 0 && at[1] >= 0 && at[0] < window.innerWidth && at[1] < window.innerHeight };
+    // Where a physical screen point lands in the page's CSS pixels.
+    pagePoint(x, y, display) {
+      const ratio = window.devicePixelRatio;
+      if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(ratio) || ratio <= 0) return null;
+      if (ratio !== 1) {
+        const viewport = window.visualViewport;
+        // The native display confirms unscaled browser chrome. Require a focused, maximized browser
+        // with ordinary page zoom, no pinch offset, and the same toolbar geometry as an unzoomed one.
+        if (!document.hasFocus()
+            || display?.[0] !== window.screen.width || display?.[1] !== window.screen.height
+            || window.outerWidth !== window.screen.width || window.outerHeight !== window.screen.height
+            || window.screenX !== 0 || window.screenY !== 0
+            || viewport?.scale !== 1 || viewport.offsetLeft !== 0 || viewport.offsetTop !== 0) return null;
+      }
+      const width = Math.round(window.innerWidth * ratio);
+      const height = Math.round(window.innerHeight * ratio);
+      const toolbar = window.outerHeight - height;
+      if (window.outerWidth !== width || Math.abs(toolbar - TOOLBAR_HEIGHT) > 2) return null;
+      const left = (x - window.screenX) / ratio;
+      const top = (y - window.screenY - toolbar) / ratio;
+      return { x: left, y: top, inside: left >= 0 && top >= 0 && left < window.innerWidth && top < window.innerHeight };
     },
     // What a click at a spot of this page (in viewport coordinates) would press: the purchase it completes, or
     // `inFrame` when the spot is inside a frame, whose own page must be asked.
@@ -2483,9 +2505,20 @@ class Purchases:
         points = [(p["x"], p["y"]) for p in (args.get("points") or [])[:24]
                   if isinstance(p, dict) and all(isinstance(p.get(k), (int, float)) for k in ("x", "y"))]
         unknown = enter or not points or args.get("unplaced") is True
+        display = None
+        if points:
+            try:
+                width, height = map(int, subprocess.check_output(
+                    ["/usr/bin/xdotool", "getdisplaygeometry"], stderr=subprocess.DEVNULL, timeout=0.35
+                ).split())
+                if width > 0 and height > 0:
+                    display = [width, height]
+            except (OSError, ValueError, subprocess.SubprocessError):
+                pass
         try:
             for x, y in points:
-                placed = self.ask(self.session, None, f"pagePoint({json.dumps(x)}, {json.dumps(y)})")
+                placed = self.ask(self.session, None,
+                                  f"pagePoint({json.dumps(x)}, {json.dumps(y)}, {json.dumps(display)})")
                 if not isinstance(placed, dict):
                     unknown = True
                 elif placed.get("inside"):
