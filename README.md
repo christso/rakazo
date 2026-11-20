@@ -1,6 +1,6 @@
 # Woolworths checkout approval at 67% browser zoom
 
-The recording uses a genuine Woolworths checkout in a maximized Chromium window on a Linux Docker desktop. The MP4 shows the same live checkout side by side. It highlights **Edit** on both sides and shows the result returned by each helper below the page. The delivery address is masked.
+The recording uses a genuine Woolworths checkout in a maximized Chromium window on a Linux Docker desktop. The MP4 shows the live checkout once, with **Edit** highlighted and the delivery address masked. Beside it is a screenshot of the native Rakazo payment card, rendered in a browser-only replay of the observed preflight result. The patched result is shown beneath the card.
 
 | Helper | Visible target | Preflight result |
 |---|---|---|
