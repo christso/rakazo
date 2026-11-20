@@ -65,10 +65,15 @@ an explicit reset or move. **Default** uses the deployment's configured choice. 
 Computer modes still apply; select Private Computers, or set `COMPUTER_DEFAULT_MODE=dedicated`,
 to give each bot its own VM.
 
-Stop and idle shutdown power off the VM while retaining its disk, files and browser profiles.
-Stopped VMs remain billable; destroying the VM removes its disk and ends server charges. There is
-no automatic disk-expiry policy. Reset can destroy the old VM and provision another paid VM.
-A missing VM or unavailable connection is reported instead of silently using a different host.
+**Keep VM** is the default idle policy. It powers off the VM and preserves its disk, files and
+browser profiles. Stopped VMs remain billable. Reset can destroy the old VM and provision another
+paid VM. A missing VM or unavailable connection is reported instead of silently using a different
+host.
+
+For supported connections, choose **Hibernate and release** under **When computers are idle**.
+Rakazo waits for the disk snapshot to be ready before deleting the idle VM. The next start restores
+the disk onto a replacement VM. Snapshot storage can incur charges, and both release and wake times
+vary by provider and workload. See the [live timing results](./plans/2026-11-20-cloud-computer-hibernation.md#live-provider-verification).
 
 Space and account deletion retain connections while provisioning or machine cleanup is pending.
 Retry deletion after cleanup finishes; an exhausted cleanup job must be resolved before those

@@ -34,5 +34,25 @@ The implementation starts from fork commit `22322b622`. Existing orchestration l
 
 - Offline tests cover the Space default, failed snapshot, lost create responses, restore reconciliation, deletion retries, and foreign snapshots. PostgreSQL tests cover policy validation, tenant isolation, and retaining the computer row while a snapshot receipt exists. Chromium verifies the Space control and save payload.
 - A single shell-environment test in the broader computer suite fails on the original provider branch too.
-- Live provider verification is pending. On each provider, write and flush a marker in the desktop, hibernate through the normal idle path, confirm source VM deletion, wake, verify the marker and authenticated desktop at its replacement address, then delete the dedicated bot and confirm both VM and snapshots are gone.
 - When provider cleanup fails during Delete bot, Rakazo records a job that retries provider teardown. The bot remains until Delete bot succeeds. A Team computer belongs to the Space and survives member bot deletion.
+
+### Live provider verification
+
+Both providers passed on 20 November 2026 against Rakazo revision `ac6837ba3`. On each provider,
+the idle handler waited for a ready snapshot and deleted the source VM. A replacement VM on a
+different IP served the authenticated desktop and retained a file written before hibernation.
+Deleting the dedicated bot removed the replacement VM and snapshot. The test invoked the idle
+handler directly, so these timings exclude the time a worker waits before running the idle job.
+
+| Provider | Test configuration                       | Hibernate and release | Wake and verify |
+| -------- | ---------------------------------------- | --------------------: | --------------: |
+| Hetzner  | Falkenstein (`fsn1`), `cpx22`, Debian 12 |                4m 21s |          1m 09s |
+| Vultr    | Sydney (`syd`), `vc2-2c-4gb`, Debian 13  |               16m 33s |          7m 59s |
+
+Hibernate and release includes the workspace export, VM shutdown, snapshot creation and
+confirmation that the source VM was gone. Wake and verify ends when the saved file and desktop
+work on the replacement. About 15 minutes elapsed between Vultr accepting the snapshot request
+and confirmed source VM deletion. The Hetzner run recorded the full release time only.
+
+Each provider ran once, with a different region, plan and guest image. The cause of the timing
+gap is unknown.
