@@ -168,7 +168,12 @@ export default function SpaceComputerSettings() {
                   set({
                     provider,
                     values: provider === settings.provider ? settings.values : {},
-                    idlePolicy: provider === settings.provider ? settings.idlePolicy : "keep-vm",
+                    idlePolicy:
+                      provider === "default"
+                        ? undefined
+                        : provider === settings.provider
+                          ? settings.idlePolicy
+                          : "keep-vm",
                   })
                 }
               />

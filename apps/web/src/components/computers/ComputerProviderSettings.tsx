@@ -183,7 +183,7 @@ export function ComputerProviderSettings({
                   provider,
                   values: provider === settings.provider ? settings.values : {},
                   idlePolicy:
-                    scope === "space"
+                    scope === "space" && provider !== "default"
                       ? provider === settings.provider
                         ? settings.idlePolicy
                         : "keep-vm"

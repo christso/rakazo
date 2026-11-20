@@ -241,6 +241,34 @@ it("lets the Space return to its default without authorizing paid provisioning",
   );
 });
 
+it("saves the hibernation policy for a capable connection", async () => {
+  mock.rpc.mockResolvedValue({
+    ...settings,
+    idlePolicy: "keep-vm",
+    providers: settings.providers.map((provider) => ({
+      ...provider,
+      capabilities: { ...provider.capabilities, hibernate: true },
+    })),
+  });
+  await render();
+  const idlePolicy = host.querySelector<HTMLSelectElement>(
+    'select[aria-label="When computers are idle"]',
+  );
+  expect(idlePolicy?.value).toBe("keep-vm");
+  await act(async () => {
+    idlePolicy!.value = "hibernate";
+    idlePolicy!.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  expect(host.textContent).toContain("Snapshot storage can incur charges. Waking takes longer.");
+  await act(async () => host.querySelector<HTMLInputElement>('input[type="checkbox"]')?.click());
+  await act(async () => action().onPress());
+  expect(mock.rpc).toHaveBeenCalledWith(
+    "computerProvider/space/update",
+    expect.objectContaining({ idlePolicy: "hibernate", approveSpending: true }),
+    expect.anything(),
+  );
+});
+
 it("offers no editing action when the server grants no connection choices", async () => {
   mock.rpc.mockResolvedValue({ ...settings, providers: [], values: {}, savedSecrets: {} });
   await render();
