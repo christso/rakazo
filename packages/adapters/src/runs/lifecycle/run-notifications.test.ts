@@ -1,7 +1,7 @@
 import type { NotificationMessage } from "@rakazo/adapter-kit";
 import { describe, expect, it, vi } from "vitest";
 import type { ExecutorDeps } from "../executor/executor-deps.js";
-import { notifyMemberMessage, notifyRun } from "./run-notifications.js";
+import { notifyRun } from "./run-notifications.js";
 
 vi.mock("../../notifications/notification-identity.js", () => ({
   notificationIdentity: async () => undefined,
@@ -45,14 +45,6 @@ function deps({
         findMany: async ({ where }: { where: { spaceId: string } }) =>
           where.spaceId === "space-1" ? members.map((userId) => ({ userId })) : [],
       },
-      thread: {
-        findFirst: async () => ({
-          bot: { id: "bot-1", name: "Scout", color: "#000000", avatarSet: "", notifyOnFinish },
-          group: null,
-          groupId,
-        }),
-      },
-      user: { findUnique: async () => ({ name: "Ada" }) },
       routine: { findUnique: async () => null },
       run: {
         findFirst: async () => ({
@@ -180,54 +172,6 @@ describe("notifications in a shared Space", () => {
       await notifyRun(value, run, { ...message, kind });
       expect(recipients(send)).toEqual(["user-1"]);
       expect(publish.mock.calls.map((call) => (call as unknown[])[0])).toEqual(["user-1"]);
-    }
-  });
-
-  it("pushes Ada's message to Bea, never to Ada or someone outside the Space", async () => {
-    const { value, publish, send } = deps({ members: shared });
-    await notifyMemberMessage(value, {
-      spaceId: "space-1",
-      threadId: "thread-1",
-      authorUserId: "user-1",
-      text: "Can you plan dinner for Saturday?",
-    });
-    expect(recipients(send)).toEqual(["user-2"]);
-    expect(send).toHaveBeenCalledWith(
-      {
-        kind: "completion",
-        title: "Scout",
-        body: "Ada: Can you plan dinner for Saturday?",
-        botId: "bot-1",
-        threadId: "thread-1",
-        badge: 5,
-      },
-      expect.objectContaining({ userId: "user-2", spaceId: "space-1" }),
-    );
-    expect(publish).toHaveBeenCalledTimes(1);
-    expect(publish).toHaveBeenCalledWith(
-      "user-2",
-      expect.objectContaining({ threadId: "thread-1" }),
-    );
-  });
-
-  it("sends nothing for a message in a muted chat or a Space of one", async () => {
-    const muted = deps({ members: shared, notifyOnFinish: false });
-    await notifyMemberMessage(muted.value, {
-      spaceId: "space-1",
-      threadId: "thread-1",
-      authorUserId: "user-1",
-      text: "hello",
-    });
-    const alone = deps();
-    await notifyMemberMessage(alone.value, {
-      spaceId: "space-1",
-      threadId: "thread-1",
-      authorUserId: "user-1",
-      text: "hello",
-    });
-    for (const { send, publish } of [muted, alone]) {
-      expect(send).not.toHaveBeenCalled();
-      expect(publish).not.toHaveBeenCalled();
     }
   });
 });

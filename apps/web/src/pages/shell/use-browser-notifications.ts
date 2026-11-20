@@ -29,8 +29,6 @@ type ChatAlertOptions = {
   activeBotId: RefObject<string | undefined>;
   activeGroupId: RefObject<string | undefined>;
   openChat: (chat: Pick<ChatAlert, "botId" | "groupId">) => void;
-  /** The signed-in person, whose own messages never notify them. */
-  meId: string | undefined;
   /** Current groups, so a snooze that lands after a reply was queued is still honored. */
   groupsRef?: RefObject<readonly SnoozableChat[]>;
   /** The server's roster signals: one when the stream opens, then one per change. */
@@ -85,10 +83,8 @@ function openChatOnClick(
 export function useBrowserNotifications(
   bots: Bot[],
   botsRef: RefObject<Bot[]>,
-  { rpc, activeBotId, activeGroupId, openChat, meId, groupsRef, roster }: ChatAlertOptions,
+  { rpc, activeBotId, activeGroupId, openChat, groupsRef, roster }: ChatAlertOptions,
 ) {
-  const meIdRef = useRef(meId);
-  meIdRef.current = meId;
   useEffect(() => prepareNotificationIcons(bots), [bots]);
   const openChatRef = useRef(openChat);
   openChatRef.current = openChat;
@@ -207,7 +203,6 @@ export function useBrowserNotifications(
         windowFocused: document.hasFocus(),
         permission: "granted",
         notifiedEventIds: notifiedBrowserEvents.current,
-        meId: meIdRef.current,
       });
       if (!eligible || !enabled) return;
       const pending = {

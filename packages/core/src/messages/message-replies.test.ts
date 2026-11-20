@@ -5,7 +5,6 @@ import { deriveMessageQuote, messageReplyPreview } from "./message-quote.js";
 import {
   channelMessageSender,
   isPageOriginReply,
-  memberMessageAlerts,
   messageUnreadFor,
   otherAuthor,
   payloadAuthor,
@@ -135,21 +134,6 @@ describe("message authors", () => {
     expect(messageUnreadFor({ role: "user", author: ana }, "user-a")).toBe(false);
     // A message with no known author, such as a webhook's, leaves the chat as it was.
     expect(messageUnreadFor({ role: "user" }, "user-b")).toBe(false);
-  });
-
-  it("alerts the space for typed text, not a spoken call turn, a reaction or a file alone", () => {
-    const typed = [{ kind: "text", text: "Saturday works" }];
-    expect(memberMessageAlerts({ blocks: typed })).toBe(true);
-    expect(memberMessageAlerts({ blocks: typed, callId: "call-1" })).toBe(false);
-    expect(memberMessageAlerts({ blocks: [{ kind: "file", name: "plan.pdf" }] })).toBe(false);
-    expect(memberMessageAlerts({ blocks: [{ kind: "text", text: "  " }] })).toBe(false);
-    // A reaction is a one-emoji reply; a typed reply with words still alerts.
-    const reply = (text: string) => ({
-      blocks: [{ kind: "text", text }],
-      replyToMessageId: "message-1",
-    });
-    expect(memberMessageAlerts(reply("👍"))).toBe(false);
-    expect(memberMessageAlerts(reply("Yes, Saturday"))).toBe(true);
   });
 
   it("reads a live event's author and keeps the known one across updates", () => {

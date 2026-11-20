@@ -271,7 +271,7 @@ suite("saved account sessions and notifications (PostgreSQL)", () => {
     expect(notifications.some((item) => item.id === `background-${stamp}`)).toBe(false);
   });
 
-  it("notifies shared-space members while keeping attention with the run's user", async () => {
+  it("shares bot replies without alerting members about human messages", async () => {
     const spaceId = `space-${ids.family}`;
     const organizationId = `org-${ids.family}`;
     const botId = `bot-${ids.family}-0`;
@@ -365,12 +365,14 @@ suite("saved account sessions and notifications (PostgreSQL)", () => {
         expect.arrayContaining([
           expect.objectContaining({ id: `shared-${stamp}-0`, body: "Shared reply" }),
           expect.objectContaining({ id: `shared-${stamp}-1`, kind: "failure" }),
-          expect.objectContaining({ id: `shared-${stamp}-4`, body: "Family: Shared message" }),
         ]),
       );
       expect(
         work.some(
-          (notice) => notice.id === `shared-${stamp}-2` || notice.id === `shared-${stamp}-3`,
+          (notice) =>
+            notice.id === `shared-${stamp}-2` ||
+            notice.id === `shared-${stamp}-3` ||
+            notice.id === `shared-${stamp}-4`,
         ),
       ).toBe(false);
       const family = notices(ids.family);

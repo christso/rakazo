@@ -6,7 +6,6 @@ import {
 import type { Auth } from "@rakazo/auth";
 import type { AccountNotification, AccountSessions, SavedAccountSummary } from "@rakazo/contracts";
 import { GROUP_MEMBER_MIN, MessageBlock } from "@rakazo/contracts";
-import { displayName, memberMessageAlerts } from "@rakazo/core";
 import type { PrismaClient } from "@rakazo/db";
 import { countUnreadInboxChats, readJsonColumn, runAsSystem } from "@rakazo/db";
 import type { Hono } from "hono";
@@ -141,30 +140,9 @@ async function accountActivity(prisma: PrismaClient, userId: string) {
             ? event.payload
             : {};
         const message = event.type === "thread.message.created";
-        const memberMessage = message && payload.role === "user";
-        const author =
-          payload.author && typeof payload.author === "object" && !Array.isArray(payload.author)
-            ? payload.author
-            : undefined;
-        if (memberMessage) {
-          if (
-            !author ||
-            typeof author.id !== "string" ||
-            author.id === userId ||
-            !memberMessageAlerts(payload)
-          )
-            continue;
-        } else if (message && payload.role !== "bot") continue;
-        if (
-          (!message || (!memberMessage && run?.trigger === "bot_message")) &&
-          run?.userId !== userId
-        )
-          continue;
-        if (
-          message &&
-          !memberMessage &&
-          (run?.status === "waiting_input" || run?.status === "waiting_takeover")
-        )
+        if (message && payload.role !== "bot") continue;
+        if ((!message || run?.trigger === "bot_message") && run?.userId !== userId) continue;
+        if (message && (run?.status === "waiting_input" || run?.status === "waiting_takeover"))
           continue;
         const kind = message
           ? "completion"
@@ -176,7 +154,7 @@ async function accountActivity(prisma: PrismaClient, userId: string) {
         if (
           !runEventNotifies({
             kind,
-            trigger: memberMessage ? null : (run?.trigger ?? null),
+            trigger: run?.trigger ?? null,
             routine: run?.routine ?? null,
             groupId: group?.id ?? null,
             notifyOnFinish: bot?.notifyOnFinish ?? false,
@@ -210,13 +188,7 @@ async function accountActivity(prisma: PrismaClient, userId: string) {
           kind,
           ...(kind === "completion" && event.thread.reads.length > 0 ? { suppressed: true } : {}),
           title: group?.name ?? bot?.name ?? "",
-          body: completionNotificationPreview(
-            memberMessage
-              ? `${displayName(typeof author?.name === "string" ? author.name : "", "Someone")}: ${text}`
-              : message
-                ? text
-                : text || attention,
-          ),
+          body: completionNotificationPreview(message ? text : text || attention),
           botId: event.botId,
           threadId: event.threadId,
           spaceId: event.spaceId,

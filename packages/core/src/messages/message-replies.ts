@@ -3,7 +3,6 @@ import { MessageAuthorSchema, ReplyPreviewSchema } from "@rakazo/contracts";
 import { isQuestionAskBlock } from "../asks/ask-kind.js";
 import { displayName } from "../bots/display-name.js";
 import { plainTextFromMarkdown } from "./markdown-plain.js";
-import { messageReaction } from "./message-reactions.js";
 import { isDeliveryMessage } from "./message-visibility.js";
 
 /** Bound the source considered when deriving a reply excerpt. */
@@ -71,32 +70,6 @@ export function messageUnreadFor(
   return (
     message.role === "bot" ||
     (message.role === "user" && Boolean(otherAuthor(payloadAuthor(message).author, meId)))
-  );
-}
-
-/**
- * Whether a person's message alerts the rest of the space, by push or on the desktop: typed
- * text does; a spoken call turn, a reaction or a file sent alone does not.
- */
-export function memberMessageAlerts(message: {
-  callId?: unknown;
-  blocks?: unknown;
-  replyToMessageId?: unknown;
-}): boolean {
-  const blocks = (Array.isArray(message.blocks) ? message.blocks : []) as MessageBlock[];
-  const replyToMessageId =
-    typeof message.replyToMessageId === "string" ? message.replyToMessageId : undefined;
-  return (
-    typeof message.callId !== "string" &&
-    !messageReaction({ role: "user", blocks, replyToMessageId }) &&
-    blocks.some(
-      (block) =>
-        block &&
-        typeof block === "object" &&
-        "text" in block &&
-        typeof block.text === "string" &&
-        block.text.trim() !== "",
-    )
   );
 }
 
