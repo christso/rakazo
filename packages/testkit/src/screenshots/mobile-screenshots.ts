@@ -207,32 +207,37 @@ function startDeviceControlServer(
   prisma: PrismaClient,
   fixture: Awaited<ReturnType<typeof seedFixture>>,
 ): Server {
-  const routes = new Map<string, () => Promise<unknown>>(
-    Object.entries({
-      "/expand-notifications": () => adb(["shell", "cmd", "statusbar", "expand-notifications"]),
-      "/share-text": () =>
-        adb([
+  function runDeviceAction(route: string | undefined) {
+    switch (route) {
+      case "/expand-notifications":
+        return adb(["shell", "cmd", "statusbar", "expand-notifications"]);
+      case "/share-text":
+        return adb([
           "shell",
           "am start -a android.intent.action.SEND -t text/plain",
           "--es android.intent.extra.TEXT 'Shared from another app'",
           "-n com.rakazo.app/.MainActivity",
-        ]),
-      "/ring": () => ringFromResearcher(prisma, fixture),
-      "/connect-voice": () =>
-        rpc(app, fixture.cookie, "voice/connect", {
+        ]);
+      case "/ring":
+        return ringFromResearcher(prisma, fixture);
+      case "/connect-voice":
+        return rpc(app, fixture.cookie, "voice/connect", {
           provider: "scripted",
           apiKey: "fixture-voice-key",
-        }),
-    }),
-  );
+        });
+      default:
+        return undefined;
+    }
+  }
+
   const server = createServer((req, res) => {
-    const route = req.method === "GET" ? routes.get(req.url ?? "") : undefined;
-    if (!route) {
+    const action = req.method === "GET" ? runDeviceAction(req.url) : undefined;
+    if (!action) {
       res.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
       res.end("not found");
       return;
     }
-    route().then(
+    action.then(
       () => {
         res.writeHead(200, { "content-type": "text/plain; charset=utf-8" });
         res.end("ok");
