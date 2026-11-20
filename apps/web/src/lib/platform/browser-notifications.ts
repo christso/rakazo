@@ -1,12 +1,5 @@
 import type { ProductEvent } from "@rakazo/contracts";
-import {
-  displayName,
-  memberMessageAlerts,
-  messageUnreadFor,
-  payloadAuthor,
-  plainTextFromMarkdown,
-  TAKEOVER_COMPUTER_PENDING_STATE,
-} from "@rakazo/core";
+import { displayName, plainTextFromMarkdown, TAKEOVER_COMPUTER_PENDING_STATE } from "@rakazo/core";
 import { i18n } from "../locale/i18n";
 
 export type BrowserNotificationPermission = "default" | "denied" | "granted";
@@ -51,8 +44,6 @@ export type BrowserNotificationContext = {
   windowFocused: boolean;
   permission: BrowserNotificationPermission;
   notifiedEventIds: ReadonlySet<string>;
-  /** The signed-in person: another member's message is news to them, their own is not. */
-  meId?: string;
 };
 
 /** A card that only asks for the screen shares the takeover alert's tag, so the two show as one
@@ -77,9 +68,7 @@ export function shouldNotifyBrowser(
   context: BrowserNotificationContext,
 ): boolean {
   const notifiable =
-    (event.type === "thread.message.created" &&
-      messageUnreadFor(event.payload, context.meId) &&
-      (event.payload.role === "bot" || memberMessageAlerts(event.payload))) ||
+    (event.type === "thread.message.created" && event.payload.role === "bot") ||
     event.type === "run.failed" ||
     event.type === "run.cancelled";
   return (
@@ -109,10 +98,7 @@ export function browserNotificationMessage(
       .filter(Boolean)
       .join("\n")
       .trim();
-    const text = body || i18n._({ id: "Message", message: "Message" });
-    // Another member's message says who wrote it, as their push does.
-    const author = event.payload.role === "user" ? payloadAuthor(event.payload).author : undefined;
-    return { title: name, body: author ? `${author.name}: ${text}` : text };
+    return { title: name, body: body || i18n._({ id: "Message", message: "Message" }) };
   }
   if (event.type === "run.failed") {
     return {

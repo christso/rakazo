@@ -463,7 +463,6 @@ function SpaceShell() {
         setMobileSidebarOpen(false);
         navigate(alert.groupId ? `/app/g/${alert.groupId}` : `/app/${alert.botId}`);
       },
-      meId: userId,
       groupsRef,
       roster: rosterSignals,
     },

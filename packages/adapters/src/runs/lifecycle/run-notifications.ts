@@ -2,7 +2,6 @@ import type { NotificationMessage } from "@rakazo/adapter-kit";
 import type { MessageBlock } from "@rakazo/contracts";
 import {
   BACKGROUND_HELPER_TRIGGER,
-  displayName,
   isBackgroundRunTrigger,
   plainTextFromMarkdown,
   redactSecrets,
@@ -141,61 +140,6 @@ export async function notifyRun(
     groupId: notice.groupId,
     bot: notice.bot,
     retryOnFailure: options.retryOnFailure,
-  });
-}
-
-/**
- * Another member's message in a chat: everyone else in the Space hears about it, as they would a
- * reply. Nothing goes to the person who wrote it, or anywhere when the chat is muted.
- */
-export async function notifyMemberMessage(
-  deps: Pick<ExecutorDeps, "prisma" | "events" | "notifications">,
-  input: { spaceId: string; threadId: string; authorUserId: string; text: string },
-) {
-  if (!deps.notifications && !deps.events.publishChatAlert) return;
-  const recipients = (await spaceMemberIds(deps.prisma, input.spaceId)).filter(
-    (userId) => userId !== input.authorUserId,
-  );
-  if (!recipients.length) return;
-  const [thread, author] = await Promise.all([
-    deps.prisma.thread.findFirst({
-      where: { id: input.threadId, spaceId: input.spaceId, externalConversationId: null },
-      select: {
-        bot: {
-          select: { id: true, name: true, color: true, avatarSet: true, notifyOnFinish: true },
-        },
-        group: {
-          select: {
-            name: true,
-            members: {
-              orderBy: [{ createdAt: "asc" }, { botId: "asc" }],
-              take: 1,
-              select: { botId: true },
-            },
-          },
-        },
-        groupId: true,
-      },
-    }),
-    deps.prisma.user.findUnique({ where: { id: input.authorUserId }, select: { name: true } }),
-  ]);
-  const botId = thread?.bot?.id ?? thread?.group?.members[0]?.botId;
-  if (!thread || !botId || (!thread.groupId && !thread.bot?.notifyOnFinish)) return;
-  const chatName = thread.group?.name ?? thread.bot?.name ?? "";
-  const authorName = displayName(author?.name ?? "", "Someone");
-  await deliverChatNotice(deps, {
-    spaceId: input.spaceId,
-    recipients,
-    message: {
-      // Reads like a reply: new in the chat, nothing to act on.
-      kind: "completion",
-      title: displayName(chatName, "Chat"),
-      body: completionNotificationPreview(`${authorName}: ${input.text}`),
-      botId,
-      threadId: input.threadId,
-    },
-    groupId: thread.groupId,
-    bot: thread.groupId ? undefined : (thread.bot ?? undefined),
   });
 }
 

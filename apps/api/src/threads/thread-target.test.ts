@@ -3958,7 +3958,7 @@ describe("sendThreadMessage", () => {
     });
   });
 
-  it("stamps the call id on the live event so the bubble joins the call card at once", async () => {
+  it("streams spoken and typed messages without sending a chat alert", async () => {
     let messageSeq = 0;
     let eventSeq = 0;
     const clientNonce = callClientNonce("call-7");
@@ -3999,7 +3999,7 @@ describe("sendThreadMessage", () => {
       },
       steeringMessage: { create: vi.fn() },
     };
-    // Who to tell about the message: Ada's teammate.
+    // The chat is shared with another member.
     const members = vi.fn().mockResolvedValue([{ userId: "user-1" }, { userId: "user-2" }]);
     const prisma = {
       message: { findUnique: vi.fn().mockResolvedValue(null) },
@@ -4007,14 +4007,15 @@ describe("sendThreadMessage", () => {
       $transaction: vi.fn(async (callback: (client: typeof tx) => unknown) => callback(tx)),
     } as unknown as PrismaClient;
 
+    const notify = vi.fn().mockResolvedValue(undefined);
+    const publishChatAlert = vi.fn().mockResolvedValue(undefined);
     const send = (nonce: string | undefined) =>
       sendThreadMessage(
         {
           prisma,
           sandbox: {} as never,
-          events: { notify: vi.fn().mockResolvedValue(undefined) } as never,
+          events: { notify, publishChatAlert } as never,
           jobs: { enqueue: vi.fn().mockResolvedValue(undefined) } as never,
-          notifications: { send: vi.fn() } as never,
         },
         { spaceId: "workspace-1", userId: "user-1" } as Actor,
         { kind: "bot", botId: "bot-1", threadId: "thread-1" } as ThreadTarget,
@@ -4022,7 +4023,6 @@ describe("sendThreadMessage", () => {
       );
     await send(clientNonce);
     await flush();
-    // A spoken turn tells no teammate; a typed message does.
     expect(members).not.toHaveBeenCalled();
 
     expect(tx.event.create).toHaveBeenCalledWith({
@@ -4032,7 +4032,10 @@ describe("sendThreadMessage", () => {
       }),
     });
     await send(undefined);
-    await vi.waitFor(() => expect(members).toHaveBeenCalledOnce());
+    await flush();
+    expect(members).not.toHaveBeenCalled();
+    expect(publishChatAlert).not.toHaveBeenCalled();
+    expect(notify).toHaveBeenCalledTimes(2);
   });
 
   it("puts the message seq on the live event so the sender can match its echo", async () => {

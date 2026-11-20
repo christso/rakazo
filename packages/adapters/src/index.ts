@@ -200,7 +200,6 @@ export * from "./runs/labs-env.js";
 export {
   completionNotificationBody,
   completionNotificationPreview,
-  notifyMemberMessage,
   runEventNotifies,
 } from "./runs/lifecycle/run-notifications.js";
 export { loadRunOrigin } from "./runs/lifecycle/run-origin.js";
