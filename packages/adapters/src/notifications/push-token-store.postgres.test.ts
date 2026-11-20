@@ -359,7 +359,7 @@ suite("database push registrations", () => {
     expect(await api.list(user("a"))).toEqual([]);
   });
 
-  it("removes a handed-over or unregistered device from the table the previous release sends from", async () => {
+  it("removes a legacy device on unregistration while retaining simultaneous account registrations", async () => {
     const migration = (name: string) =>
       readFileSync(
         new URL(`../../../db/prisma/migrations/${name}/migration.sql`, import.meta.url),
@@ -406,7 +406,13 @@ suite("database push registrations", () => {
       expect(await api.list(user("a"))).toHaveLength(1);
 
       await worker.save(user("b"), token("shared"), session("b"));
+      expect(await api.list(user("a"))).toHaveLength(1);
+      expect(await api.list(user("b"))).toHaveLength(1);
+      expect(await legacy()).toEqual([user("a")]);
+
+      await api.remove(user("a"), credentialDigest(token("shared")));
       expect(await legacy()).toEqual([]);
+      expect(await api.list(user("b"))).toHaveLength(1);
       await sendFromPreviousRelease("b", "shared");
       expect(await legacy()).toEqual([user("b")]);
       await api.remove(user("b"), credentialDigest(token("shared")));
