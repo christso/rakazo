@@ -959,6 +959,14 @@ class DesktopPurchaseTest(unittest.TestCase):
         found, _ = self.purchases({"pagePoint": {"x": -5, "y": 6, "inside": False}})
         self.assertIsNone(found.desktop({"points": [{"x": 1, "y": 2}]}))
 
+    def test_desktop_click_places_zoomed_points_using_the_physical_display(self):
+        found, asked = self.purchases({"pagePoint": {"x": 1200, "y": 600, "inside": True},
+                                     "purchaseAt(1200, 600": {"purchase": PAY, "frames": False}})
+        with patch.object(helper.subprocess, "check_output", return_value=b"1280 800\n") as geometry:
+            self.assertEqual(found.desktop({"points": [{"x": 800, "y": 487}]}), PAY)
+        geometry.assert_called_once()
+        self.assertIn(("page", "pagePoint(800, 487, [1280, 800])"), asked)
+
     def test_a_key_or_a_click_that_cannot_be_placed_asks_when_the_page_shows_a_payment(self):
         shows = {**PAY, "reason": "payment_page"}
         for args in ({"enter": True}, {"unplaced": True}, {"points": [{"x": 1, "y": 2}]}):
