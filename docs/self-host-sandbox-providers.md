@@ -73,7 +73,7 @@ host.
 For supported connections, choose **Hibernate and release** under **When computers are idle**.
 Rakazo waits for the disk snapshot to be ready before deleting the idle VM. The next start restores
 the disk onto a replacement VM. Snapshot storage can incur charges, and both release and wake times
-vary by provider and workload. See the [live timing results](./plans/2026-11-20-cloud-computer-hibernation.md#live-provider-verification).
+vary by provider and workload.
 
 Space and account deletion retain connections while provisioning or machine cleanup is pending.
 Retry deletion after cleanup finishes; an exhausted cleanup job must be resolved before those
