@@ -37,6 +37,7 @@ function formFrom(key: string, settings: ComputerProviderSettings): Form {
       provider: settings.provider,
       values: settings.values,
       expectedConnectionId: settings.connectionId ?? null,
+      idlePolicy: settings.idlePolicy,
     },
   };
 }
@@ -164,7 +165,16 @@ export default function SpaceComputerSettings() {
                   })),
                 ]}
                 onChange={(provider) =>
-                  set({ provider, values: provider === settings.provider ? settings.values : {} })
+                  set({
+                    provider,
+                    values: provider === settings.provider ? settings.values : {},
+                    idlePolicy:
+                      provider === "default"
+                        ? undefined
+                        : provider === settings.provider
+                          ? settings.idlePolicy
+                          : "keep-vm",
+                  })
                 }
               />
             </SettingsGroup>
@@ -203,6 +213,31 @@ export default function SpaceComputerSettings() {
                     />
                   );
                 })}
+              </SettingsGroup>
+            ) : null}
+            {descriptor?.capabilities.hibernate ? (
+              <SettingsGroup
+                footer={
+                  draft.idlePolicy === "hibernate"
+                    ? t`Snapshot storage can incur charges. Waking takes longer.`
+                    : undefined
+                }
+              >
+                <MenuPicker
+                  label={t`When computers are idle`}
+                  value={draft.idlePolicy ?? "keep-vm"}
+                  disabled={save.pending}
+                  choices={[
+                    { key: "keep-vm", label: t`Keep VM` },
+                    { key: "hibernate", label: t`Hibernate and release` },
+                  ]}
+                  onChange={(idlePolicy) =>
+                    set({
+                      ...draft,
+                      idlePolicy: idlePolicy === "hibernate" ? "hibernate" : "keep-vm",
+                    })
+                  }
+                />
               </SettingsGroup>
             ) : null}
             {requiresApproval ? (

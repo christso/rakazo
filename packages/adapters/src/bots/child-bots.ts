@@ -32,6 +32,7 @@ import {
   withTransactionRetry,
 } from "@rakazo/db";
 import { getLogger } from "@rakazo/logging";
+import { queueComputerTeardown } from "../computers/computer-teardown.js";
 import {
   checkpointAndStopComputer,
   isTeamBotFolderName,
@@ -424,8 +425,14 @@ export async function destroyBot(
     cancelRunWork: true,
   });
   if (dedicated?.providerRef) {
-    const destroyed = deps.sandbox.destroy(toComputerRef(dedicated), context);
-    await (options.strictTeardown ? destroyed : destroyed.catch(() => undefined));
+    if (dedicated.hibernationProtected) {
+      await queueComputerTeardown(deps, dedicated.id);
+    } else {
+      const destroyed = deps.sandbox.destroy(toComputerRef(dedicated), context);
+      await (options.strictTeardown || dedicated.providerConnectionId
+        ? destroyed
+        : destroyed.catch(() => undefined));
+    }
   }
   // Keep the bot deletion transaction from committing if raw transcript cleanup fails.
   await removePiBotSessions(deps.dataDir, bot.userId, bot.id);

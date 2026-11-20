@@ -70,7 +70,7 @@ export async function confirmDeleteBot(
     t`Delete ${ph({ name: bot.name })}?`,
     [
       groupWarning,
-      t`Its conversation, files, and routines will be permanently deleted. What should happen to its memories?`,
+      t`Its conversation, files, routines, and any dedicated computer and snapshots will be permanently deleted. What should happen to its memories?`,
     ]
       .filter(Boolean)
       .join("\n\n"),

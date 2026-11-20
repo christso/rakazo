@@ -5,6 +5,7 @@ import type {
   UnreferencedMachineRecords,
 } from "@rakazo/adapter-kit";
 import type { ComputerProviderDescriptor, ComputerProviderField } from "@rakazo/contracts";
+import type { PrismaClient } from "@rakazo/db";
 import type { ResolveHostname } from "../network/network-address.js";
 import type { KubernetesSandboxOptions } from "../providers/computer/kubernetes/kubernetes-sandbox.js";
 
@@ -23,6 +24,7 @@ export interface SandboxProviderOptions {
   referenceInUse?: (computer: ComputerRef) => Promise<boolean>;
   /** Keeps a durable record of machines a provider created that no computer stores yet. */
   unreferencedMachines?: UnreferencedMachineRecords;
+  hibernationDb?: PrismaClient;
   daytonaApiKey?: string;
   daytonaApiUrl?: string;
   daytonaTarget?: string;
@@ -82,6 +84,7 @@ type WiredOption =
   | "onUnsafeStop"
   | "referenceInUse"
   | "unreferencedMachines"
+  | "hibernationDb"
   | "dataDir"
   | "providerSettings";
 
@@ -114,6 +117,7 @@ export interface ComputerProviderDefinition {
   settings?: {
     displayName: string;
     perAccount?: boolean;
+    hibernate?: boolean;
     requiresSpendingApproval?: boolean;
     spaceOnly?: boolean;
     spendingApprovalMessage?: string;

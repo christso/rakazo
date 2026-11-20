@@ -17,6 +17,7 @@ export const hetznerComputer: ComputerProviderDefinition = {
   settings: {
     displayName: "Hetzner Cloud",
     requiresSpendingApproval: true,
+    hibernate: true,
     spendingApprovalMessage:
       "Servers remain billable when stopped; delete them to stop server charges.",
     fields: [
@@ -50,6 +51,10 @@ export const hetznerComputer: ComputerProviderDefinition = {
   },
   async create(options) {
     const { HetznerSandboxProvider } = await import("./hetzner-sandbox.js");
-    return new HetznerSandboxProvider(options.providerSettings ?? {}, options.unreferencedMachines);
+    return new HetznerSandboxProvider(
+      options.providerSettings ?? {},
+      options.unreferencedMachines,
+      options.hibernationDb,
+    );
   },
 };

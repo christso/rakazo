@@ -424,12 +424,13 @@ export async function provisionComputer(
   let incomplete = false;
   // A start that took over an abandoned boot cannot tell how far that boot restored, so it restores.
   const replaces = (ref: ComputerRef) =>
-    reclaimStamp !== null ||
-    existing.restorePending ||
-    ref.fresh === true ||
-    !existing.providerRef ||
-    existing.providerRef !== ref.providerRef ||
-    existing.kind !== ref.kind;
+    !ref.diskRestored &&
+    (reclaimStamp !== null ||
+      existing.restorePending ||
+      ref.fresh === true ||
+      !existing.providerRef ||
+      existing.providerRef !== ref.providerRef ||
+      existing.kind !== ref.kind);
   try {
     // A computer that mounts the server's home boots on the object store's cached copy, so that
     // copy must hold the stored revision before provision. The kind is the one provision will
@@ -786,7 +787,7 @@ async function rollbackProvisionedComputer(
     await sandbox.releaseScreen?.(computer, context).catch(() => undefined);
     if (computer.fresh) {
       await sandbox.destroy(computer, context);
-    } else if (cause instanceof ComputerBusyError) {
+    } else if (cause instanceof ComputerBusyError && !computer.diskRestored) {
       try {
         await sandbox.stop(computer, context);
       } catch {

@@ -18,6 +18,7 @@ const payloadSchemas = {
   "routine.retry": z.object({ runId: z.string().min(1) }),
   "computer.update": z.object({ updateId: z.string().min(1) }),
   "computer.sleep": z.object({ computerId: z.string().min(1) }),
+  "computer.teardown": z.object({ computerId: z.string().min(1) }),
   "computer.control-expire": z.object({
     computerId: z.string().min(1),
     leaseId: z.string().min(1),

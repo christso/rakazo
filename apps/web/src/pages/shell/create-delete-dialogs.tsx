@@ -375,7 +375,8 @@ export function DeleteBotDialog({
           <Trans>
             Its conversation, files, and routines will be permanently deleted. Bots it created stay
             in your list.
-          </Trans>
+          </Trans>{" "}
+          <Trans>Any dedicated computer and its snapshots will also be deleted.</Trans>
           {groupWarning}
         </>
       }

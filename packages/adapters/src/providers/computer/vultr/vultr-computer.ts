@@ -27,6 +27,7 @@ export const vultrComputer: ComputerProviderDefinition = {
     displayName: "Vultr Cloud",
     spaceOnly: true,
     requiresSpendingApproval: true,
+    hibernate: true,
     spendingApprovalMessage:
       "Servers remain billable when stopped. Delete them to stop server charges.",
     fields: [
@@ -74,6 +75,7 @@ export const vultrComputer: ComputerProviderDefinition = {
       new VultrClient(settings.apiToken!, settings.region!, settings.plan!),
       settings,
       options.unreferencedMachines,
+      options.hibernationDb,
     );
   },
 };

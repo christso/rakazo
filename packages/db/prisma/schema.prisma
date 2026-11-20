@@ -690,6 +690,7 @@ model Space {
   pages                       Page[]
   notificationPreferences     NotificationPreference[]
   computerConnections         ComputerConnection[] @relation("SpaceComputerConnections")
+  computerIdlePolicy          String @default("keep-vm")
   computerConnectionId        String?
   computerConnection          ComputerConnection? @relation("SelectedSpaceComputerConnection", fields: [computerConnectionId], references: [id], onDelete: SetNull)
   computers                   Computer[]
@@ -1915,12 +1916,30 @@ model Computer {
   updatedAt               DateTime                 @updatedAt
   bots                    Bot[]
   executionLeases         ComputerExecutionLease[]
+  hibernationProtected    Boolean @default(false)
+  diskSnapshots           ComputerDiskSnapshot[]
   maintenanceId           String?
   updates                 ComputerUpdate[]
   homeDeletionNotice      HomeDeletionNotice?
 
   @@index([spaceId, scope])
   @@map("computers")
+}
+
+/// The provider operation receipt survives retries until its resources are gone.
+model ComputerDiskSnapshot {
+  marker          String @id
+  computerId      String
+  computer        Computer @relation(fields: [computerId], references: [id], onDelete: Restrict)
+  sourceId        String
+  snapshotId      String?
+  snapshotSeen    Boolean @default(false)
+  phase           String
+  restorePending  Boolean @default(false)
+  restoreId       String?
+
+  @@index([computerId])
+  @@map("computer_disk_snapshots")
 }
 
 /// Hosted billing only: a stopped computer whose saved home is due for deletion after its plan

@@ -45,6 +45,7 @@ function settingsProvider(
   const {
     displayName,
     perAccount = false,
+    hibernate,
     requiresSpendingApproval,
     spaceOnly,
     spendingApprovalMessage,
@@ -65,6 +66,7 @@ function settingsProvider(
     ...(spendingApprovalMessage ? { spendingApprovalMessage } : {}),
     capabilities: {
       perAccount,
+      ...(hibernate ? { hibernate } : {}),
       ...(requiresSpendingApproval ? { requiresSpendingApproval } : {}),
       ...(spaceOnly ? { spaceOnly } : {}),
     },

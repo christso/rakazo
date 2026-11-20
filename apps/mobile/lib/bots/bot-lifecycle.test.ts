@@ -155,10 +155,10 @@ describe("bot deletion preview", () => {
     );
   });
 
-  it("leaves the description unchanged when no groups are removed", async () => {
+  it("warns about deleting the dedicated computer when no groups are removed", async () => {
     await confirmDeleteBot({ id: "bot-fixture", name: "Fixture" }, vi.fn());
     expect(alert.mock.calls[0]![1]).toBe(
-      "Its conversation, files, and routines will be permanently deleted. What should happen to its memories?",
+      "Its conversation, files, routines, and any dedicated computer and snapshots will be permanently deleted. What should happen to its memories?",
     );
   });
 

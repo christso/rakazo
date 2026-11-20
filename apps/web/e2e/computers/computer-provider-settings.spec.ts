@@ -28,7 +28,7 @@ test("a Space owner explicitly authorizes a cloud computer connection", async ({
       {
         id: "test-cloud",
         displayName: "Test cloud",
-        capabilities: { perAccount: false, requiresSpendingApproval: true },
+        capabilities: { perAccount: false, requiresSpendingApproval: true, hibernate: true },
         spendingApprovalMessage: "Stopped servers remain billable.",
         fields: [{ key: "apiKey", label: "API key", kind: "secret", required: true }],
       },
@@ -48,6 +48,7 @@ test("a Space owner explicitly authorizes a cloud computer connection", async ({
           values: {},
           savedSecrets: { apiKey: true },
           connectionId: "test-space-connection",
+          idlePolicy: "hibernate",
         },
       },
     }),
@@ -68,6 +69,12 @@ test("a Space owner explicitly authorizes a cloud computer connection", async ({
   await captureScreenshot(page, testInfo, "space-computers-open");
   if (viewport) await page.setViewportSize(viewport);
   await chooseOption(form.getByLabel("New computers run on"), "Test cloud");
+  const idlePolicy = form.getByLabel("When computers are idle");
+  await expect(idlePolicy).toHaveText("Keep VM");
+  await chooseOption(idlePolicy, "Hibernate and release");
+  await expect(
+    form.getByText("Snapshot storage can incur charges. Waking takes longer."),
+  ).toBeVisible();
   await form.getByLabel("API key").fill("example-api-key");
   await expect(form.getByRole("button", { name: "Save", exact: true })).toBeDisabled();
   await expect(form.getByRole("checkbox", { name: "Allow paid computers" })).not.toBeChecked();
@@ -82,10 +89,12 @@ test("a Space owner explicitly authorizes a cloud computer connection", async ({
       provider: "test-cloud",
       values: { apiKey: "example-api-key" },
       expectedConnectionId: null,
+      idlePolicy: "hibernate",
       approveSpending: true,
     },
   });
   await expect(form.getByRole("checkbox", { name: "Allow paid computers" })).not.toBeChecked();
+  await expect(idlePolicy).toHaveText("Hibernate and release");
 });
 
 async function adminComputers(route: Route) {

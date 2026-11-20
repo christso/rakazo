@@ -57,7 +57,7 @@ export async function getSpaceComputerSettings(
   const canManage = await spaceAccess(deps.prisma, actor);
   const space = await deps.prisma.space.findUniqueOrThrow({
     where: { id: actor.spaceId },
-    select: { computerConnection: true },
+    select: { computerConnection: true, computerIdlePolicy: true },
   });
   const connection = space.computerConnection;
   const settings = canManage ? await readableSettings(deps, connection) : null;
@@ -68,7 +68,11 @@ export async function getSpaceComputerSettings(
     selection.provider === "default" ? deps.env.sandboxProvider : selection.provider,
     { scope: "space", enabled: canManage && Boolean(deps.env.computerSettingsEnabled) },
   );
-  return { ...view, ...(connection ? { connectionId: connection.id } : {}) };
+  return {
+    ...view,
+    idlePolicy: space.computerIdlePolicy === "hibernate" ? "hibernate" : "keep-vm",
+    ...(connection ? { connectionId: connection.id } : {}),
+  };
 }
 
 export async function updateSpaceComputerSettings(
@@ -93,6 +97,11 @@ export async function updateSpaceComputerSettings(
     input.provider === "default"
       ? null
       : await checkedComputerSettings(deps, actor, input, previous, "space");
+  const supportsHibernation = settings
+    ? computerProviderDescriptor(settings.provider).capabilities.hibernate === true
+    : false;
+  if (input.idlePolicy === "hibernate" && !supportsHibernation)
+    throw new ClientError("BAD_REQUEST", "This computer connection cannot hibernate");
   const id = randomUUID();
   const stored = settings
     ? await deps.secrets.put(
@@ -137,7 +146,10 @@ export async function updateSpaceComputerSettings(
         // Prior rows remain until Space teardown: a bound machine or crashed start may still need them.
         const selected = await tx.space.updateMany({
           where: { id: actor.spaceId, computerConnectionId: expectedConnectionId },
-          data: { computerConnectionId: settings ? id : null },
+          data: {
+            computerConnectionId: settings ? id : null,
+            computerIdlePolicy: supportsHibernation ? input.idlePolicy : "keep-vm",
+          },
         });
         if (selected.count !== 1)
           throw new ClientError("CONFLICT", "Computer settings changed; reload before saving");

@@ -1,6 +1,7 @@
 import { deadlineSignal, parseRetryAfter, retry } from "@rakazo/core";
 import { z } from "zod";
 import type {
+  CloudDiskSnapshots,
   CloudMachine,
   CloudMachineClient,
 } from "../../../computers/sandbox/cloud-runtime/cloud-runtime-sandbox.js";
@@ -24,6 +25,26 @@ const listResult = z.object({
   instances: z.array(instanceShape),
   meta: z.object({ links: z.object({ next: z.string().nullish() }) }),
 });
+
+const snapshotShape = z.object({
+  id: resourceId,
+  description: z.string(),
+  status: z.enum(["pending", "complete", "deleted", "error"]),
+});
+const snapshotList = z.object({ snapshots: z.array(snapshotShape), meta: listResult.shape.meta });
+
+function toSnapshot(snapshot: z.infer<typeof snapshotShape>) {
+  return {
+    id: snapshot.id,
+    marker: snapshot.description,
+    status:
+      snapshot.status === "complete"
+        ? ("ready" as const)
+        : snapshot.status === "pending"
+          ? ("pending" as const)
+          : ("failed" as const),
+  };
+}
 
 class VultrRequestError extends Error {
   constructor(
@@ -61,6 +82,54 @@ export class VultrClient implements CloudMachineClient {
     private readonly plan: string,
   ) {}
 
+  readonly snapshots: CloudDiskSnapshots = {
+    create: async (id, marker, signal) => {
+      const result = await this.request("POST", "/snapshots", signal, {
+        instance_id: resourceId.parse(id),
+        description: marker,
+      });
+      return z.object({ snapshot: z.object({ id: resourceId }) }).parse(result).snapshot.id;
+    },
+    find: async (marker, signal) => {
+      const params = new URLSearchParams({ per_page: "500" });
+      const cursors = new Set<string>();
+      let found: ReturnType<typeof toSnapshot> | null = null;
+      while (true) {
+        const page = snapshotList.parse(await this.request("GET", `/snapshots?${params}`, signal));
+        for (const snapshot of page.snapshots) {
+          if (snapshot.description !== marker) continue;
+          if (found) throw new Error("Cloud disk snapshot ownership is ambiguous");
+          found = toSnapshot(snapshot);
+        }
+        const next = page.meta.links.next;
+        if (!next) return found;
+        if (cursors.has(next)) throw new Error("Cloud provider repeated a snapshot list cursor");
+        cursors.add(next);
+        params.set("cursor", next);
+      }
+    },
+    get: async (id, signal) => {
+      try {
+        const { snapshot } = z
+          .object({ snapshot: snapshotShape })
+          .parse(await this.request("GET", `/snapshots/${resourceId.parse(id)}`, signal));
+        if (snapshot.id !== id) throw new Error("Cloud disk snapshot identity mismatch");
+        return toSnapshot(snapshot);
+      } catch (error) {
+        if (error instanceof VultrRequestError && error.status === 404) return null;
+        throw error;
+      }
+    },
+    delete: async (id, signal) => {
+      try {
+        await this.request("DELETE", `/snapshots/${resourceId.parse(id)}`, signal);
+      } catch (error) {
+        if (!(error instanceof VultrRequestError && error.status === 404)) throw error;
+      }
+    },
+    createWasRejected: (error) => this.createWasRejected(error),
+  };
+
   async verify(signal: AbortSignal) {
     listResult.parse(await this.request("GET", "/instances?per_page=1", signal));
   }
@@ -90,7 +159,7 @@ export class VultrClient implements CloudMachineClient {
   }
 
   async create(
-    { name, labels, userData }: Parameters<CloudMachineClient["create"]>[0],
+    { name, labels, userData, snapshotId }: Parameters<CloudMachineClient["create"]>[0],
     signal: AbortSignal,
   ) {
     const { instance } = instanceResult.parse(
@@ -99,8 +168,9 @@ export class VultrClient implements CloudMachineClient {
         plan: this.plan,
         label: name,
         hostname: name,
-        os_id: DEBIAN_13_X64,
-        user_data: Buffer.from(userData).toString("base64"),
+        ...(snapshotId
+          ? { snapshot_id: resourceId.parse(snapshotId) }
+          : { os_id: DEBIAN_13_X64, user_data: Buffer.from(userData!).toString("base64") }),
         tags: Object.entries(labels).map(([key, value]) => `${key}=${value}`),
         activation_email: false,
         backups: "disabled",
