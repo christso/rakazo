@@ -147,7 +147,9 @@ async function connectedUserComputer(ctx: RunContext, computerId?: string) {
   const devices = ctx.deps.userDevices;
   const device =
     owner && devices ? await devices.connected(owner, computerId).catch(() => null) : null;
-  return owner && devices && device ? { owner, devices, deviceId: device.deviceId } : undefined;
+  return owner && devices && device
+    ? { owner, devices, deviceId: device.deviceId, platform: device.platform }
+    : undefined;
 }
 
 const TARGET_UNAVAILABLE =
@@ -257,9 +259,14 @@ export function userComputerAct(ctx: RunContext, call: ToolCall) {
   });
 }
 
-type ScreenRequest =
-  | { method: "screenObserve"; app: string; query?: string }
-  | { method: "screenAct"; app: string; actions: HostScreenAction[] };
+function screenshotOption(call: ToolCall) {
+  return typeof call.args.includeScreenshot === "boolean" ? call.args.includeScreenshot : undefined;
+}
+
+type ScreenRequest = { app: string } & (
+  | { method: "screenObserve"; query?: string }
+  | { method: "screenAct"; actions: HostScreenAction[] }
+);
 
 /** The device gets the app name the approval card showed, never the raw argument. */
 async function userComputerScreen(ctx: RunContext, call: ToolCall, request: ScreenRequest) {
@@ -271,19 +278,29 @@ async function userComputerScreen(ctx: RunContext, call: ToolCall, request: Scre
     return call.finish({
       error: target.computerId ? TARGET_UNAVAILABLE : USER_COMPUTER_UNAVAILABLE,
     });
-  const { owner, devices, deviceId } = connected;
+  const { owner, devices, deviceId, platform } = connected;
+  const requestedImage = screenshotOption(call);
+  const includeScreenshot = requestedImage ?? platform !== "win32";
+  const showImage = includeScreenshot && ctx.computer.acceptsImages;
   const { signal } = ctx.context;
   try {
     const value = await lastValue(
       devices.request<HostScreenObservation | HostScreenActResult>(
         owner,
-        { ...request, botId: ctx.bot.id, runId: ctx.runId },
+        {
+          ...request,
+          ...(requestedImage !== undefined ? { includeScreenshot: showImage } : {}),
+          botId: ctx.bot.id,
+          runId: ctx.runId,
+        },
         signal,
         deviceId,
       ),
     );
     if (request.method === "screenObserve")
-      return call.finish(screenToolResult(ctx, value as HostScreenObservation, "observed"));
+      return call.finish(
+        screenToolResult(ctx, value as HostScreenObservation, "observed", showImage),
+      );
     const acted = value as HostScreenActResult;
     const total = request.actions.length;
     const note = `completed ${acted.completed} of ${total} action${total === 1 ? "" : "s"}${
@@ -291,7 +308,7 @@ async function userComputerScreen(ctx: RunContext, call: ToolCall, request: Scre
     }`;
     return call.finish(
       acted.observation
-        ? screenToolResult(ctx, acted.observation, note)
+        ? screenToolResult(ctx, acted.observation, note, showImage)
         : { completed: acted.completed, ...(acted.error ? { error: note } : {}) },
     );
   } catch (error) {
@@ -309,8 +326,9 @@ function screenToolResult(
   ctx: RunContext,
   observation: HostScreenObservation,
   note: string,
+  showImage: boolean,
 ): AgentToolExecutionResult {
-  const image = ctx.computer.acceptsImages ? observation.image : undefined;
+  const image = showImage ? observation.image : undefined;
   const details = {
     app: observation.app,
     ...(observation.title ? { title: redactSecrets(observation.title, ctx.secrets) } : {}),

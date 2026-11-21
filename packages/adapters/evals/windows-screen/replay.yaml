@@ -1,0 +1,34 @@
+description: Replay the numbered and named Windows accessibility workflows
+prompts: ["Create a work order with summary {{summary}} for {{assignee}}."]
+providers:
+  - id: file://replay.mjs
+    label: baseline
+    config: { variant: baseline }
+  - id: file://replay.mjs
+    label: candidate
+    config: { variant: candidate }
+defaultTest:
+  metadata:
+    publicNamedScores: [tool calls, screenshots, tool response text tokens (o200k_base)]
+  assert:
+    - type: javascript
+      value: |
+        const pass = output.saved?.summary === context.vars.summary &&
+          output.saved?.assignee === context.vars.assignee;
+        return {
+          pass,
+          score: Number(pass),
+          reason: 'Check the work order saved by the app',
+          namedScores: {
+            'tool calls': output.toolCalls,
+            'screenshots': output.screenshots,
+            'tool response text tokens (o200k_base)': output.textTokens
+          }
+        };
+tests:
+  - description: Loading dock
+    vars: { summary: Replace loading dock light, assignee: Rowan }
+  - description: Warehouse floor
+    vars: { summary: Check aisle five sensor, assignee: Mika }
+  - description: Safety inspection
+    vars: { summary: Inspect emergency exit sign, assignee: Sam }
