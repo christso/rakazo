@@ -3,6 +3,7 @@ import { build } from "esbuild";
 await build({
   entryPoints: {
     main: "src/main/main.ts",
+    "this-computer/paired-screen-access": "src/main/this-computer/paired-screen-access.ts",
     "this-computer/paired-screen-windows": "src/main/this-computer/paired-screen-windows.ts",
   },
   outdir: "dist",
@@ -19,8 +20,9 @@ await build({
     "electron-updater",
     "koffi",
     "@sentry/electron",
-    // Windows screen sharing only loads for the first incoming screen request.
-    "./this-computer/paired-screen-windows.js",
+    // Preferences load only on Windows. Capture and input load on the first screen request.
+    "./this-computer/paired-screen-access.js",
+    "./paired-screen-windows.js",
   ],
   // Only the release workflow's builds report errors; local and agent builds never do.
   define: {

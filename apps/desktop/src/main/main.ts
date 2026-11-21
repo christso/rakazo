@@ -48,8 +48,10 @@ import {
 } from "./setup/setup-config.js";
 import {
   clearSetup,
+  readPrivateFile,
   readSetup,
   readUiLocale,
+  writePrivateFile,
   writeSetup,
   writeUiLocale,
 } from "./setup/setup-store.js";
@@ -104,7 +106,7 @@ import {
 import type { ServerBundle } from "./this-computer/mac-runtime.js";
 import { nativeStackEligible, readServerBundle } from "./this-computer/mac-runtime.js";
 import { NativeStackController } from "./this-computer/native-stack.js";
-import { createWindowsScreenAccess } from "./this-computer/paired-screen-access.js";
+import type { createWindowsScreenAccess } from "./this-computer/paired-screen-access.js";
 import {
   StackStopMenuAvailability,
   stopStackLeftBehind,
@@ -669,10 +671,31 @@ app.whenReady().then(async () => {
     /* Local access fails closed; Docker remains available. */
   }
   if (process.platform === "win32") {
-    windowsScreen = await createWindowsScreenAccess(userDataDir, (origin) => {
-      const device = desktop.userDevices?.state(origin);
-      return device?.allowed ? device.deviceId : null;
-    });
+    const { createWindowsScreenAccess: createAccess } = await import(
+      "./this-computer/paired-screen-access.js"
+    );
+    windowsScreen = await createAccess(
+      userDataDir,
+      (origin) => {
+        const device = desktop.userDevices?.state(origin);
+        return device?.allowed ? device.deviceId : null;
+      },
+      async (signal) => {
+        const { response } = await dialog.showMessageBox({
+          type: "question",
+          message: t("Share this screen with your Rakazo account?"),
+          detail: t(
+            "Your primary display will be visible to the person who requested it. They can take control of your mouse and keyboard until the session ends.",
+          ),
+          buttons: [t("Cancel"), t("Share screen")],
+          defaultId: 0,
+          cancelId: 0,
+          signal,
+        });
+        return response === 1;
+      },
+      { read: readPrivateFile, write: writePrivateFile },
+    );
   }
   desktop.userDevices = createUserDeviceAccess({
     userDataDir,

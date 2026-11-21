@@ -1,18 +1,18 @@
 import { rm } from "node:fs/promises";
 import path from "node:path";
 import type { UserDeviceClientOptions } from "@rakazo/adapters/user-device-client";
-import { dialog } from "electron";
-import { t } from "../i18n.js";
-import { readPrivateFile, writePrivateFile } from "../setup/setup-store.js";
+import type { readPrivateFile, writePrivateFile } from "../setup/setup-store.js";
 
 type ScreenAccess = NonNullable<UserDeviceClientOptions["pairedScreen"]>;
 
 export async function createWindowsScreenAccess(
   userDataDir: string,
   pairedDeviceId: (origin: string) => string | null,
+  confirm: (signal: AbortSignal) => Promise<boolean>,
+  storage: { read: typeof readPrivateFile; write: typeof writePrivateFile },
 ) {
   const file = path.join(userDataDir, "paired-screen-consent.json");
-  let saved = await readPrivateFile(file, 4096);
+  let saved = await storage.read(file, 4096);
   let saving = false;
   let active: { origin: string } | undefined;
   let access: ScreenAccess | undefined;
@@ -37,7 +37,7 @@ export async function createWindowsScreenAccess(
       saving = true;
       try {
         if (enabled) {
-          await writePrivateFile(file, key);
+          await storage.write(file, key);
           saved = key;
         } else {
           saved = null;
@@ -63,21 +63,9 @@ export async function createWindowsScreenAccess(
             const { createWindowsPairedScreen } = await import("./paired-screen-windows.js");
             signal.throwIfAborted();
             if (active !== connection) throw new Error("Paired screen session ended");
-            access ??= createWindowsPairedScreen(async (promptSignal) => {
-              if (active && alwaysAllow(active.origin)) return true;
-              const { response } = await dialog.showMessageBox({
-                type: "question",
-                message: t("Share this screen with your Rakazo account?"),
-                detail: t(
-                  "Your primary display will be visible to the person who requested it. They can take control of your mouse and keyboard until the session ends.",
-                ),
-                buttons: [t("Cancel"), t("Share screen")],
-                defaultId: 0,
-                cancelId: 0,
-                signal: promptSignal,
-              });
-              return response === 1;
-            });
+            access ??= createWindowsPairedScreen((promptSignal) =>
+              active && alwaysAllow(active.origin) ? Promise.resolve(true) : confirm(promptSignal),
+            );
           }
           if (active !== connection) throw new Error("Paired screen session ended");
           return access.request(owner, request, signal, canTakeControl);

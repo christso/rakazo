@@ -1,11 +1,10 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { dialog } from "electron";
 import { expect, it, vi } from "vitest";
+import { readPrivateFile, writePrivateFile } from "../setup/setup-store.js";
 import { createWindowsScreenAccess } from "./paired-screen-access.js";
 
-vi.mock("electron", () => ({ dialog: { showMessageBox: vi.fn() } }));
 vi.mock("./paired-screen-windows.js", () => ({
   createWindowsPairedScreen: (confirm: (signal: AbortSignal) => Promise<boolean>) => ({
     clear: vi.fn(),
@@ -22,12 +21,12 @@ it("remembers prompt-free access only for the pairing that opted in", async () =
   const otherOrigin = "https://other.example.test";
   let deviceId = "original-pairing";
   const lookup = () => deviceId;
-  const prompt = vi.mocked(dialog.showMessageBox);
-  prompt.mockResolvedValue({ response: 0, checkboxChecked: false });
+  const prompt = vi.fn(async () => false);
+  const storage = { read: readPrivateFile, write: writePrivateFile };
   const open = { action: "open" } as const;
   const signal = new AbortController().signal;
   try {
-    const fresh = await createWindowsScreenAccess(directory, lookup);
+    const fresh = await createWindowsScreenAccess(directory, lookup, prompt, storage);
     expect(fresh.state(origin)).toEqual({ checked: false, enabled: true });
     const first = fresh.connect(origin);
     await expect(first.request("viewer", open, signal, () => true)).resolves.toEqual({
@@ -36,7 +35,7 @@ it("remembers prompt-free access only for the pairing that opted in", async () =
     expect(prompt).toHaveBeenCalledOnce();
     await fresh.setAlwaysAllow(origin, true);
 
-    const restored = await createWindowsScreenAccess(directory, lookup);
+    const restored = await createWindowsScreenAccess(directory, lookup, prompt, storage);
     expect(restored.state(origin).checked).toBe(true);
     expect(restored.state(otherOrigin).checked).toBe(false);
     const connection = restored.connect(origin);
@@ -57,7 +56,7 @@ it("remembers prompt-free access only for the pairing that opted in", async () =
 
     deviceId = "original-pairing";
     await restored.setAlwaysAllow(origin, false);
-    const afterRevoking = await createWindowsScreenAccess(directory, lookup);
+    const afterRevoking = await createWindowsScreenAccess(directory, lookup, prompt, storage);
     expect(afterRevoking.state(origin).checked).toBe(false);
   } finally {
     await rm(directory, { recursive: true, force: true });
