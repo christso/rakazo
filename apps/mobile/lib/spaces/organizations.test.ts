@@ -298,7 +298,7 @@ describe("organizationSwitchActions", () => {
     expect(activeOrganization(list)).toBeUndefined();
     expect(organizationSwitchActions(list)).toEqual([
       { id: "organization:org-work", title: "Work", state: "off" },
-      { id: "guest-space:space-guest", title: "Family · Guest", state: "on" },
+      { id: "guest-space:space-guest", title: "Family (Guest)", state: "on" },
     ]);
 
     await expect(switchOrganization(work, [work])).resolves.toBe(true);

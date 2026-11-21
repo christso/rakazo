@@ -1,5 +1,10 @@
 import type { OrganizationList } from "@rakazo/contracts";
-import { organizationLandingSpaceId, organizationOfSpace } from "@rakazo/core";
+import {
+  guestSpaceOfSelection,
+  organizationLandingSpaceId,
+  organizationOfSpace,
+  organizationSwitchContext,
+} from "@rakazo/core";
 import { queryOptions, useQuery } from "@tanstack/react-query";
 import { queryClient, spaceQueries, useQueryUserId } from "../query/query";
 import { ORGANIZATION_SPACES_STORAGE_KEY, rpc, selectedSpaceId, selectSpace } from "../query/rpc";
@@ -27,12 +32,13 @@ export function useOrganizations() {
   );
   const organizations = data?.organizations ?? [];
   const guestSpaces = data?.guestSpaces ?? [];
-  const spaceId = selectedSpaceId();
-  const activeGuestSpace = guestSpaces.find((space) => space.id === spaceId);
-  const activeOrganizationId = activeGuestSpace
-    ? null
-    : (organizationOfSpace(organizations, spaceId)?.id ?? data?.activeOrganizationId ?? null);
-  return { organizations, activeOrganizationId, guestSpaces, activeGuestSpace };
+  const { organization, guestSpace } = organizationSwitchContext(data, selectedSpaceId());
+  return {
+    organizations,
+    activeOrganizationId: organization?.id ?? null,
+    guestSpaces,
+    activeGuestSpace: guestSpace,
+  };
 }
 
 function lastSpaces(): Record<string, string> {
@@ -71,11 +77,12 @@ export async function leaveOrganization(
 ): Promise<void> {
   if (!fromSpaceId || fromSpaceId === toSpaceId) return;
   // A link into another organization can arrive before the list has loaded.
-  const organizations =
-    (await queryClient.ensureQueryData(organizationsQuery(userId)).catch(() => undefined))
-      ?.organizations ?? [];
-  const from = organizationOfSpace(organizations, fromSpaceId);
-  const to = organizationOfSpace(organizations, toSpaceId);
+  const list = await queryClient.ensureQueryData(organizationsQuery(userId)).catch(() => undefined);
+  if (!list) return;
+  const from = organizationOfSpace(list.organizations, fromSpaceId);
+  const to = organizationOfSpace(list.organizations, toSpaceId);
+  if (!from && !guestSpaceOfSelection(list, fromSpaceId)) return;
+  if (!to && !guestSpaceOfSelection(list, toSpaceId)) return;
   if (from && from.id === to?.id) return;
   if (from) rememberSpace(from.id, fromSpaceId);
   const departingSpaceIds = from?.spaceIds ?? [fromSpaceId];

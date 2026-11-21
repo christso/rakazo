@@ -3,7 +3,12 @@ import { RPCLink } from "@orpc/client/fetch";
 import type { ContractRouterClient } from "@orpc/contract";
 import type { AppContract, ProductEvent } from "@rakazo/contracts";
 import { CLIENT_BUILD_HEADER, formatClientBuild } from "@rakazo/contracts";
-import { displayIdentityEvent, displayIdentityResult } from "@rakazo/core";
+import {
+  displayIdentityEvent,
+  displayIdentityResult,
+  guestSpaceOfSelection,
+  organizationOfSpace,
+} from "@rakazo/core";
 import { clientCorrelationHeaders, responseCorrelation } from "@rakazo/logging/monitoring";
 import { accountRequestHeaders } from "../auth/account-identity";
 import { authClient } from "../auth/auth";
@@ -134,11 +139,12 @@ let leavingSpace: Promise<void> | null = null;
 export function leaveUnavailableSpace(spaceId: string): Promise<void> {
   leavingSpace ??= (async () => {
     try {
-      const { organizations } = await rpc.organizations.list(undefined, {
+      const list = await rpc.organizations.list(undefined, {
         context: { spaceId: null },
       });
       if (
-        organizations.some((organization) => organization.spaceIds.includes(spaceId)) ||
+        organizationOfSpace(list.organizations, spaceId) ||
+        guestSpaceOfSelection(list, spaceId) ||
         selectedSpaceId() !== spaceId
       )
         return;
