@@ -93,7 +93,14 @@ a connected Windows computer. Choose **Request screen access** and approve the r
 native dialog on the Windows computer. Both the server and the Windows desktop app need support
 for this feature.
 
-The viewer shows the primary display. Choose **Take control** to send mouse and keyboard input,
+To skip future approval prompts for this pairing, open Rakazo's **File** menu on Windows and
+enable **Allow Screen Sharing and Control Without Prompts**. Press **Alt** if the menu is hidden.
+Rakazo remembers this choice on the Windows computer across restarts. Turning it off ends any
+current sharing session and restores the prompt. Use **File → Stop Screen Sharing** to end just
+the current session.
+
+The primary display has a blue outline while shared and an orange outline while controlled.
+Choose **Take control** to send mouse and keyboard input,
 then choose **Release control** to let bots use the computer again. The person at the computer
 shares the same mouse and keyboard. Closing the viewer, revoking the pairing, or locking or
 suspending Windows ends the session. A viewer that loses its connection also expires, and long

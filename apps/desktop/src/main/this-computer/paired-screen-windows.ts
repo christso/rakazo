@@ -2,6 +2,7 @@ import type { PairedScreenInput } from "@rakazo/contracts";
 import { desktopCapturer, powerMonitor, screen } from "electron";
 import koffi from "koffi";
 import { createPairedScreen } from "./paired-screen.js";
+import { createPairedScreenOutline } from "./paired-screen-outline.js";
 
 const buttons = {
   left: { down: 0x0002, up: 0x0004 },
@@ -151,6 +152,7 @@ export function createWindowsPairedScreen(confirm: (signal: AbortSignal) => Prom
   let input: ReturnType<typeof createWindowsScreenInput> | undefined;
   const access = createPairedScreen({
     confirm,
+    outline: createPairedScreenOutline(),
     available: () => {
       const state = powerMonitor.getSystemIdleState(1);
       return state === "active" || state === "idle";

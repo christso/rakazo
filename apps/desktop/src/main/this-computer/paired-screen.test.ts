@@ -5,12 +5,14 @@ import { createPairedScreen } from "./paired-screen.js";
 function fixture(confirm = async (_signal: AbortSignal) => true) {
   const input = vi.fn();
   const releaseInput = vi.fn();
+  const outline = { show: vi.fn(), hide: vi.fn(), visible: vi.fn(() => true) };
   const screen = createPairedScreen({
     confirm,
     available: () => true,
     frame: async () => "test-jpeg",
     input,
     releaseInput,
+    outline,
   });
   const signal = new AbortController().signal;
   const owner = "owner-session";
@@ -20,14 +22,14 @@ function fixture(confirm = async (_signal: AbortSignal) => true) {
       throw new Error("Missing screen session");
     return result.id;
   };
-  return { screen, signal, owner, open, input, releaseInput };
+  return { screen, signal, owner, open, input, releaseInput, outline };
 }
 
 describe("paired Windows screen authority", () => {
   afterEach(() => vi.useRealTimers());
 
   it("requires viewing consent, restricts input to the same session, and releases it", async () => {
-    const { screen, owner, signal, open, input, releaseInput } = fixture();
+    const { screen, owner, signal, open, input, releaseInput, outline } = fixture();
     const id = await open();
     const event = { kind: "wheel", x: 0.3, y: 0.6, delta: 120 } as const;
     const stale = "a333c86a-20b2-47c7-a481-f7302d832a4e";
@@ -58,20 +60,38 @@ describe("paired Windows screen authority", () => {
       signal,
       () => true,
     );
+    expect(outline.show.mock.calls).toEqual([["watching"], ["controlling"]]);
     expect(input).toHaveBeenCalledExactlyOnceWith(event);
     expect(screen.controlling()).toBe(true);
     await screen.request(owner, { action: "releaseControl", id, controlId }, signal, () => true);
     expect(releaseInput).toHaveBeenCalledOnce();
     expect(screen.controlling()).toBe(false);
+    expect(outline.show).toHaveBeenLastCalledWith("watching");
     await screen.request(owner, { action: "takeControl", id }, signal, () => true);
     await expect(
       screen.request(owner, { action: "input", id, controlId, input: event }, signal, () => true),
     ).rejects.toThrow("Take control");
     expect(input).toHaveBeenCalledOnce();
     await screen.request(owner, { action: "close", id }, signal, () => true);
+    expect(outline.hide).toHaveBeenCalledOnce();
     await expect(
       screen.request(owner, { action: "frame", id }, signal, () => true),
     ).rejects.toThrow("session ended");
+  });
+
+  it("requires a visible outline to open and continue a screen session", async () => {
+    const { screen, owner, signal, open, outline, releaseInput } = fixture();
+    outline.visible.mockReturnValue(false);
+    await expect(open()).rejects.toThrow("outline is unavailable");
+    outline.visible.mockReturnValue(true);
+    const id = await open();
+    await screen.request(owner, { action: "takeControl", id }, signal, () => true);
+    outline.visible.mockReturnValue(false);
+    await expect(
+      screen.request(owner, { action: "frame", id }, signal, () => true),
+    ).rejects.toThrow("session ended");
+    expect(releaseInput).toHaveBeenCalledOnce();
+    expect(outline.hide).toHaveBeenCalledTimes(2);
   });
 
   it("ignores a local approval that arrives after the device disconnects", async () => {

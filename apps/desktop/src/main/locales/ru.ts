@@ -3,6 +3,9 @@ export const RU_MESSAGES: Record<string, string> = {
   "Check for Updates…": "Проверить обновления…",
   "Computer Access…": "Доступ к компьютеру…",
   "Revoke Local Computer Access": "Отозвать доступ к локальному компьютеру",
+  "Allow Screen Sharing and Control Without Prompts":
+    "Разрешить показ экрана и управление без подтверждения",
+  "Stop Screen Sharing": "Остановить показ экрана",
   "Change Rakazo Server…": "Сменить сервер Rakazo…",
   "Hide {name}": "Скрыть {name}",
   "Hide Others": "Скрыть остальные",

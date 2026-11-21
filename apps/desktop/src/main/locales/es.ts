@@ -4,6 +4,9 @@ export const ES_MESSAGES: Record<string, string> = {
   "Check for Updates…": "Buscar actualizaciones…",
   "Computer Access…": "Acceso a la computadora…",
   "Revoke Local Computer Access": "Revocar el acceso a la computadora local",
+  "Allow Screen Sharing and Control Without Prompts":
+    "Permitir compartir y controlar la pantalla sin pedir confirmación",
+  "Stop Screen Sharing": "Dejar de compartir pantalla",
   "Change Rakazo Server…": "Cambiar servidor de Rakazo…",
   "Hide {name}": "Ocultar {name}",
   "Hide Others": "Ocultar otros",

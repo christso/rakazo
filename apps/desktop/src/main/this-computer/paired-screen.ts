@@ -18,6 +18,11 @@ export function createPairedScreen(options: {
   frame: () => Promise<string>;
   input: (input: PairedScreenInput) => void;
   releaseInput: () => void;
+  outline: {
+    show: (mode: "watching" | "controlling") => void;
+    hide: () => void;
+    visible: () => boolean;
+  };
 }) {
   let pending: AbortController | undefined;
   let view: View | undefined;
@@ -29,11 +34,19 @@ export function createPairedScreen(options: {
     clearTimeout(timer);
     const controlled = view?.controlId;
     view = undefined;
-    if (controlled) options.releaseInput();
+    try {
+      if (controlled) options.releaseInput();
+    } finally {
+      options.outline.hide();
+    }
   }
 
   function current() {
-    if (view && (Date.now() >= view.expiresAt || !options.available())) clear();
+    if (
+      view &&
+      (Date.now() >= view.expiresAt || !options.available() || !options.outline.visible())
+    )
+      clear();
     return view;
   }
 
@@ -41,6 +54,16 @@ export function createPairedScreen(options: {
     clearTimeout(timer);
     timer = setTimeout(clear, Math.min(IDLE_MS, next.expiresAt - Date.now()));
     timer.unref();
+  }
+
+  function showOutline(mode: "watching" | "controlling") {
+    try {
+      options.outline.show(mode);
+      if (!options.outline.visible()) throw new Error("The screen sharing outline is unavailable");
+    } catch (error) {
+      clear();
+      throw error;
+    }
   }
 
   function requireView(owner: string, id: string) {
@@ -75,6 +98,7 @@ export function createPairedScreen(options: {
             owner,
             expiresAt: Date.now() + MAX_SESSION_MS,
           };
+          showOutline("watching");
           view = next;
           renew(next);
           return { id: next.id };
@@ -100,7 +124,10 @@ export function createPairedScreen(options: {
         case "takeControl":
           if (!active.controlId && !canTakeControl())
             throw new Error("Wait for the bot's current computer action to end");
-          active.controlId ??= randomUUID();
+          if (!active.controlId) {
+            showOutline("controlling");
+            active.controlId = randomUUID();
+          }
           return { controlId: active.controlId };
         case "input":
           if (active.controlId !== request.controlId)
@@ -112,6 +139,7 @@ export function createPairedScreen(options: {
             throw new Error("Screen control session ended");
           active.controlId = undefined;
           options.releaseInput();
+          showOutline("watching");
           break;
         case "close":
           clear();

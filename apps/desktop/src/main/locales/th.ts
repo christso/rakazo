@@ -3,6 +3,8 @@ export const TH_MESSAGES: Record<string, string> = {
   "Check for Updates…": "ตรวจสอบการอัปเดต…",
   "Computer Access…": "การเข้าถึงคอมพิวเตอร์…",
   "Revoke Local Computer Access": "ยกเลิกการเข้าถึงคอมพิวเตอร์ในเครื่อง",
+  "Allow Screen Sharing and Control Without Prompts": "อนุญาตให้แชร์และควบคุมหน้าจอโดยไม่ต้องยืนยัน",
+  "Stop Screen Sharing": "หยุดแชร์หน้าจอ",
   "Change Rakazo Server…": "เปลี่ยนเซิร์ฟเวอร์ Rakazo…",
   "Hide {name}": "ซ่อน {name}",
   "Hide Others": "ซ่อนอื่น ๆ",

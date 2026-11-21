@@ -3,6 +3,9 @@ export const FR_MESSAGES: Record<string, string> = {
   "Check for Updates…": "Rechercher des mises à jour…",
   "Computer Access…": "Accès à l’ordinateur…",
   "Revoke Local Computer Access": "Révoquer l’accès à l’ordinateur local",
+  "Allow Screen Sharing and Control Without Prompts":
+    "Autoriser le partage et le contrôle de l’écran sans confirmation",
+  "Stop Screen Sharing": "Arrêter le partage d’écran",
   "Change Rakazo Server…": "Changer de serveur Rakazo…",
   "Hide {name}": "Masquer {name}",
   "Hide Others": "Masquer les autres",

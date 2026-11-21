@@ -3,6 +3,9 @@ export const TR_MESSAGES: Record<string, string> = {
   "Check for Updates…": "Güncellemeleri Denetle…",
   "Computer Access…": "Bilgisayar Erişimi…",
   "Revoke Local Computer Access": "Yerel Bilgisayar Erişimini İptal Et",
+  "Allow Screen Sharing and Control Without Prompts":
+    "Ekran paylaşımına ve denetimine onay sormadan izin ver",
+  "Stop Screen Sharing": "Ekran paylaşımını durdur",
   "Change Rakazo Server…": "Rakazo Sunucusunu Değiştir…",
   "Hide {name}": "{name} Uygulamasını Gizle",
   "Hide Others": "Diğerlerini Gizle",

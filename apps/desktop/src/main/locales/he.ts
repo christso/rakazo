@@ -3,6 +3,8 @@ export const HE_MESSAGES: Record<string, string> = {
   "Check for Updates…": "בדיקת עדכונים…",
   "Computer Access…": "גישה למחשב…",
   "Revoke Local Computer Access": "ביטול הגישה למחשב המקומי",
+  "Allow Screen Sharing and Control Without Prompts": "לאפשר שיתוף מסך ושליטה ללא בקשת אישור",
+  "Stop Screen Sharing": "הפסקת שיתוף מסך",
   "Change Rakazo Server…": "החלפת שרת Rakazo…",
   "Hide {name}": "הסתרת {name}",
   "Hide Others": "הסתרת אחרים",

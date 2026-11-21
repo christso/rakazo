@@ -3,6 +3,8 @@ export const ZH_TW_MESSAGES: Record<string, string> = {
   "Check for Updates…": "檢查更新項目…",
   "Computer Access…": "電腦存取權…",
   "Revoke Local Computer Access": "撤銷本機電腦存取權",
+  "Allow Screen Sharing and Control Without Prompts": "允許分享和控制螢幕，無需確認",
+  "Stop Screen Sharing": "停止分享螢幕",
   "Change Rakazo Server…": "更換 Rakazo 伺服器…",
   "Hide {name}": "隱藏 {name}",
   "Hide Others": "隱藏其他",

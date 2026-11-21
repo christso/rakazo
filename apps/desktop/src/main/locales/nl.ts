@@ -3,6 +3,9 @@ export const NL_MESSAGES: Record<string, string> = {
   "Check for Updates…": "Zoek naar updates…",
   "Computer Access…": "Computertoegang…",
   "Revoke Local Computer Access": "Toegang tot lokale computer intrekken",
+  "Allow Screen Sharing and Control Without Prompts":
+    "Scherm delen en bedienen zonder bevestiging toestaan",
+  "Stop Screen Sharing": "Scherm delen stoppen",
   "Change Rakazo Server…": "Rakazo-server wijzigen…",
   "Hide {name}": "Verberg {name}",
   "Hide Others": "Verberg andere",

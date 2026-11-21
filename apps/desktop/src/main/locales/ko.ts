@@ -3,6 +3,8 @@ export const KO_MESSAGES: Record<string, string> = {
   "Check for Updates…": "업데이트 확인…",
   "Computer Access…": "컴퓨터 접근…",
   "Revoke Local Computer Access": "로컬 컴퓨터 접근 취소",
+  "Allow Screen Sharing and Control Without Prompts": "확인 없이 화면 공유 및 제어 허용",
+  "Stop Screen Sharing": "화면 공유 중지",
   "Change Rakazo Server…": "Rakazo 서버 변경…",
   "Hide {name}": "{name} 가리기",
   "Hide Others": "기타 가리기",

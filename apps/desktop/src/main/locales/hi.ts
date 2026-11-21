@@ -3,6 +3,9 @@ export const HI_MESSAGES: Record<string, string> = {
   "Check for Updates…": "अपडेट देखें…",
   "Computer Access…": "कंप्यूटर एक्सेस…",
   "Revoke Local Computer Access": "लोकल कंप्यूटर एक्सेस वापस लें",
+  "Allow Screen Sharing and Control Without Prompts":
+    "बिना पुष्टि के स्क्रीन शेयरिंग और नियंत्रण की अनुमति दें",
+  "Stop Screen Sharing": "स्क्रीन शेयरिंग बंद करें",
   "Change Rakazo Server…": "Rakazo सर्वर बदलें…",
   "Hide {name}": "{name} छिपाएँ",
   "Hide Others": "अन्य छिपाएँ",

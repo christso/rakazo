@@ -3,6 +3,8 @@ export const JA_MESSAGES: Record<string, string> = {
   "Check for Updates…": "アップデートを確認…",
   "Computer Access…": "コンピュータへのアクセス…",
   "Revoke Local Computer Access": "ローカルコンピュータへのアクセスを取り消す",
+  "Allow Screen Sharing and Control Without Prompts": "確認なしで画面共有と操作を許可",
+  "Stop Screen Sharing": "画面共有を停止",
   "Change Rakazo Server…": "Rakazoサーバを変更…",
   "Hide {name}": "{name}を非表示",
   "Hide Others": "ほかを非表示",
