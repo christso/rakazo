@@ -61,6 +61,10 @@ export const NL_MESSAGES: Record<string, string> = {
     "De update kon niet worden voltooid. Probeer het later opnieuw.",
   "Could not reach the update server.": "De updateserver is niet bereikbaar.",
   "Allow local computer access?": "Toegang tot de lokale computer toestaan?",
+  "Share this screen with your Rakazo account?": "Dit scherm delen met je Rakazo-account?",
+  "Your primary display will be visible to the person who requested it. They can take control of your mouse and keyboard until the session ends.":
+    "De persoon die dit heeft aangevraagd, kan je hoofdscherm zien en je muis en toetsenbord bedienen totdat de sessie is afgelopen.",
+  "Share screen": "Scherm delen",
   "Allow bots to use this computer?": "Bots toestaan deze computer te gebruiken?",
   Cancel: "Annuleer",
   Allow: "Sta toe",

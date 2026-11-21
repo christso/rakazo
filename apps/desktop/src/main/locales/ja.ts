@@ -62,6 +62,10 @@ export const JA_MESSAGES: Record<string, string> = {
     "アップデートを完了できませんでした。しばらくしてからもう一度お試しください。",
   "Could not reach the update server.": "アップデートサーバに接続できませんでした。",
   "Allow local computer access?": "ローカルコンピュータへのアクセスを許可しますか？",
+  "Share this screen with your Rakazo account?": "この画面を Rakazo アカウントと共有しますか？",
+  "Your primary display will be visible to the person who requested it. They can take control of your mouse and keyboard until the session ends.":
+    "共有をリクエストした人はメインディスプレイを表示でき、セッションが終了するまでマウスとキーボードを操作できます。",
+  "Share screen": "画面を共有",
   "Allow bots to use this computer?": "ボットにこのコンピュータの使用を許可しますか？",
   Cancel: "キャンセル",
   Allow: "許可",

@@ -56,6 +56,10 @@ export const ZH_CN_MESSAGES: Record<string, string> = {
   "The update could not be completed. Try again later.": "无法完成更新。请稍后重试。",
   "Could not reach the update server.": "无法连接更新服务器。",
   "Allow local computer access?": "允许访问本地电脑？",
+  "Share this screen with your Rakazo account?": "要向你的 Rakazo 账户共享此屏幕吗？",
+  "Your primary display will be visible to the person who requested it. They can take control of your mouse and keyboard until the session ends.":
+    "请求共享的人可以看到你的主显示屏，并能控制鼠标和键盘，直到会话结束。",
+  "Share screen": "共享屏幕",
   "Allow bots to use this computer?": "允许 Bot 使用这台电脑？",
   Cancel: "取消",
   Allow: "允许",

@@ -57,6 +57,10 @@ export const TH_MESSAGES: Record<string, string> = {
   "The update could not be completed. Try again later.": "ทำการอัปเดตไม่สำเร็จ โปรดลองอีกครั้งภายหลัง",
   "Could not reach the update server.": "เข้าถึงเซิร์ฟเวอร์อัปเดตไม่สำเร็จ",
   "Allow local computer access?": "อนุญาตให้เข้าถึงคอมพิวเตอร์ในเครื่องไหม",
+  "Share this screen with your Rakazo account?": "แชร์หน้าจอนี้กับบัญชี Rakazo ของคุณไหม",
+  "Your primary display will be visible to the person who requested it. They can take control of your mouse and keyboard until the session ends.":
+    "ผู้ที่ส่งคำขอจะเห็นจอแสดงผลหลักของคุณ และสามารถควบคุมเมาส์และแป้นพิมพ์ได้จนกว่าเซสชันจะสิ้นสุด",
+  "Share screen": "แชร์หน้าจอ",
   "Allow bots to use this computer?": "อนุญาตให้บอทใช้คอมพิวเตอร์เครื่องนี้ไหม",
   Cancel: "ยกเลิก",
   Allow: "อนุญาต",

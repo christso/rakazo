@@ -59,6 +59,10 @@ export const HE_MESSAGES: Record<string, string> = {
     "לא ניתן היה להשלים את העדכון. כדאי לנסות שוב מאוחר יותר.",
   "Could not reach the update server.": "לא ניתן היה להתחבר לשרת העדכונים.",
   "Allow local computer access?": "לאפשר גישה למחשב המקומי?",
+  "Share this screen with your Rakazo account?": "לשתף את המסך הזה עם חשבון Rakazo שלך?",
+  "Your primary display will be visible to the person who requested it. They can take control of your mouse and keyboard until the session ends.":
+    "המסך הראשי שלך יוצג למי שביקש לצפות בו. תהיה לו אפשרות לשלוט בעכבר ובמקלדת עד לסיום ההפעלה.",
+  "Share screen": "שיתוף המסך",
   "Allow bots to use this computer?": "לאפשר לבוטים להשתמש במחשב הזה?",
   Cancel: "ביטול",
   Allow: "אישור",
