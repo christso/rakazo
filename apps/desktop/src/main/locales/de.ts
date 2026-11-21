@@ -3,6 +3,9 @@ export const DE_MESSAGES: Record<string, string> = {
   "Check for Updates…": "Nach Updates suchen …",
   "Computer Access…": "Computerzugriff …",
   "Revoke Local Computer Access": "Zugriff auf lokalen Computer widerrufen",
+  "Allow Screen Sharing and Control Without Prompts":
+    "Bildschirmfreigabe und Steuerung ohne Rückfrage zulassen",
+  "Stop Screen Sharing": "Bildschirmfreigabe beenden",
   "Change Rakazo Server…": "Rakazo-Server wechseln …",
   "Hide {name}": "{name} ausblenden",
   "Hide Others": "Andere ausblenden",
@@ -61,6 +64,11 @@ export const DE_MESSAGES: Record<string, string> = {
     "Das Update konnte nicht abgeschlossen werden. Versuche es später erneut.",
   "Could not reach the update server.": "Der Update-Server ist nicht erreichbar.",
   "Allow local computer access?": "Zugriff auf den lokalen Computer erlauben?",
+  "Share this screen with your Rakazo account?":
+    "Diesen Bildschirm mit deinem Rakazo-Konto teilen?",
+  "Your primary display will be visible to the person who requested it. They can take control of your mouse and keyboard until the session ends.":
+    "Die anfragende Person kann deinen Hauptbildschirm sehen und bis zum Ende der Sitzung Maus und Tastatur steuern.",
+  "Share screen": "Bildschirm teilen",
   "Allow bots to use this computer?": "Bots die Nutzung dieses Computers erlauben?",
   Cancel: "Abbrechen",
   Allow: "Erlauben",

@@ -37,7 +37,7 @@ files.
   let them work directly on yours. **Computer Access…** in the app menu changes this later, and
   **Revoke Local Computer Access** turns it off.
 - With any HTTPS server, or a loopback server, turn on **Let bots use this computer**
-  in **Settings → General** under **Computers**. Your computer then shows as **Connected** or
+  in **Settings → Computers** under **Your devices**. Your computer then shows as **Connected** or
   **Offline** there. Access belongs to the account that turned it on and ends when that account
   signs out, resets its password or signs out everywhere. Signing back in to the same account
   restores it without asking again.
@@ -85,3 +85,23 @@ you are.
 - Typing anywhere outside a text field starts a message.
 
 The dock icon shows a badge count of unread chats.
+
+## Watch and control a paired Windows screen
+
+On web or desktop, open **Settings → Computers → Your devices** and choose **Watch screen** next to
+a connected Windows computer. Choose **Request screen access** and approve the request in the
+native dialog on the Windows computer. Both the server and the Windows desktop app need support
+for this feature.
+
+To skip future approval prompts for this pairing, open Rakazo's **File** menu on Windows and
+enable **Allow Screen Sharing and Control Without Prompts**. Press **Alt** if the menu is hidden.
+Rakazo remembers this choice on the Windows computer across restarts. Turning it off ends any
+current sharing session and restores the prompt. Use **File → Stop Screen Sharing** to end just
+the current session.
+
+The primary display has a blue outline while shared and an orange outline while controlled.
+Choose **Take control** to send mouse and keyboard input,
+then choose **Release control** to let bots use the computer again. The person at the computer
+shares the same mouse and keyboard. Closing the viewer, revoking the pairing, or locking or
+suspending Windows ends the session. A viewer that loses its connection also expires, and long
+sessions require a new local approval.
