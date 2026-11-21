@@ -1,0 +1,62 @@
+description: Windows accessibility workflow with a simulated app
+prompts:
+  - >-
+    In Work Order Desk, create and save a new work order with Summary "{{summary}}"
+    and Assignee "{{assignee}}". The New work order button opens the form. Summary
+    and Assignee are text fields, and Save work order is a button. Use only the
+    windows_screen tools to interact with the app. Use as few tool calls as you
+    can while verifying that the order was saved.
+providers:
+  - id: package:oh-my-promptfoo/providers:Agent
+    label: baseline
+    config: &baseline
+      workspace:
+        sources: []
+      delegate: &delegate
+        id: openai:codex-sdk
+        env:
+          CODEX_HOME: "{{env.RAKAZO_EVAL_CODEX_HOME}}"
+        config: &delegateConfig
+          model: gpt-6-sol
+          sandbox_mode: read-only
+          approval_policy: never
+          cli_config:
+            web_search: disabled
+            mcp_servers:
+              windows_screen: &mcp
+                required: true
+                enabled_tools: [observe, act]
+                default_tools_approval_mode: approve
+                command: "{{env.RAKAZO_EVAL_ROOT}}/node_modules/.bin/tsx"
+                args:
+                  - "{{env.RAKAZO_EVAL_ROOT}}/packages/adapters/evals/windows-screen/mcp.ts"
+                  - baseline
+  - id: package:oh-my-promptfoo/providers:Agent
+    label: candidate
+    config:
+      <<: *baseline
+      delegate:
+        <<: *delegate
+        config:
+          <<: *delegateConfig
+          cli_config:
+            web_search: disabled
+            mcp_servers:
+              windows_screen:
+                <<: *mcp
+                args:
+                  - "{{env.RAKAZO_EVAL_ROOT}}/packages/adapters/evals/windows-screen/mcp.ts"
+                  - candidate
+defaultTest:
+  metadata:
+    publicNamedScores: [tool calls, screenshots]
+  assert:
+    - type: javascript
+      value: file://saved-order.mjs
+tests:
+  - description: Loading dock
+    vars: { summary: Replace loading dock light, assignee: Rowan }
+  - description: Warehouse floor
+    vars: { summary: Check aisle five sensor, assignee: Mika }
+  - description: Safety inspection
+    vars: { summary: Inspect emergency exit sign, assignee: Sam }
