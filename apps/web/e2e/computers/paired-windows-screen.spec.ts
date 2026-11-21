@@ -55,7 +55,7 @@ test("watch a paired Windows device before taking control", async ({ page }, tes
     await route.fulfill({ json: { result } });
   });
 
-  const settings = await openUserSettings(page, "general");
+  const settings = await openUserSettings(page, "computer");
   await settings.getByRole("button", { name: "Watch screen" }).click();
   const viewer = page.getByRole("dialog", { name: "Windows PC" });
   await viewer.getByRole("button", { name: "Request screen access" }).click();

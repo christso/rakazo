@@ -1,6 +1,7 @@
 import type { PairedScreenInput } from "@rakazo/contracts";
-import { desktopCapturer, screen } from "electron";
+import { desktopCapturer, powerMonitor, screen } from "electron";
 import koffi from "koffi";
+import { createPairedScreen } from "./paired-screen.js";
 
 const buttons = {
   left: { down: 0x0002, up: 0x0004 },
@@ -33,7 +34,7 @@ function virtualKey(code: string) {
   return Object.hasOwn(specialKeys, code) ? specialKeys[code] : undefined;
 }
 
-export function createWindowsScreenInput() {
+function createWindowsScreenInput() {
   const user32 = koffi.load("user32.dll");
   const setCursor = user32.func("int __stdcall SetCursorPos(int, int)");
   const mouse = user32.func(
@@ -130,7 +131,7 @@ export function createWindowsScreenInput() {
   };
 }
 
-export async function capturePrimaryWindowsScreen() {
+async function capturePrimaryWindowsScreen() {
   const display = screen.getPrimaryDisplay();
   const scale = Math.min(1, 1280 / Math.max(display.size.width, display.size.height));
   const sources = await desktopCapturer.getSources({
@@ -144,4 +145,27 @@ export async function capturePrimaryWindowsScreen() {
   const source = match ?? (sources.length === 1 ? sources[0] : undefined);
   if (!source || source.thumbnail.isEmpty()) throw new Error("Windows screen is unavailable");
   return source.thumbnail.toJPEG(60).toString("base64");
+}
+
+export function createWindowsPairedScreen(confirm: (signal: AbortSignal) => Promise<boolean>) {
+  let input: ReturnType<typeof createWindowsScreenInput> | undefined;
+  const access = createPairedScreen({
+    confirm,
+    available: () => {
+      const state = powerMonitor.getSystemIdleState(1);
+      return state === "active" || state === "idle";
+    },
+    frame: capturePrimaryWindowsScreen,
+    input: (event) => {
+      input ??= createWindowsScreenInput();
+      input.input(event);
+    },
+    releaseInput: () => input?.release(),
+  });
+  powerMonitor.on("lock-screen", access.clear);
+  powerMonitor.on("suspend", access.clear);
+  screen.on("display-added", access.clear);
+  screen.on("display-removed", access.clear);
+  screen.on("display-metrics-changed", access.clear);
+  return access;
 }

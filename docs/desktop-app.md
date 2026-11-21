@@ -37,7 +37,7 @@ files.
   let them work directly on yours. **Computer Access…** in the app menu changes this later, and
   **Revoke Local Computer Access** turns it off.
 - With any HTTPS server, or a loopback server, turn on **Let bots use this computer**
-  in **Settings → General** under **Computers**. Your computer then shows as **Connected** or
+  in **Settings → Computers** under **Your devices**. Your computer then shows as **Connected** or
   **Offline** there. Access belongs to the account that turned it on and ends when that account
   signs out, resets its password or signs out everywhere. Signing back in to the same account
   restores it without asking again.
@@ -88,7 +88,7 @@ The dock icon shows a badge count of unread chats.
 
 ## Watch and control a paired Windows screen
 
-On web or desktop, open **Settings → General → Your devices** and choose **Watch screen** next to
+On web or desktop, open **Settings → Computers → Your devices** and choose **Watch screen** next to
 a connected Windows computer. Choose **Request screen access** and approve the request in the
 native dialog on the Windows computer. Both the server and the Windows desktop app need support
 for this feature.

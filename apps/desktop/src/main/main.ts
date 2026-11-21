@@ -4,6 +4,7 @@ import { existsSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { HostScreen } from "@rakazo/adapters/host-screen";
+import type { UserDeviceClientOptions } from "@rakazo/adapters/user-device-client";
 import { startUserDeviceClient } from "@rakazo/adapters/user-device-client";
 import type {
   DesktopLocalStackState,
@@ -18,7 +19,6 @@ import {
   clipboard,
   desktopCapturer,
   dialog,
-  screen as electronScreen,
   nativeImage,
   net,
   powerMonitor,
@@ -105,7 +105,6 @@ import {
 import type { ServerBundle } from "./this-computer/mac-runtime.js";
 import { nativeStackEligible, readServerBundle } from "./this-computer/mac-runtime.js";
 import { NativeStackController } from "./this-computer/native-stack.js";
-import { createPairedScreen } from "./this-computer/paired-screen.js";
 import {
   StackStopMenuAvailability,
   stopStackLeftBehind,
@@ -451,6 +450,37 @@ async function confirmComputerAccess(detail: string) {
   return result.response === 1;
 }
 /** A bot asks while the person may be elsewhere, so bring the prompt to them. */
+function lazyWindowsScreen(): NonNullable<UserDeviceClientOptions["pairedScreen"]> {
+  let access: UserDeviceClientOptions["pairedScreen"];
+  return {
+    controlling: () => access?.controlling() ?? false,
+    clear: () => access?.clear(),
+    async request(owner, request, signal, canTakeControl) {
+      if (!access) {
+        const { createWindowsPairedScreen } = await import(
+          "./this-computer/paired-screen-windows.js"
+        );
+        signal.throwIfAborted();
+        access ??= createWindowsPairedScreen(async (promptSignal) => {
+          const { response } = await dialog.showMessageBox({
+            type: "question",
+            message: t("Share this screen with your Rakazo account?"),
+            detail: t(
+              "Your primary display will be visible to the person who requested it. They can take control of your mouse and keyboard until the session ends.",
+            ),
+            buttons: [t("Cancel"), t("Share screen")],
+            defaultId: 0,
+            cancelId: 0,
+            signal: promptSignal,
+          });
+          return response === 1;
+        });
+      }
+      return access.request(owner, request, signal, canTakeControl);
+    },
+  };
+}
+
 function confirmRemoteComputerAccess(host: string) {
   if (desktop.mainWindow !== null && !desktop.mainWindow.isDestroyed()) {
     if (!desktop.mainWindow.isVisible()) desktop.mainWindow.show();
@@ -662,47 +692,7 @@ app.whenReady().then(async () => {
   } catch {
     /* Local access fails closed; Docker remains available. */
   }
-  const windowsScreen =
-    process.platform === "win32"
-      ? await import("./this-computer/paired-screen-windows.js")
-      : undefined;
-  const pairedScreen =
-    windowsScreen &&
-    (() => {
-      let input: ReturnType<typeof windowsScreen.createWindowsScreenInput> | undefined;
-      const access = createPairedScreen({
-        confirm: async (signal) => {
-          const { response } = await dialog.showMessageBox({
-            type: "question",
-            message: t("Share this screen with your Rakazo account?"),
-            detail: t(
-              "Your primary display will be visible to the person who requested it. They can take control of your mouse and keyboard until the session ends.",
-            ),
-            buttons: [t("Cancel"), t("Share screen")],
-            defaultId: 0,
-            cancelId: 0,
-            signal,
-          });
-          return response === 1;
-        },
-        available: () => {
-          const state = powerMonitor.getSystemIdleState(1);
-          return state === "active" || state === "idle";
-        },
-        frame: windowsScreen.capturePrimaryWindowsScreen,
-        input: (event) => {
-          input ??= windowsScreen.createWindowsScreenInput();
-          input.input(event);
-        },
-        releaseInput: () => input?.release(),
-      });
-      powerMonitor.on("lock-screen", access.clear);
-      powerMonitor.on("suspend", access.clear);
-      electronScreen.on("display-added", access.clear);
-      electronScreen.on("display-removed", access.clear);
-      electronScreen.on("display-metrics-changed", access.clear);
-      return access;
-    })();
+  const pairedScreen = process.platform === "win32" ? lazyWindowsScreen() : undefined;
   desktop.userDevices = createUserDeviceAccess({
     userDataDir,
     cipher: deviceTokenCipher(),
