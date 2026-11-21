@@ -1,6 +1,5 @@
 import { writeFile } from "node:fs/promises";
 import { setTimeout as sleep } from "node:timers/promises";
-import sharp from "sharp";
 import { createAgentDesktopHostScreen } from "../../src/computers/screens/agent-desktop-host-screen.js";
 import type { HostScreenAction } from "../../src/computers/screens/host-screen.js";
 
@@ -90,6 +89,7 @@ export function makeFixture(variant: Variant, stateFile?: string) {
         <text x="50" y="52" font-size="29">${title}</text>${rows.join("")}
       </g>
     </svg>`;
+    const { default: sharp } = await import("sharp");
     const png = await sharp(Buffer.from(svg)).png().toBuffer();
     return { data: png.toString("base64"), format: "png", width: 1024, height: 640 };
   }
