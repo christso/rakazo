@@ -1,18 +1,16 @@
-import { setTimeout as sleep } from "node:timers/promises";
-import type { AgentDesktopRun } from "../../src/computers/screens/agent-desktop-host-screen.js";
-import { createAgentDesktopHostScreen } from "../../src/computers/screens/agent-desktop-host-screen.js";
-import type { HostScreenAction } from "../../src/computers/screens/host-screen.js";
+import type { HostComputerRequest } from "../host/host-computer-protocol.js";
+import type { UserDeviceGateway } from "../host/user-device-protocol.js";
+import type { AgentDesktopRun } from "./agent-desktop-host-screen.js";
+import { createAgentDesktopHostScreen } from "./agent-desktop-host-screen.js";
 
-export const workbenchApp = "workbench";
+const workbenchApp = "workbench";
 const title = "Work Order Desk";
 const windowId = "w-orders";
-const scope = { botId: "eval", signal: new AbortController().signal };
 
 type Control = { role: string; name: string; value?: string };
 type Stage = "list" | "loading" | "form" | "saved";
-export type Variant = "baseline" | "candidate";
 
-export function makeWorkbench(badge?: string) {
+export function createWindowsWorkbench(badge?: string) {
   let stage: Stage = "list";
   let availableAt = 0;
   let summary = "";
@@ -156,32 +154,41 @@ export function makeWorkbench(badge?: string) {
     return ok({});
   };
 
-  return {
-    run,
-    recordToolCall() {
+  const screen = createAgentDesktopHostScreen({ run, selfPid: -1 });
+  const device = {
+    deviceId: "fixture",
+    name: "Fixture Windows",
+    platform: "win32",
+    screenOnly: true,
+  };
+  const gateway: UserDeviceGateway = {
+    async connected(_owner, id) {
+      return id === undefined || id === device.deviceId ? device : null;
+    },
+    async list() {
+      return [{ ...device, bound: true, connected: true }];
+    },
+    async pairedSince() {
+      return new Date(0);
+    },
+    async *request<T>(
+      _owner: string,
+      request: HostComputerRequest,
+      signal: AbortSignal,
+      deviceId?: string,
+    ) {
+      if (
+        (deviceId !== undefined && deviceId !== device.deviceId) ||
+        (request.method !== "screenObserve" && request.method !== "screenAct") ||
+        request.app.toLowerCase() !== workbenchApp
+      )
+        throw new Error("The fixture only drives workbench.");
       toolCalls++;
+      const scope = { botId: request.botId, signal };
+      if (request.method === "screenObserve")
+        yield (await screen.observe(scope, request.app, request)) as T;
+      else yield (await screen.act(scope, request.app, request.actions, request)) as T;
     },
-    async awaitForm() {
-      await sleep(Math.max(0, availableAt - Date.now()));
-    },
-    outcome: () => ({ saved, toolCalls, screenshots }),
   };
-}
-
-export function makeFixture(variant: Variant) {
-  const workbench = makeWorkbench();
-  const screen = createAgentDesktopHostScreen({ selfPid: -1, run: workbench.run });
-  const includeScreenshot = variant === "baseline";
-  return {
-    async observe(query?: string) {
-      workbench.recordToolCall();
-      return screen.observe(scope, workbenchApp, { query, includeScreenshot });
-    },
-    async act(actions: HostScreenAction[]) {
-      workbench.recordToolCall();
-      return screen.act(scope, workbenchApp, actions, { includeScreenshot });
-    },
-    awaitForm: workbench.awaitForm,
-    outcome: workbench.outcome,
-  };
+  return { gateway, snapshot: () => ({ saved, toolCalls, screenshots }) };
 }
