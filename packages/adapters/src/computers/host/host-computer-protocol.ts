@@ -1,3 +1,4 @@
+import { pairedScreenRequest } from "@rakazo/contracts";
 import { boundedSandboxCommandTimeoutMs } from "@rakazo/core/node/sandbox-command";
 import { z } from "zod";
 import { hostScreenMethods } from "../screens/host-screen.js";
@@ -60,6 +61,12 @@ export const hostComputerRequest = z.discriminatedUnion("method", [
   z.object({ ...base, method: z.literal("writeFile"), file }),
   z.object({ ...base, method: z.literal("screenObserve"), ...hostScreenMethods.screenObserve }),
   z.object({ ...base, method: z.literal("screenAct"), ...hostScreenMethods.screenAct }),
+  z.object({
+    ...base,
+    method: z.literal("pairedScreen"),
+    runId: z.string().min(1).max(256),
+    screen: pairedScreenRequest,
+  }),
 ]);
 export type HostComputerRequest = z.infer<typeof hostComputerRequest>;
 export interface HostComputerEnvironment {
@@ -88,6 +95,7 @@ export function hostComputerFileTooLargeLimit(message: string): number | undefin
 
 /** Leave time for the command timeout event and final response to cross the bridge. */
 export function hostComputerDeadlineMs(request: HostComputerRequest) {
+  if (request.method === "pairedScreen") return request.screen.action === "open" ? 65_000 : 8_000;
   if (request.method === "execute")
     return boundedSandboxCommandTimeoutMs(request.command.timeoutMs) + 30_000;
   return request.method.startsWith("screen") ? 2 * 60_000 : 10 * 60_000;

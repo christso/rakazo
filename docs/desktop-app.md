@@ -85,3 +85,16 @@ you are.
 - Typing anywhere outside a text field starts a message.
 
 The dock icon shows a badge count of unread chats.
+
+## Watch and control a paired Windows screen
+
+On web or desktop, open **Settings → General → Your devices** and choose **Watch screen** next to
+a connected Windows computer. Choose **Request screen access** and approve the request in the
+native dialog on the Windows computer. Both the server and the Windows desktop app need support
+for this feature.
+
+The viewer shows the primary display. Choose **Take control** to send mouse and keyboard input,
+then choose **Release control** to let bots use the computer again. The person at the computer
+shares the same mouse and keyboard. Closing the viewer, revoking the pairing, or locking or
+suspending Windows ends the session. A viewer that loses its connection also expires, and long
+sessions require a new local approval.
