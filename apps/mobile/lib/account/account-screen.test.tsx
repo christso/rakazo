@@ -392,6 +392,7 @@ vi.mock("../auth/passkey", () => ({
   renamePasskey: vi.fn(),
 }));
 vi.mock("../spaces/organizations", () => ({
+  activeGuestSpace: () => undefined,
   activeOrganization: () => undefined,
   useOrganizations: () => ({ data: undefined }),
 }));

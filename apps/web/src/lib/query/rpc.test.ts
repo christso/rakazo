@@ -39,7 +39,11 @@ describe("signed-out responses", () => {
 });
 
 describe("unavailable space", () => {
-  function browser(selected: string, spaces: string[] | null) {
+  function browser(
+    selected: string,
+    spaces: string[] | null,
+    guestSpaces: Array<{ id: string; name: string }> = [],
+  ) {
     const items = new Map([["rakazo:space-id", selected]]);
     const reload = vi.fn();
     vi.stubGlobal("window", {
@@ -57,6 +61,7 @@ describe("unavailable space", () => {
       return Response.json({
         json: {
           activeOrganizationId: "personal",
+          guestSpaces,
           organizations: [
             {
               id: "personal",
@@ -123,6 +128,20 @@ describe("unavailable space", () => {
       expect(items.get("rakazo:space-id")).toBe("space-a");
       expect(reload).not.toHaveBeenCalled();
     }
+  });
+
+  it("keeps a guest Space the user can still open", async () => {
+    const { items, reload } = browser(
+      "shared-home",
+      ["home"],
+      [{ id: "shared-home", name: "Shared" }],
+    );
+    await leaveUnavailableSpace("shared-home");
+    const [request, init] = vi.mocked(globalThis.fetch).mock.calls[0]!;
+    expect(request).toHaveProperty("url", expect.stringMatching(/\/rpc\/organizations\/list$/));
+    expect(new Headers(init?.headers).has("x-rakazo-space-id")).toBe(false);
+    expect(items.get("rakazo:space-id")).toBe("shared-home");
+    expect(reload).not.toHaveBeenCalled();
   });
 
   it("keeps a space in an organization the user is only a member of", async () => {

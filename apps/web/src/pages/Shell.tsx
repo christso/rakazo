@@ -74,6 +74,7 @@ import { createSpaceRpc, selectedSpaceId } from "../lib/query/rpc";
 import { SpaceRpcProvider } from "../lib/query/space-rpc";
 import { errorText } from "../lib/query/user-error";
 import { routineNeedsOneShotArm } from "../lib/routines/routine-draft";
+import { useOrganizations } from "../lib/spaces/organizations";
 import type { CreateBotDialogInput } from "./shell/bots/create-bot-dialog";
 import type { ImportSetupTarget } from "./shell/bots/import-setup-card";
 import { useTeaching } from "./shell/bots/use-teaching";
@@ -906,6 +907,7 @@ function SpaceShell() {
     openSettings("space", spaceId);
   }
 
+  const { activeGuestSpace } = useOrganizations();
   const paletteActions = usePaletteActions({
     settingsAvailable: {
       messaging: messagingSurfaceEnabled,
@@ -915,6 +917,7 @@ function SpaceShell() {
         computersAreUnavailable(bootstrapMe?.sandboxProvider),
       billing: bootstrapMe?.billingEnabled === true,
       updates: Boolean(desktopBridge()?.update),
+      organization: !activeGuestSpace,
       labs: Boolean(bootstrapMe?.labsAvailable.length),
     },
     onNewBot: () => dialogs.setCreateBotOpen(true),
