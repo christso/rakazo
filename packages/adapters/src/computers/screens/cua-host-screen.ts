@@ -5,7 +5,12 @@ import {
   StdioClientTransport,
 } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { pollUntil } from "@rakazo/core";
-import type { HostScreen, HostScreenAction, HostScreenObservation } from "./host-screen.js";
+import type {
+  HostScreen,
+  HostScreenAction,
+  HostScreenObservation,
+  HostScreenObserveOptions,
+} from "./host-screen.js";
 import {
   actThenObserve,
   boundedHostScreenTree,
@@ -222,8 +227,9 @@ export function createCuaHostScreen(options: CuaHostScreenOptions): HostScreen {
   async function observeTarget(
     found: Target,
     signal: AbortSignal,
-    query?: string,
+    options?: HostScreenObserveOptions,
   ): Promise<HostScreenObservation> {
+    const query = options?.query;
     const result = await call(
       "get_window_state",
       {
@@ -247,7 +253,10 @@ export function createCuaHostScreen(options: CuaHostScreenOptions): HostScreen {
       typeof structured.window_title === "string" && structured.window_title
         ? structured.window_title
         : found.title;
-    const image = result.content?.find((block) => block.type === "image" && block.data);
+    const image =
+      options?.includeScreenshot === false
+        ? undefined
+        : result.content?.find((block) => block.type === "image" && block.data);
     const size = imageSize(structured);
     return {
       app: found.name,
@@ -347,16 +356,20 @@ export function createCuaHostScreen(options: CuaHostScreenOptions): HostScreen {
 
   return {
     async observe(scope, app, observeOptions) {
-      return observeTarget(await target(app, scope.signal), scope.signal, observeOptions?.query);
+      return observeTarget(await target(app, scope.signal), scope.signal, observeOptions);
     },
-    act(scope, app, actions) {
+    async act(scope, app, actions, actOptions) {
+      if (actions.some(({ kind }) => kind === "clickControl" || kind === "setControl"))
+        throw new HostScreenError(
+          "Named control actions are available on Windows. Use element numbers here.",
+        );
       // Find the front window again each time: the last action may have closed the one it
       // acted on or opened another, like File > New replacing an Open panel.
       return actThenObserve(
         scope.signal,
         actions,
         async (action) => perform(await target(app, scope.signal), action, scope.signal),
-        async () => observeTarget(await target(app, scope.signal), scope.signal),
+        async () => observeTarget(await target(app, scope.signal), scope.signal, actOptions),
       );
     },
     async close() {

@@ -2,7 +2,12 @@ import { execFile } from "node:child_process";
 import { setTimeout as sleep } from "node:timers/promises";
 import { getDefaultEnvironment } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { pollUntil } from "@rakazo/core";
-import type { HostScreen, HostScreenAction, HostScreenObservation } from "./host-screen.js";
+import type {
+  HostScreen,
+  HostScreenAction,
+  HostScreenObservation,
+  HostScreenObserveOptions,
+} from "./host-screen.js";
 import {
   actThenObserve,
   boundedHostScreenTree,
@@ -298,14 +303,16 @@ export function createAgentDesktopHostScreen(options: AgentDesktopHostScreenOpti
   async function observeTarget(
     found: Target,
     signal: AbortSignal,
-    query?: string,
+    observeOptions?: HostScreenObserveOptions,
   ): Promise<HostScreenObservation> {
     const [{ tree, title }, image] = await Promise.all([
-      rows(found, signal, query),
-      // The tree is what bots act on; a window that refuses capture still has one.
-      screenshot(found, signal).catch((error) => {
-        if (!(error instanceof HostScreenError)) throw error;
-      }),
+      rows(found, signal, observeOptions?.query),
+      observeOptions?.includeScreenshot
+        ? screenshot(found, signal).catch((error) => {
+            // A window that refuses capture can still have usable accessibility rows.
+            if (!(error instanceof HostScreenError)) throw error;
+          })
+        : undefined,
     ]);
     return { app: found.name, ...(title ? { title } : {}), tree, ...(image ? { image } : {}) };
   }
@@ -314,6 +321,55 @@ export function createAgentDesktopHostScreen(options: AgentDesktopHostScreenOpti
     const snapshot = snapshots.get(found.windowId);
     if (!snapshot) throw new HostScreenError(`Observe ${found.name} before using element numbers.`);
     return `@${snapshot}:e${element}`;
+  }
+
+  async function controlRef(
+    found: Target,
+    action: Extract<HostScreenAction, { kind: "clickControl" | "setControl" }>,
+    signal: AbortSignal,
+  ) {
+    const waitMs = action.waitMs ?? 2_000;
+    const deadline = Date.now() + waitMs;
+    const control = `${action.role} ${JSON.stringify(action.name)} in ${found.name}`;
+    return pollUntil(
+      async () => {
+        const data = (await call(
+          found.name,
+          [
+            "find",
+            "--window-id",
+            found.windowId,
+            `--role=${action.role}`,
+            `--name=${action.name}`,
+            "--exact",
+            "--limit",
+            "2",
+            "--timeout-ms",
+            String(Math.max(250, deadline - Date.now())),
+          ],
+          signal,
+        )) as { matches?: AgentDesktopNode[]; total_matches?: number; truncated?: boolean } | null;
+        if ((data?.total_matches ?? 0) > 1 || (data?.matches?.length ?? 0) > 1)
+          throw new HostScreenError(
+            `More than one ${control} matched. Observe to choose an element number.`,
+          );
+        const match = data?.matches?.[0];
+        if (data?.total_matches !== 1 || data.truncated || !match) return;
+        if (!match.ref_id || !REF.test(match.ref_id))
+          throw new HostScreenError(`The ${control} has no actionable element.`);
+        return match.ref_id;
+      },
+      {
+        intervalMs: 200,
+        timeoutMs: waitMs,
+        signal,
+        onTimeout: () => {
+          throw new HostScreenError(
+            `Couldn't find a unique ${control}. Observe the app to check its current controls.`,
+          );
+        },
+      },
+    );
   }
 
   async function perform(found: Target, action: HostScreenAction, signal: AbortSignal) {
@@ -330,12 +386,19 @@ export function createAgentDesktopHostScreen(options: AgentDesktopHostScreenOpti
           );
         await run("click", "--", ref(found, action.element));
         return;
+      case "clickControl":
+        await run("click", "--", await controlRef(found, action, signal));
+        return;
       case "type":
         throw new HostScreenError(
           "On Windows, type would take over the user's keyboard. Use set with the field's whole new text instead.",
         );
-      case "set": {
-        const element = ref(found, action.element);
+      case "set":
+      case "setControl": {
+        const element =
+          action.kind === "set"
+            ? ref(found, action.element)
+            : await controlRef(found, action, signal);
         try {
           await run("set-value", "--", element, action.value);
         } catch (error) {
@@ -417,15 +480,15 @@ export function createAgentDesktopHostScreen(options: AgentDesktopHostScreenOpti
 
   return {
     async observe(scope, app, observeOptions) {
-      return observeTarget(await target(app, scope.signal), scope.signal, observeOptions?.query);
+      return observeTarget(await target(app, scope.signal), scope.signal, observeOptions);
     },
-    act(scope, app, actions) {
+    act(scope, app, actions, actOptions) {
       // Find the window again each time: the last action may have closed it or opened another.
       return actThenObserve(
         scope.signal,
         actions,
         async (action) => perform(await target(app, scope.signal), action, scope.signal),
-        async () => observeTarget(await target(app, scope.signal), scope.signal),
+        async () => observeTarget(await target(app, scope.signal), scope.signal, actOptions),
       );
     },
     async close() {
