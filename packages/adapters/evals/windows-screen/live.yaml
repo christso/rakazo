@@ -1,0 +1,48 @@
+description: Rakazo runs Windows workflows through its native agent loop
+prompts:
+  - >-
+    In the connected Windows app named workbench, create and save a new work order
+    with Summary "{{summary}}" and Assignee "{{assignee}}". The New work order
+    button opens the form. Summary and Assignee are text fields, and Save work
+    order is a button.
+    {% if inspection %}Read the code printed in the Inspection badge on the form and enter it into Inspection code before saving.{% endif %}
+    Use as few desktop tool calls as you can while verifying the order was saved.
+providers:
+  - id: file://live-provider.mjs
+    label: GPT-6.2 Sol base
+    config: { model: openai/gpt-6.2-sol, variant: base }
+  - id: file://live-provider.mjs
+    label: GPT-6.2 Sol PR
+    config: { model: openai/gpt-6.2-sol, variant: pr }
+  - id: file://live-provider.mjs
+    label: DeepSeek V4.1 Flash base
+    config: { model: deepseek/deepseek-v4.1-flash, variant: base }
+  - id: file://live-provider.mjs
+    label: DeepSeek V4.1 Flash PR
+    config: { model: deepseek/deepseek-v4.1-flash, variant: pr }
+defaultTest:
+  metadata:
+    publicNamedScores: [desktop calls, screenshots]
+  assert:
+    - type: javascript
+      value: |
+        const pass = output.status === 'passed';
+        return {
+          pass,
+          score: Number(pass),
+          reason: pass ? 'Rakazo saved the expected order' : output.reason,
+          namedScores: { 'desktop calls': output.toolCalls, screenshots: output.screenshots }
+        };
+tests:
+  - description: Loading dock
+    vars: { summary: Replace loading dock light, assignee: Rowan }
+  - description: Warehouse floor
+    vars: { summary: Check aisle five sensor, assignee: Mika }
+  - description: Safety inspection
+    vars: { summary: Inspect emergency exit sign, assignee: Sam }
+  - description: Inspection badge
+    vars:
+      summary: Verify loading bay extinguisher
+      assignee: Avery
+      inspection: true
+      badge: N7VX

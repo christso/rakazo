@@ -1,6 +1,7 @@
 import type { ConnectorTool } from "@rakazo/adapter-kit";
 import { PURCHASE_CARD_FIELDS } from "@rakazo/contracts";
 import { BROWSER_ACT_KINDS } from "../browser/browser-tools.js";
+import { HOST_SCREEN_MAX_CONTROL_WAIT_MS } from "../computers/screens/host-screen.js";
 
 export const READ_FILE_MAX_BYTES = 250_000;
 export const READ_FILE_MAX_KB = READ_FILE_MAX_BYTES / 1000;
@@ -267,7 +268,7 @@ export const computerTools: ConnectorTool[] = [
   {
     name: "user_computer_observe",
     description:
-      "Look at one app on the user's own computer without disturbing them: opens it in the background if needed and returns its window as numbered accessibility rows ([N]) and a screenshot. query narrows the rows. Use only when the task needs an app on their computer.",
+      "Look at one app on the user's own computer without disturbing them: opens it in the background if needed and returns numbered accessibility rows ([N]). query narrows the rows. On Windows, use the rows first and set includeScreenshot only when you need visual context. Use only when the task needs an app on their computer.",
     inputSchema: {
       type: "object",
       properties: {
@@ -278,6 +279,7 @@ export const computerTools: ConnectorTool[] = [
           description: "Id from user_computer_list. Omit to use the bound computer.",
         },
         app: { type: "string", minLength: 1, maxLength: 200 },
+        includeScreenshot: { type: "boolean" },
         query: { type: "string", maxLength: 200 },
       },
       required: ["app"],
@@ -286,7 +288,7 @@ export const computerTools: ConnectorTool[] = [
   {
     name: "user_computer_act",
     description:
-      'Act in one app on the user\'s own computer, in the background, and return its window afterwards. Observe it first. Up to 24 ordered actions: click (element, or x,y in screenshot pixels; button, double), type (text, into element or the focused field), set (value of element: a pop-up\'s choice, a field\'s whole text), key (key such as return, tab, escape, up, a; modifiers cmd, shift, option, ctrl), scroll (direction, amount, at element or x,y), menu (path from the menu bar, like ["File","New"]; use it instead of shortcuts), wait (ms). Element numbers come from the latest observation of that app.',
+      'Act in one app on the user\'s own computer, in the background, and returns its window afterwards. On Windows, batch clickControl and setControl using the exact accessible name and role (setControl also takes value). Each finds a unique control in the current window and waits up to waitMs (default 2000). When names and roles are known, send one batch to open, fill and save a form, then use the returned rows to verify it. Windows returns rows only unless includeScreenshot is true. On any platform, observe first to use numbered elements. Up to 24 ordered actions: click (element, or x,y in screenshot pixels; button, double), type (text, into element or the focused field), set (value of element: a pop-up\'s choice, a field\'s whole text), key (key such as return, tab, escape, up, a; modifiers cmd, shift, option, ctrl), scroll (direction, amount, at element or x,y), menu (path from the menu bar, like ["File","New"]; use it instead of shortcuts), wait (ms). Element numbers come from the latest observation of that app.',
     inputSchema: {
       type: "object",
       properties: {
@@ -297,6 +299,7 @@ export const computerTools: ConnectorTool[] = [
           description: "Id from user_computer_list. Omit to use the bound computer.",
         },
         app: { type: "string", minLength: 1, maxLength: 200 },
+        includeScreenshot: { type: "boolean" },
         actions: {
           type: "array",
           minItems: 1,
@@ -306,9 +309,26 @@ export const computerTools: ConnectorTool[] = [
             properties: {
               kind: {
                 type: "string",
-                enum: ["click", "type", "set", "key", "scroll", "menu", "wait"],
+                enum: [
+                  "click",
+                  "clickControl",
+                  "type",
+                  "set",
+                  "setControl",
+                  "key",
+                  "scroll",
+                  "menu",
+                  "wait",
+                ],
               },
               element: { type: "integer", minimum: 0 },
+              name: { type: "string", minLength: 1, maxLength: 200 },
+              role: { type: "string", pattern: "^[a-zA-Z][a-zA-Z0-9]*$", maxLength: 40 },
+              waitMs: {
+                type: "integer",
+                minimum: 0,
+                maximum: HOST_SCREEN_MAX_CONTROL_WAIT_MS,
+              },
               x: { type: "number" },
               y: { type: "number" },
               button: { type: "string", enum: ["left", "right"] },

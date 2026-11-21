@@ -74,10 +74,15 @@ export function createHostComputerRunner(options: { root: string; screen?: HostS
     const scope = { botId: input.botId, signal: context.signal };
     switch (input.method) {
       case "screenObserve":
-        yield await screen().observe(scope, input.app, { query: input.query });
+        yield await screen().observe(scope, input.app, {
+          query: input.query,
+          includeScreenshot: input.includeScreenshot,
+        });
         break;
       case "screenAct":
-        yield await screen().act(scope, input.app, input.actions);
+        yield await screen().act(scope, input.app, input.actions, {
+          includeScreenshot: input.includeScreenshot,
+        });
         break;
       case "environment":
         yield await provider.environment();

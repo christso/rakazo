@@ -48,7 +48,7 @@ describe.runIf(process.platform === "win32" && process.env.CI)("Windows screen c
   });
 
   it("observes Notepad, writes into it in the background, and reads the text back", async () => {
-    const before = await screen.observe(scope, "notepad");
+    const before = await screen.observe(scope, "notepad", { includeScreenshot: true });
     console.log(before.tree);
     expect(before.image?.mimeType).toBe("image/png");
     const editor = /\[(\d+)\] (?:textfield|document)/.exec(before.tree);
@@ -58,6 +58,7 @@ describe.runIf(process.platform === "win32" && process.env.CI)("Windows screen c
     ]);
     console.log(JSON.stringify({ ...written, observation: written.observation?.tree }));
     expect(written).toMatchObject({ completed: 1 });
+    expect(written.observation?.image).toBeUndefined();
     expect(written.observation?.tree).toContain("Hello from Rakazo");
     const selected = await screen.act(scope, "notepad", [
       { kind: "menu", path: ["Edit", "Select All"] },
