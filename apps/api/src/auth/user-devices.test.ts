@@ -11,7 +11,7 @@ import {
 import type { PrismaClient } from "@rakazo/db";
 import { installSecurityEventStore } from "@rakazo/db";
 import { Hono } from "hono";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { endUserDeviceSession, mountUserDeviceRoutes } from "./user-devices.js";
 
 interface Row {
@@ -29,6 +29,9 @@ interface Row {
 function fakePrisma() {
   const rows: Row[] = [];
   const connections = new Map<string, Date>();
+  const lookupConnection = vi
+    .fn<(input: { where: { deviceId?: string; device: { userId: string } } }) => Promise<unknown>>()
+    .mockResolvedValue(null);
   const events: Array<{ type: string; userId: string | null; metadata: object }> = [];
   /** Live sessions by id, with their expiry. Every test user starts signed in. */
   const sessions = new Map<string, Date>();
@@ -92,7 +95,7 @@ function fakePrisma() {
       upsert: async ({ create }: { create: { deviceId: string; heartbeatAt: Date } }) =>
         connections.set(create.deviceId, create.heartbeatAt),
       deleteMany: async () => ({ count: 0 }),
-      findFirst: async () => null,
+      findFirst: lookupConnection,
       findUnique: async () => null,
     },
     session: {
@@ -127,6 +130,7 @@ function fakePrisma() {
     rows,
     events,
     connections,
+    lookupConnection,
     sessions,
     signedOutUsers,
   };
@@ -196,6 +200,66 @@ function setup() {
 afterEach(async () => {
   installSecurityEventStore(undefined);
   await Promise.all(hubs.splice(0).map((hub) => hub.close()));
+});
+
+describe("paired Windows screen", () => {
+  it("keeps a screen request on the owning account and its browser session", async () => {
+    const mounted = setup();
+    const { app, pair, lookupConnection } = mounted;
+    const response = await pair("owner", { body: { name: "Windows PC", platform: "win32" } });
+    const { deviceId } = await response.json();
+    const { hub } = mounted;
+    const socket = new FakeSocket();
+    const connectionId = await hub.attach(
+      { id: deviceId, userId: "owner", name: "Windows PC", platform: "win32" },
+      socket,
+    );
+    lookupConnection.mockImplementation(async ({ where }) => {
+      if (where.deviceId !== deviceId || where.device.userId !== "owner") return null;
+      return {
+        deviceId,
+        connectionId,
+        address: "http://127.0.0.1:3100",
+        device: { name: "Windows PC", platform: "win32" },
+      };
+    });
+    const screen = (user?: string, origin = "http://app.test") =>
+      app.request(`/api/devices/${deviceId}/screen`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          origin,
+          ...(user ? { "x-test-user": user, "x-test-session": "viewing-session" } : {}),
+        },
+        body: JSON.stringify({ action: "open" }),
+      });
+    expect((await screen(undefined)).status).toBe(401);
+    expect((await screen("owner", "https://untrusted.test")).status).toBe(403);
+    expect((await screen("other-user")).status).toBe(404);
+    expect(lookupConnection).toHaveBeenCalledOnce();
+    expect(socket.sent).toEqual([]);
+
+    const result = screen("owner");
+    const sent = await vi.waitFor(() => {
+      expect(socket.sent).toHaveLength(1);
+      return socket.sent[0] as { id: string; request: unknown };
+    });
+    expect(sent.request).toEqual({
+      method: "pairedScreen",
+      botId: "owner",
+      runId: "viewing-session",
+      screen: { action: "open" },
+    });
+    const id = "bfe1ec93-66ec-4c83-8494-8ae35c52ea34";
+    socket.emit(
+      "message",
+      JSON.stringify({ type: "frame", id: sent.id, frame: { value: { id } } }),
+    );
+    socket.emit("message", JSON.stringify({ type: "frame", id: sent.id, frame: { done: true } }));
+    const opened = await result;
+    expect(opened.headers.get("cache-control")).toBe("no-store");
+    await expect(opened.json()).resolves.toEqual({ result: { id } });
+  });
 });
 
 describe("device pairing", () => {

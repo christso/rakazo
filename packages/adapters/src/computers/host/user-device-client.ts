@@ -4,7 +4,7 @@ import WebSocket from "ws";
 import type { HostScreen } from "../screens/host-screen.js";
 import type { HostComputerFrame } from "./host-computer-protocol.js";
 import { HOST_COMPUTER_MAX_BYTES } from "./host-computer-protocol.js";
-import type { HostComputerCall } from "./host-computer-runner.js";
+import type { HostComputerCall, PairedScreenAccess } from "./host-computer-runner.js";
 import { createHostComputerRunner } from "./host-computer-runner.js";
 import type { UserDeviceClientMessage, UserDeviceRevokeReason } from "./user-device-protocol.js";
 import {
@@ -25,6 +25,7 @@ export interface UserDeviceClientOptions {
   root: string;
   /** Drives this computer's apps. Owned by the caller, which closes it. */
   screen?: HostScreen;
+  pairedScreen?: PairedScreenAccess;
   /** The server revoked the device or rejected its token. The client has already stopped. */
   onRevoked: (reason?: UserDeviceRevokeReason) => void;
   /** Whether this computer lets the server's bots run anything. Asked before every request. */
@@ -41,7 +42,11 @@ export function startUserDeviceClient(options: UserDeviceClientOptions) {
   if (secureHttpOrigin(options.serverUrl) === null)
     throw new Error("Local computer access requires HTTPS or loopback");
   const retry = options.retryMs ?? { min: 1_000, max: 60_000 };
-  const runner = createHostComputerRunner({ root: options.root, screen: options.screen });
+  const runner = createHostComputerRunner({
+    root: options.root,
+    screen: options.screen,
+    pairedScreen: options.pairedScreen,
+  });
   runner.setEnabled(true);
   const url = new URL(USER_DEVICE_CONNECT_PATH, options.serverUrl);
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
@@ -138,6 +143,7 @@ export function startUserDeviceClient(options: UserDeviceClientOptions) {
       for (const { call } of calls.values()) call.abort();
       calls.clear();
       if (socket === ws) {
+        options.pairedScreen?.clear();
         socket = undefined;
         refuseWaiting = undefined;
       }

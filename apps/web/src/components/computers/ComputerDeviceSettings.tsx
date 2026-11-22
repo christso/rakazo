@@ -4,12 +4,14 @@ import { secureHttpOrigin } from "@rakazo/contracts/network-host";
 import { Button, Label, Switch } from "@rakazo/ui-web";
 import { queryOptions, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Trash2 } from "lucide-react";
-import { useId } from "react";
+import { useId, useState } from "react";
 import { listUserDevices, removeUserDevice } from "../../lib/auth/user-devices";
 import { desktopBridge } from "../../lib/platform/desktop";
 import { useQueryUserId, useSave } from "../../lib/query/query";
 import { rpc } from "../../lib/query/rpc";
 import { SettingsGroup, SettingsRow } from "../settings/SettingsRows";
+
+import { PairedScreenDialog } from "./PairedScreenDialog";
 
 type ThisComputer = { allowed: boolean; setAllowed: (allowed: boolean) => Promise<unknown> };
 
@@ -79,6 +81,7 @@ export function ComputerDeviceSettings() {
   const devices = devicesRead.data ?? [];
   const devicesFailed = !devicesRead.data && devicesRead.isError;
   const switchId = useId();
+  const [watching, setWatching] = useState<UserDeviceSummary>();
 
   // Neither change goes through the API: one is the desktop app's, the other a device route.
   const change = useSave({
@@ -165,24 +168,38 @@ export function ComputerDeviceSettings() {
             </p>
           }
           control={
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              aria-label={t`Remove ${device.name}`}
-              disabled={pending}
-              className="text-destructive hover:text-destructive"
-              onClick={() =>
-                change.run({
-                  action: () => removeUserDevice(device.deviceId),
-                  failure: t`Could not remove`,
-                })
-              }
-            >
-              <Trash2 />
-            </Button>
+            <div className="flex items-center gap-2">
+              {device.connected && device.platform === "win32" ? (
+                <Button variant="outline" size="sm" onClick={() => setWatching(device)}>
+                  <Trans>Watch screen</Trans>
+                </Button>
+              ) : null}
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label={t`Remove ${device.name}`}
+                disabled={pending}
+                className="text-destructive hover:text-destructive"
+                onClick={() =>
+                  change.run({
+                    action: () => removeUserDevice(device.deviceId),
+                    failure: t`Could not remove`,
+                  })
+                }
+              >
+                <Trash2 />
+              </Button>
+            </div>
           }
         />
       ))}
+      {watching ? (
+        <PairedScreenDialog
+          key={watching.deviceId}
+          device={watching}
+          onClose={() => setWatching(undefined)}
+        />
+      ) : null}
       {change.error ? (
         <p role="alert" className="px-4 py-3 text-body-sm text-destructive">
           {change.input?.failure}

@@ -3,6 +3,9 @@ export const RU_MESSAGES: Record<string, string> = {
   "Check for Updates…": "Проверить обновления…",
   "Computer Access…": "Доступ к компьютеру…",
   "Revoke Local Computer Access": "Отозвать доступ к локальному компьютеру",
+  "Allow Screen Sharing and Control Without Prompts":
+    "Разрешить показ экрана и управление без подтверждения",
+  "Stop Screen Sharing": "Остановить показ экрана",
   "Change Rakazo Server…": "Сменить сервер Rakazo…",
   "Hide {name}": "Скрыть {name}",
   "Hide Others": "Скрыть остальные",
@@ -62,6 +65,11 @@ export const RU_MESSAGES: Record<string, string> = {
     "Не удалось завершить обновление. Повторите попытку позже.",
   "Could not reach the update server.": "Не удалось связаться с сервером обновлений.",
   "Allow local computer access?": "Разрешить доступ к локальному компьютеру?",
+  "Share this screen with your Rakazo account?":
+    "Поделиться этим экраном с вашим аккаунтом Rakazo?",
+  "Your primary display will be visible to the person who requested it. They can take control of your mouse and keyboard until the session ends.":
+    "Тот, кто запросил доступ, сможет видеть ваш основной экран и управлять мышью и клавиатурой до конца сеанса.",
+  "Share screen": "Поделиться экраном",
   "Allow bots to use this computer?": "Разрешить ботам использовать этот компьютер?",
   Cancel: "Отменить",
   Allow: "Разрешить",

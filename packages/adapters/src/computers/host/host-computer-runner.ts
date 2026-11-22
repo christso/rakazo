@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 import type { AdapterContext, ComputerRef } from "@rakazo/adapter-kit";
 import { SandboxFileTooLargeError } from "@rakazo/adapter-kit";
+import type { PairedScreenRequest } from "@rakazo/contracts";
 import { DesktopSandboxProvider } from "../../providers/computer/desktop/desktop-sandbox.js";
 import { WorkspacePathError } from "../screens/computer-support.js";
 import type { HostScreen } from "../screens/host-screen.js";
@@ -37,7 +38,22 @@ export interface HostComputerCall {
  * Runs host computer requests from any transport: the local HTTP listener and the outbound
  * device socket share validation, limits, cancellation, and error sanitizing.
  */
-export function createHostComputerRunner(options: { root: string; screen?: HostScreen }) {
+export interface PairedScreenAccess {
+  request(
+    owner: string,
+    request: PairedScreenRequest,
+    signal: AbortSignal,
+    canTakeControl: () => boolean,
+  ): Promise<unknown>;
+  controlling(): boolean;
+  clear(): void;
+}
+
+export function createHostComputerRunner(options: {
+  root: string;
+  screen?: HostScreen;
+  pairedScreen?: PairedScreenAccess;
+}) {
   let enabled = false;
   const active = new Map<
     AbortController,
@@ -60,6 +76,10 @@ export function createHostComputerRunner(options: { root: string; screen?: HostS
     };
   }
 
+  function canDriveDesktop(method: string) {
+    return method === "execute" || method === "screenAct" || method === "screenObserve";
+  }
+
   function screen() {
     if (!options.screen)
       throw new HostScreenError("Screen control is not available on this computer.");
@@ -70,9 +90,23 @@ export function createHostComputerRunner(options: { root: string; screen?: HostS
     input: HostComputerRequest,
     context: AdapterContext,
   ): AsyncIterable<unknown> {
+    if (canDriveDesktop(input.method) && options.pairedScreen?.controlling())
+      throw new HostScreenError("You have control of the paired screen. Release it to continue.");
     const computer = ref(input.botId);
     const scope = { botId: input.botId, signal: context.signal };
     switch (input.method) {
+      case "pairedScreen":
+        if (!options.pairedScreen)
+          throw new HostScreenError("Update the Windows desktop app to share its screen.");
+        yield await options.pairedScreen.request(
+          input.runId,
+          input.screen,
+          context.signal,
+          () =>
+            !provider.hasRunningCommands() &&
+            ![...active.values()].some((work) => work && canDriveDesktop(work.method)),
+        );
+        break;
       case "screenObserve":
         yield await screen().observe(scope, input.app, {
           query: input.query,
@@ -160,6 +194,7 @@ export function createHostComputerRunner(options: { root: string; screen?: HostS
   }
 
   function abortAll() {
+    options.pairedScreen?.clear();
     for (const controller of active.keys()) controller.abort();
     provider.cancelAllCommands();
   }

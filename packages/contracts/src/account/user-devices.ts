@@ -34,3 +34,52 @@ export const userDeviceListSchema = z.object({
 });
 export type UserDeviceList = z.infer<typeof userDeviceListSchema>;
 export type UserDeviceSummary = UserDeviceList["devices"][number];
+
+const screenCoordinate = z.number().min(0).max(1);
+export const pairedScreenInput = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("pointer"),
+    phase: z.enum(["down", "move", "up"]),
+    x: screenCoordinate,
+    y: screenCoordinate,
+    button: z.enum(["left", "right", "middle"]),
+  }),
+  z.object({
+    kind: z.literal("wheel"),
+    x: screenCoordinate,
+    y: screenCoordinate,
+    delta: z.number().int().min(-1200).max(1200),
+  }),
+  z.object({
+    kind: z.literal("key"),
+    key: z.string().min(1).max(32),
+    code: z.string().max(32),
+    ctrl: z.boolean(),
+    alt: z.boolean(),
+    shift: z.boolean(),
+  }),
+]);
+export type PairedScreenInput = z.infer<typeof pairedScreenInput>;
+
+const screenId = z.uuid();
+export const pairedScreenRequest = z.discriminatedUnion("action", [
+  z.object({ action: z.literal("open") }),
+  z.object({ action: z.literal("frame"), id: screenId }),
+  z.object({ action: z.literal("takeControl"), id: screenId }),
+  z.object({ action: z.literal("releaseControl"), id: screenId, controlId: screenId }),
+  z.object({
+    action: z.literal("input"),
+    id: screenId,
+    controlId: screenId,
+    input: pairedScreenInput,
+  }),
+  z.object({ action: z.literal("close"), id: screenId }),
+]);
+export type PairedScreenRequest = z.infer<typeof pairedScreenRequest>;
+
+export const pairedScreenFrame = z.object({
+  jpeg: z
+    .string()
+    .regex(/^[a-z0-9+/]+={0,2}$/i)
+    .max(1024 * 1024),
+});

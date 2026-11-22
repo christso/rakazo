@@ -4,6 +4,9 @@ export const ES_MESSAGES: Record<string, string> = {
   "Check for Updates…": "Buscar actualizaciones…",
   "Computer Access…": "Acceso a la computadora…",
   "Revoke Local Computer Access": "Revocar el acceso a la computadora local",
+  "Allow Screen Sharing and Control Without Prompts":
+    "Permitir compartir y controlar la pantalla sin pedir confirmación",
+  "Stop Screen Sharing": "Dejar de compartir pantalla",
   "Change Rakazo Server…": "Cambiar servidor de Rakazo…",
   "Hide {name}": "Ocultar {name}",
   "Hide Others": "Ocultar otros",
@@ -67,6 +70,11 @@ export const ES_MESSAGES: Record<string, string> = {
 
   // Computer access
   "Allow local computer access?": "¿Permitir el acceso a la computadora local?",
+  "Share this screen with your Rakazo account?":
+    "¿Compartir esta pantalla con tu cuenta de Rakazo?",
+  "Your primary display will be visible to the person who requested it. They can take control of your mouse and keyboard until the session ends.":
+    "La persona que lo solicitó podrá ver tu pantalla principal y controlar el mouse y el teclado hasta que termine la sesión.",
+  "Share screen": "Compartir pantalla",
   "Allow bots to use this computer?": "¿Permitir que los bots usen esta computadora?",
   Cancel: "Cancelar",
   Allow: "Permitir",

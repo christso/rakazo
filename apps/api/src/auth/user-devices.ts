@@ -11,6 +11,7 @@ import {
 } from "@rakazo/adapters";
 import type { UserDeviceList, UserDevicePairResponse } from "@rakazo/contracts";
 import {
+  pairedScreenRequest,
   USER_DEVICE_CONNECT_PATH,
   USER_DEVICE_PAIR_PATH,
   USER_DEVICE_PATH,
@@ -179,6 +180,43 @@ export function mountUserDeviceRoutes(app: Hono, deps: UserDeviceRouteDeps) {
     return c.json({
       devices: await deps.devices.list(session.userId),
     } satisfies UserDeviceList);
+  });
+
+  app.post(`${USER_DEVICE_PATH}/:deviceId/screen`, async (c) => {
+    c.header("Cache-Control", "no-store");
+    const origin = c.req.header("origin");
+    if (!origin || !deps.trustedOrigin(origin)) return c.json({ error: "Forbidden" }, 403);
+    const session = await deps.session(c.req.raw);
+    if (!session) return c.json({ error: "Unauthorized" }, 401);
+    if (!c.req.header("content-type")?.startsWith("application/json"))
+      return c.json({ error: "Expected JSON" }, 415);
+    const body = await readBoundedBody(c.req.raw, 2048);
+    if (body === null) return c.json({ error: "Request too large" }, 413);
+    const screen = pairedScreenRequest.safeParse(parseJson(body));
+    if (!screen.success) return c.json({ error: "Invalid screen request" }, 400);
+    const deviceId = c.req.param("deviceId");
+    if (deviceId.length > 64) return c.json({ error: "Paired Windows device unavailable" }, 404);
+    const device = await deps.devices.connected(session.userId, deviceId);
+    if (device?.platform !== "win32")
+      return c.json({ error: "Paired Windows device unavailable" }, 404);
+    try {
+      let result: unknown;
+      for await (const value of deps.devices.request(
+        session.userId,
+        {
+          method: "pairedScreen",
+          botId: session.userId,
+          runId: session.sessionId,
+          screen: screen.data,
+        },
+        c.req.raw.signal,
+        deviceId,
+      ))
+        result = value;
+      return c.json({ result: result ?? null });
+    } catch {
+      return c.json({ error: "Screen access unavailable" }, 409);
+    }
   });
 
   app.get(USER_DEVICE_CONNECT_PATH, (c) => c.json({ error: "Upgrade required" }, 426));

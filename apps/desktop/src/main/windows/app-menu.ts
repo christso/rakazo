@@ -1,9 +1,11 @@
 import type { DesktopMenuCommand, DesktopUpdateState } from "@rakazo/contracts";
+import { bestEffort } from "@rakazo/logging";
 import { app, dialog, Menu } from "electron";
 import { desktop } from "../desktop-state.js";
 import { desktopLocale, t } from "../i18n.js";
 import { showSetupWindow } from "../setup/setup-window.js";
 import type { createLocalComputerChoice } from "../this-computer/local-settings.js";
+import type { createWindowsScreenAccess } from "../this-computer/paired-screen-access.js";
 import { quitAndStopBotsItem } from "../this-computer/stop-local-stack.js";
 import { updaterSupport } from "../updates/auto-update.js";
 import { remoteServerOrigin } from "./app-window.js";
@@ -96,12 +98,14 @@ function updateMenuLabel(phase: DesktopUpdateState["phase"] | undefined) {
   return t("Check for Updates…");
 }
 type MenuActions = {
+  windowsScreen: () => Awaited<ReturnType<typeof createWindowsScreenAccess>> | undefined;
   revokeLocalComputerAccess: ReturnType<typeof createLocalComputerChoice>["revoke"];
   updaterEnvironment: Parameters<typeof updaterSupport>[0];
 };
 
 /** The app menu's installer. It runs again whenever what the menu shows changes. */
 export function applicationMenuInstaller({
+  windowsScreen,
   revokeLocalComputerAccess,
   updaterEnvironment,
 }: MenuActions) {
@@ -116,6 +120,26 @@ export function applicationMenuInstaller({
       visible: remoteServerOrigin() === null && desktop.hostComputer?.isEnabled() === true,
       click: () => void revokeLocalComputerAccess().catch(() => undefined),
     };
+    const sharing = windowsScreen();
+    const origin = remoteServerOrigin();
+    const screenSharingItems: Electron.MenuItemConstructorOptions[] =
+      sharing && origin
+        ? [
+            {
+              label: t("Allow Screen Sharing and Control Without Prompts"),
+              type: "checkbox",
+              ...sharing.state(origin),
+              click: (item) => {
+                if (remoteServerOrigin() !== origin) return;
+                void bestEffort(
+                  "save Windows screen consent",
+                  sharing.setAlwaysAllow(origin, item.checked).finally(installApplicationMenu),
+                );
+              },
+            },
+            { label: t("Stop Screen Sharing"), click: sharing.stop },
+          ]
+        : [];
     // Cmd+, is the macOS Settings chord, and no page keydown can see it: the OS takes
     // it first, so the menu item is the only place it can be registered.
     const openSettings: Electron.MenuItemConstructorOptions = {
@@ -294,6 +318,7 @@ export function applicationMenuInstaller({
                 openSettings,
                 computerAccess,
                 revokeComputerAccess,
+                ...screenSharingItems,
                 changeServer,
                 { type: "separator" },
                 checkForUpdates,

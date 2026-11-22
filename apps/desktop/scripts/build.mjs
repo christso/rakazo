@@ -1,8 +1,12 @@
 import { build } from "esbuild";
 
 await build({
-  entryPoints: ["src/main/main.ts"],
-  outfile: "dist/main.js",
+  entryPoints: {
+    main: "src/main/main.ts",
+    "this-computer/paired-screen-access": "src/main/this-computer/paired-screen-access.ts",
+    "this-computer/paired-screen-windows": "src/main/this-computer/paired-screen-windows.ts",
+  },
+  outdir: "dist",
   bundle: true,
   platform: "node",
   format: "esm",
@@ -11,7 +15,15 @@ await build({
   banner: {
     js: 'import { createRequire } from "node:module"; const require = createRequire(import.meta.url);',
   },
-  external: ["electron", "electron-updater", "koffi", "@sentry/electron"],
+  external: [
+    "electron",
+    "electron-updater",
+    "koffi",
+    "@sentry/electron",
+    // Preferences load only on Windows. Capture and input load on the first screen request.
+    "./this-computer/paired-screen-access.js",
+    "./paired-screen-windows.js",
+  ],
   // Only the release workflow's builds report errors; local and agent builds never do.
   define: {
     "process.env.RAKAZO_DESKTOP_RELEASE": JSON.stringify(process.env.RAKAZO_DESKTOP_RELEASE ?? ""),

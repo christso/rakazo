@@ -48,8 +48,10 @@ import {
 } from "./setup/setup-config.js";
 import {
   clearSetup,
+  readPrivateFile,
   readSetup,
   readUiLocale,
+  writePrivateFile,
   writeSetup,
   writeUiLocale,
 } from "./setup/setup-store.js";
@@ -104,6 +106,7 @@ import {
 import type { ServerBundle } from "./this-computer/mac-runtime.js";
 import { nativeStackEligible, readServerBundle } from "./this-computer/mac-runtime.js";
 import { NativeStackController } from "./this-computer/native-stack.js";
+import type { createWindowsScreenAccess } from "./this-computer/paired-screen-access.js";
 import {
   StackStopMenuAvailability,
   stopStackLeftBehind,
@@ -184,7 +187,9 @@ const localComputerChoice = createLocalComputerChoice({
 });
 const persistHostChoice = localComputerChoice.persist;
 const revokeLocalComputerAccess = localComputerChoice.revoke;
+let windowsScreen: Awaited<ReturnType<typeof createWindowsScreenAccess>> | undefined;
 const installApplicationMenu = applicationMenuInstaller({
+  windowsScreen: () => windowsScreen,
   revokeLocalComputerAccess,
   updaterEnvironment,
 });
@@ -428,7 +433,12 @@ function syncHostComputerAccess() {
       !desktop.mainWindow.isDestroyed() &&
       appWindowTargets.get(desktop.mainWindow) === desktop.localStack.webUrl(),
   );
-  void desktop.userDevices?.select(remoteServerOrigin()).catch(() => undefined);
+  void desktop.userDevices
+    ?.select(remoteServerOrigin())
+    .then(() => {
+      if (windowsScreen) installApplicationMenu();
+    })
+    .catch(() => undefined);
   installApplicationMenu();
 }
 /** The trust boundary: only a click on Allow here lets bots use this computer. */
@@ -448,7 +458,7 @@ async function confirmComputerAccess(detail: string) {
   const result = await (win ? dialog.showMessageBox(win, options) : dialog.showMessageBox(options));
   return result.response === 1;
 }
-/** A bot asks while the person may be elsewhere, so bring the prompt to them. */
+
 function confirmRemoteComputerAccess(host: string) {
   if (desktop.mainWindow !== null && !desktop.mainWindow.isDestroyed()) {
     if (!desktop.mainWindow.isVisible()) desktop.mainWindow.show();
@@ -660,6 +670,33 @@ app.whenReady().then(async () => {
   } catch {
     /* Local access fails closed; Docker remains available. */
   }
+  if (process.platform === "win32") {
+    const { createWindowsScreenAccess: createAccess } = await import(
+      "./this-computer/paired-screen-access.js"
+    );
+    windowsScreen = await createAccess(
+      userDataDir,
+      (origin) => {
+        const device = desktop.userDevices?.state(origin);
+        return device?.allowed ? device.deviceId : null;
+      },
+      async (signal) => {
+        const { response } = await dialog.showMessageBox({
+          type: "question",
+          message: t("Share this screen with your Rakazo account?"),
+          detail: t(
+            "Your primary display will be visible to the person who requested it. They can take control of your mouse and keyboard until the session ends.",
+          ),
+          buttons: [t("Cancel"), t("Share screen")],
+          defaultId: 0,
+          cancelId: 0,
+          signal,
+        });
+        return response === 1;
+      },
+      { read: readPrivateFile, write: writePrivateFile },
+    );
+  }
   desktop.userDevices = createUserDeviceAccess({
     userDataDir,
     cipher: deviceTokenCipher(),
@@ -685,6 +722,7 @@ app.whenReady().then(async () => {
         token,
         root: path.join(userDataDir, "computers"),
         screen: hostScreen,
+        pairedScreen: windowsScreen?.connect(origin),
         ...events,
       }),
   });
@@ -940,6 +978,7 @@ app.whenReady().then(async () => {
     const origin = remoteDeviceOrigin(event);
     if (origin === null || typeof allowed !== "boolean") return null;
     await desktop.userDevices?.setAllowed(origin, allowed);
+    if (windowsScreen) installApplicationMenu();
     return deviceState(remoteDeviceOrigin(event));
   });
   handleIpc(

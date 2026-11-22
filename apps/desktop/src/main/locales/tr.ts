@@ -3,6 +3,9 @@ export const TR_MESSAGES: Record<string, string> = {
   "Check for Updates…": "Güncellemeleri Denetle…",
   "Computer Access…": "Bilgisayar Erişimi…",
   "Revoke Local Computer Access": "Yerel Bilgisayar Erişimini İptal Et",
+  "Allow Screen Sharing and Control Without Prompts":
+    "Ekran paylaşımına ve denetimine onay sormadan izin ver",
+  "Stop Screen Sharing": "Ekran paylaşımını durdur",
   "Change Rakazo Server…": "Rakazo Sunucusunu Değiştir…",
   "Hide {name}": "{name} Uygulamasını Gizle",
   "Hide Others": "Diğerlerini Gizle",
@@ -61,6 +64,10 @@ export const TR_MESSAGES: Record<string, string> = {
     "Güncelleme tamamlanamadı. Daha sonra yeniden deneyin.",
   "Could not reach the update server.": "Güncelleme sunucusuna ulaşılamadı.",
   "Allow local computer access?": "Yerel bilgisayara erişime izin verilsin mi?",
+  "Share this screen with your Rakazo account?": "Bu ekran Rakazo hesabınızla paylaşılsın mı?",
+  "Your primary display will be visible to the person who requested it. They can take control of your mouse and keyboard until the session ends.":
+    "İstekte bulunan kişi birincil ekranınızı görebilir ve oturum bitene kadar farenizi ve klavyenizi kontrol edebilir.",
+  "Share screen": "Ekranı paylaş",
   "Allow bots to use this computer?": "Botların bu bilgisayarı kullanmasına izin verilsin mi?",
   Cancel: "Vazgeç",
   Allow: "İzin Ver",

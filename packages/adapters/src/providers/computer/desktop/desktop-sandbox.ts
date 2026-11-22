@@ -130,6 +130,11 @@ export class DesktopSandboxProvider implements SandboxProvider {
     }
   }
 
+  hasRunningCommands() {
+    this.sweepProcesses();
+    return this.processTrees.size > 0;
+  }
+
   cancelAllCommands() {
     for (const tree of this.processTrees.keys()) {
       tree.kill();
