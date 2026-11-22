@@ -79,6 +79,39 @@ describe("paired Windows screen authority", () => {
     ).rejects.toThrow("session ended");
   });
 
+  it("paces keyboard input from the viewer", async () => {
+    vi.useFakeTimers();
+    const { screen, owner, signal, open, input } = fixture();
+    const id = await open();
+    const granted = await screen.request(owner, { action: "takeControl", id }, signal, () => true);
+    if (!granted || !("controlId" in granted) || !granted.controlId)
+      throw new Error("Missing control");
+    const key = {
+      kind: "key",
+      key: "s",
+      code: "KeyS",
+      alt: false,
+      shift: false,
+      ctrl: false,
+    } as const;
+    const acknowledged = vi.fn();
+    const pending = screen
+      .request(
+        owner,
+        { action: "input", id, controlId: granted.controlId, input: key },
+        signal,
+        () => true,
+      )
+      .then(acknowledged);
+    await vi.advanceTimersByTimeAsync(74);
+    expect(input).toHaveBeenCalledExactlyOnceWith(key);
+    expect(acknowledged).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    await pending;
+    expect(acknowledged).toHaveBeenCalledOnce();
+    screen.clear();
+  });
+
   it("requires a visible outline to open and continue a screen session", async () => {
     const { screen, owner, signal, open, outline, releaseInput } = fixture();
     outline.visible.mockReturnValue(false);

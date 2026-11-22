@@ -1,8 +1,10 @@
 import { randomUUID } from "node:crypto";
 import type { PairedScreenInput, PairedScreenRequest } from "@rakazo/contracts";
+import { abortableDelay } from "@rakazo/core";
 
 const IDLE_MS = 12_000;
 const MAX_SESSION_MS = 20 * 60_000;
+const KEY_INPUT_SETTLE_MS = 75;
 
 type View = {
   id: string;
@@ -133,6 +135,8 @@ export function createPairedScreen(options: {
           if (active.controlId !== request.controlId)
             throw new Error("Take control before sending input");
           options.input(request.input);
+          // Let the foreground Windows app process the key before the viewer sends another.
+          if (request.input.kind === "key") await abortableDelay(KEY_INPUT_SETTLE_MS, signal);
           break;
         case "releaseControl":
           if (active.controlId !== request.controlId)

@@ -5,7 +5,7 @@ const COLORS: Record<OutlineMode, string> = {
   watching: "#2563eb",
   controlling: "#e85d04",
 };
-const WIDTH = 6;
+const WIDTH = 2;
 
 export function createPairedScreenOutline() {
   const edges: BaseWindow[] = [];
