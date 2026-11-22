@@ -41,6 +41,8 @@ export function createPairedScreenOutline() {
           resizable: false,
         });
         edges.push(edge);
+        // Windows gives small windows a minimum size. Draw only inside the intended strip.
+        edge.setShape([{ x: 0, y: 0, width: bounds.width, height: bounds.height }]);
         edge.setIgnoreMouseEvents(true);
         edge.setAlwaysOnTop(true, "pop-up-menu");
         edge.showInactive();
