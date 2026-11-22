@@ -1,4 +1,4 @@
-import { BaseWindow, screen } from "electron";
+import { BaseWindow, screen, View } from "electron";
 
 type OutlineMode = "watching" | "controlling";
 const COLORS: Record<OutlineMode, string> = {
@@ -8,45 +8,53 @@ const COLORS: Record<OutlineMode, string> = {
 const WIDTH = 2;
 
 export function createPairedScreenOutline() {
-  const edges: BaseWindow[] = [];
+  let overlay: { window: BaseWindow; edges: View[] } | undefined;
 
   function hide() {
-    for (const edge of edges.splice(0)) {
-      if (!edge.isDestroyed()) edge.destroy();
-    }
+    const current = overlay;
+    overlay = undefined;
+    if (current && !current.window.isDestroyed()) current.window.destroy();
   }
 
   function show(mode: OutlineMode) {
-    if (edges.length) {
-      for (const edge of edges) edge.setBackgroundColor(COLORS[mode]);
+    if (overlay && !overlay.window.isDestroyed()) {
+      for (const edge of overlay.edges) edge.setBackgroundColor(COLORS[mode]);
       return;
     }
 
-    const { x, y, width, height } = screen.getPrimaryDisplay().bounds;
+    const workArea = screen.getPrimaryDisplay().workArea;
+    const { width, height } = workArea;
+    // Keep the desktop visible between the strips, including on Windows at high DPI.
+    const window = new BaseWindow({
+      ...workArea,
+      backgroundColor: "#00000000",
+      transparent: true,
+      show: false,
+      frame: false,
+      thickFrame: false,
+      hasShadow: false,
+      focusable: false,
+      skipTaskbar: true,
+      resizable: false,
+    });
+    const edges: View[] = [];
+    overlay = { window, edges };
     try {
       for (const bounds of [
-        { x, y, width, height: WIDTH },
-        { x, y: y + height - WIDTH, width, height: WIDTH },
-        { x, y: y + WIDTH, width: WIDTH, height: height - 2 * WIDTH },
-        { x: x + width - WIDTH, y: y + WIDTH, width: WIDTH, height: height - 2 * WIDTH },
+        { x: 0, y: 0, width, height: WIDTH },
+        { x: 0, y: height - WIDTH, width, height: WIDTH },
+        { x: 0, y: WIDTH, width: WIDTH, height: height - 2 * WIDTH },
+        { x: width - WIDTH, y: WIDTH, width: WIDTH, height: height - 2 * WIDTH },
       ]) {
-        const edge = new BaseWindow({
-          ...bounds,
-          backgroundColor: COLORS[mode],
-          show: false,
-          frame: false,
-          thickFrame: false,
-          focusable: false,
-          skipTaskbar: true,
-          resizable: false,
-        });
+        const edge = new View();
+        edge.setBounds(bounds);
+        edge.setBackgroundColor(COLORS[mode]);
+        window.contentView.addChildView(edge);
         edges.push(edge);
-        // Windows gives small windows a minimum size. Draw only inside the intended strip.
-        edge.setShape([{ x: 0, y: 0, width: bounds.width, height: bounds.height }]);
-        edge.setIgnoreMouseEvents(true);
-        edge.setAlwaysOnTop(true, "pop-up-menu");
-        edge.showInactive();
       }
+      window.setIgnoreMouseEvents(true);
+      window.setAlwaysOnTop(true, "pop-up-menu");
+      window.showInactive();
     } catch (error) {
       hide();
       throw error;
@@ -56,7 +64,6 @@ export function createPairedScreenOutline() {
   return {
     show,
     hide,
-    visible: () =>
-      edges.length === 4 && edges.every((edge) => !edge.isDestroyed() && edge.isVisible()),
+    visible: () => Boolean(overlay && !overlay.window.isDestroyed() && overlay.window.isVisible()),
   };
 }
