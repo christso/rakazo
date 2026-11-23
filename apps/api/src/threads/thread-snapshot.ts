@@ -38,7 +38,6 @@ export async function threadSnapshot(
             }),
             tx.run.findMany({
               where: {
-                botId: target.botId,
                 status: { in: [...ACTIVE_RUN_STATUSES] },
                 OR: [
                   { trigger: { notIn: [...BACKGROUND_RUN_TRIGGERS] } },
@@ -47,8 +46,14 @@ export async function threadSnapshot(
                 AND: [
                   {
                     OR: [
-                      { threadId: target.threadId },
+                      { threadId: target.threadId, botId: target.botId, approvalThreadId: null },
                       {
+                        approvalThreadId: target.threadId,
+                        trigger: "bot_message",
+                        status: "waiting_input",
+                      },
+                      {
+                        botId: target.botId,
                         trigger: BACKGROUND_HELPER_TRIGGER,
                         status: "waiting_input",
                         sourceMessage: { threadId: target.threadId },

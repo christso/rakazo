@@ -167,6 +167,8 @@ export interface ClearThreadResult {
 }
 
 export interface FinalizeRunResult {
+  approvalThreadId?: string;
+  approvalBotId?: string;
   continuationRunId: string | null;
 }
 

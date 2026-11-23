@@ -5515,6 +5515,7 @@ describe("clearThread", () => {
           OR: [
             { threadId: "thread-group" },
             { trigger: "helper", sourceMessage: { threadId: "thread-group" } },
+            { trigger: "bot_message", approvalThreadId: "thread-group" },
           ],
           spaceId: "workspace-1",
         }),

@@ -16,6 +16,7 @@ import {
 import {
   ACTIVE_RUN_STATUSES,
   BACKGROUND_HELPER_TRIGGER,
+  botMessageContext,
   callIdFromClientNonce,
   instructionUpdateDiff,
   isApprovalAskBlock,
@@ -40,7 +41,7 @@ import { publishSpaceChange } from "../spaces/space-changes.js";
 import { notifyCommittedEvent, notifyRealtime } from "./event-stream.js";
 import type { FinalizeRunResult } from "./events.js";
 import { appendEventInTransaction, transientRunEventsWhere } from "./events.js";
-import { changeMessageBlocks, readMessageBlocks } from "./message-blocks.js";
+import { changeMessageBlocks, readMessageBlocks, storedMessageBlocks } from "./message-blocks.js";
 import { createThreadMessageInTransaction, loadMessageAuthor } from "./messages.js";
 import { editOutgoingDraft } from "./outgoing-draft.js";
 import { createPendingSteeringRun, releaseUnreadHandovers } from "./thread-steering.js";
@@ -58,6 +59,8 @@ export class AnswerTooLongError extends Error {
 export interface PauseRunForInput {
   /** A helper asks in its originating chat, validated against its source card. */
   requestThreadId?: string;
+  /** The native tool gate can send a delegated action back to the first chat. */
+  delegatedApproval?: { botName: string };
   spaceId: string;
   threadId: string;
   botId: string;
@@ -229,6 +232,7 @@ async function commitAnswerRunInput(
       spaceId: input.spaceId,
       OR: [
         { threadId: input.threadId },
+        { approvalThreadId: input.threadId, trigger: "bot_message" },
         {
           trigger: BACKGROUND_HELPER_TRIGGER,
           sourceMessage: { threadId: input.threadId, thread: { spaceId: input.spaceId } },
@@ -240,6 +244,7 @@ async function commitAnswerRunInput(
       botId: true,
       userId: true,
       checkpoint: true,
+      approvalThreadId: true,
       trigger: true,
       clientNonce: true,
       task: { select: { prompt: true } },
@@ -260,6 +265,7 @@ async function commitAnswerRunInput(
   if (!message || !found) return null;
   const { entry: pendingAskEntry, ask: pendingAsk } = found;
   const approvalAsk = isApprovalAskBlock(pendingAsk);
+  if (run.approvalThreadId === input.threadId && !approvalAsk) return null;
   const secretAsk = isSecretAskBlock(pendingAsk);
   const choiceAsk = !approvalAsk && !secretAsk && Boolean(pendingAsk.actions?.length);
   const selectedChoice = choiceAsk ? resolveAskChoice(input.answer, pendingAsk.actions) : undefined;
@@ -363,6 +369,7 @@ async function commitAnswerRunInput(
       spaceId: input.spaceId,
       OR: [
         { threadId: input.threadId },
+        { approvalThreadId: input.threadId, trigger: "bot_message" },
         {
           trigger: BACKGROUND_HELPER_TRIGGER,
           sourceMessage: { threadId: input.threadId, thread: { spaceId: input.spaceId } },
@@ -372,6 +379,7 @@ async function commitAnswerRunInput(
     },
     data: {
       status: "queued",
+      ...(run.approvalThreadId ? { approvalThreadId: null } : {}),
       ...(resumedTrigger !== run.trigger ? { trigger: resumedTrigger } : {}),
       ...(choiceAsk ? { checkpoint: null } : {}),
     },
@@ -758,16 +766,102 @@ export async function answerWaitingRunWithTextInTransaction(
     : null;
 }
 
+// Both receipt IDs are server-created by messageBot. Only a direct user turn in a bot chat
+// can supply an approval destination; routine, external, group and peer relays keep their own.
+async function delegatedApprovalOrigin(tx: Prisma.TransactionClient, input: PauseRunForInput) {
+  const run = await tx.run.findFirst({
+    where: {
+      id: input.runId,
+      spaceId: input.spaceId,
+      threadId: input.threadId,
+      trigger: "bot_message",
+    },
+    select: { userId: true, sourceMessage: { select: { id: true, threadId: true, blocks: true } } },
+  });
+  const source = run?.sourceMessage;
+  if (!run || !source || source.threadId !== input.threadId) return;
+  const delivery = botMessageContext(storedMessageBlocks(source));
+  if (!delivery?.returnToMessageId || delivery.intent !== "request") return;
+  const receipt = await tx.message.findFirst({
+    where: {
+      id: delivery.returnToMessageId,
+      role: "bot",
+      botId: delivery.fromBotId,
+      thread: { spaceId: input.spaceId, bot: { id: delivery.fromBotId, archivedAt: null } },
+    },
+    select: { id: true, runId: true, threadId: true, blocks: true },
+  });
+  if (!receipt?.runId || receipt.threadId === input.threadId) return;
+  if (
+    !storedMessageBlocks(receipt).some(
+      (block) =>
+        block.kind === "bot_message_sent" &&
+        block.intent === "request" &&
+        block.toBotId === input.botId,
+    )
+  )
+    return;
+  const original = await tx.run.findFirst({
+    where: {
+      id: receipt.runId,
+      spaceId: input.spaceId,
+      botId: delivery.fromBotId,
+      threadId: receipt.threadId,
+      userId: run.userId,
+      trigger: "user",
+      sourceMessage: { threadId: receipt.threadId, role: "user", authorUserId: run.userId },
+    },
+    select: { id: true },
+  });
+  return original
+    ? { id: receipt.id, threadId: receipt.threadId, botId: delivery.fromBotId }
+    : undefined;
+}
+
 export async function pauseRunForInput(
   prisma: PrismaClient,
   input: PauseRunForInput,
   realtime?: RealtimeFanout,
 ): Promise<FinalizeRunResult | false> {
-  const requestThreadId = input.requestThreadId ?? input.threadId;
   const committed = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-    // Thread row first, then run rows — the same order as clearThread and finalizeRun, so a
-    // concurrent clear cannot deadlock against this transaction.
-    await tx.$queryRaw`SELECT id FROM threads WHERE id = ${requestThreadId} FOR UPDATE`;
+    const origin =
+      !input.requestThreadId &&
+      input.delegatedApproval &&
+      input.blocks.length === 1 &&
+      input.blocks[0]?.kind === "ask" &&
+      isApprovalAskBlock(input.blocks[0])
+        ? await delegatedApprovalOrigin(tx, input)
+        : undefined;
+    const requestedThreadId = input.requestThreadId ?? input.threadId;
+    // Keep the same lock order as bot-to-bot delivery. The origin chat can be cleared
+    // while this transaction waits for its lock, so recheck the receipt afterward.
+    const threadIds = origin ? [input.threadId, origin.threadId].sort() : [requestedThreadId];
+    for (const threadId of threadIds) {
+      await tx.$queryRaw`SELECT id FROM threads WHERE id = ${threadId} FOR UPDATE`;
+    }
+    const routed =
+      origin && (await tx.message.findUnique({ where: { id: origin.id }, select: { id: true } }));
+    const approvalThreadId = routed ? origin.threadId : undefined;
+    const requestThreadId = approvalThreadId ?? requestedThreadId;
+    const approvalAuthor = input.delegatedApproval?.botName;
+    const blocks =
+      approvalThreadId && approvalAuthor
+        ? input.blocks.map((block) => {
+            if (block.kind !== "ask") return block;
+            return {
+              ...block,
+              text: `${approvalAuthor}: ${block.text}`,
+              ...(block.outgoingDraft
+                ? {
+                    outgoingDraft: {
+                      ...block.outgoingDraft,
+                      source: `${approvalAuthor}: ${block.outgoingDraft.source}`,
+                    },
+                  }
+                : {}),
+            };
+          })
+        : input.blocks;
     const paused = await tx.run.updateMany({
       where: {
         id: input.runId,
@@ -792,6 +886,7 @@ export async function pauseRunForInput(
         status: "waiting_input",
         leaseOwner: null,
         leaseExpiresAt: null,
+        ...(approvalThreadId ? { approvalThreadId } : {}),
         ...(input.offeredActions?.length
           ? { checkpoint: choiceAskCheckpoint(input.offeredActions) }
           : {}),
@@ -815,7 +910,7 @@ export async function pauseRunForInput(
     const message = await createThreadMessageInTransaction(tx, {
       threadId: requestThreadId,
       role: "bot",
-      blocks: input.blocks,
+      blocks,
       botId: input.botId,
       runId: input.runId,
     });
@@ -825,7 +920,7 @@ export async function pauseRunForInput(
       botId: input.botId,
       type: "thread.message.created",
       runId: input.runId,
-      payload: { messageId: message.id, role: "bot", blocks: input.blocks },
+      payload: { messageId: message.id, role: "bot", blocks },
     });
     const run = await tx.run.findUnique({
       where: { id: input.runId },
@@ -840,6 +935,7 @@ export async function pauseRunForInput(
       payload: {
         ...(run?.userId ? { userId: run.userId } : {}),
         ...(input.requestThreadId ? { trigger: BACKGROUND_HELPER_TRIGGER } : {}),
+        ...(approvalThreadId ? { executionThreadId: input.threadId } : {}),
       },
     });
     await tx.event.deleteMany({
@@ -851,6 +947,8 @@ export async function pauseRunForInput(
       : await createPendingSteeringRun(tx, input);
     return {
       threadId: waitingEvent.threadId,
+      approvalThreadId,
+      approvalBotId: approvalThreadId ? origin?.botId : undefined,
       seq: waitingEvent.seq,
       continuationRunId,
       firstResponseRunId: response.firstResponse ? input.runId : undefined,
@@ -866,7 +964,12 @@ export async function pauseRunForInput(
     committed.firstResponseRunId,
   );
   await publishSpaceChange(realtime, input.spaceId, "runs");
-  return { continuationRunId: committed.continuationRunId };
+  return {
+    continuationRunId: committed.continuationRunId,
+    ...(committed.approvalThreadId
+      ? { approvalThreadId: committed.approvalThreadId, approvalBotId: committed.approvalBotId }
+      : {}),
+  };
 }
 
 function alwaysAllowedSite(effect: {

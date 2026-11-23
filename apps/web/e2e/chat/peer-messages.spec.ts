@@ -8,6 +8,65 @@ import {
   signup,
 } from "../helpers/helpers";
 
+test("approves a specialist's action without leaving the requesting chat", async ({
+  page,
+}, testInfo) => {
+  await signup(page, `peer-approval-${Date.now()}@rakazo.test`, "password12", "Peer Approval");
+  await completeOnboarding(page);
+  const specialist = await rpc<{ id: string }>(page, "bots/create", {
+    name: "Specialist",
+    description: "",
+    instructions: "",
+    notifyOnFinish: true,
+  });
+  await page.goto("/app");
+  await page.waitForURL(/\/app\/[^/]+$/);
+  const chiefId = activeBotId(page);
+  const composer = page.getByRole("combobox", { name: "Message Chief" });
+  await composer.fill(
+    "message the bot named Specialist saying write this to the destination crm as a note",
+  );
+  await composer.press("Enter");
+
+  const approve = page.getByRole("button", { name: "Allow once", exact: true });
+  await expect(approve).toBeVisible({ timeout: 45_000 });
+  await expect(page.getByText(/Specialist:.*Destination/i).first()).toBeVisible();
+  await expect(page).toHaveURL(new RegExp(`/app/${chiefId}$`));
+  await captureScreenshot(page, testInfo, "delegated-approval-in-origin-chat");
+  await page.reload();
+  await expect(approve).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await captureScreenshot(page, testInfo, "delegated-approval-in-origin-chat-narrow");
+  const answer = page.waitForResponse((response) => response.url().endsWith("/rpc/threads/answer"));
+  await approve.click();
+  expect((await answer).ok()).toBe(true);
+  await expect(approve).toHaveCount(0);
+  await expect(page).toHaveURL(new RegExp(`/app/${chiefId}$`));
+  await expect
+    .poll(async () => {
+      const history = await rpc<{
+        messages: { blocks: { kind: string; status?: string; answer?: string }[] }[];
+      }>(page, "threads/messages", { botId: chiefId });
+      return history.messages.some((message) =>
+        message.blocks.some(
+          (block) =>
+            block.kind === "ask" && block.status === "answered" && block.answer === "allow",
+        ),
+      );
+    })
+    .toBe(true);
+  const specialistHistory = await rpc<{ messages: { blocks: { kind: string }[] }[] }>(
+    page,
+    "threads/messages",
+    { botId: specialist.id, includePeerRuns: true },
+  );
+  expect(
+    specialistHistory.messages
+      .flatMap((message) => message.blocks)
+      .some((block) => block.kind === "ask"),
+  ).toBe(false);
+});
+
 test("shows peer lines in transcript and opens view-only peer chat", async ({ page }, testInfo) => {
   const stamp = Date.now();
   await signup(page, `peer-msg-${stamp}@rakazo.test`, "password12", "Peer Msg");

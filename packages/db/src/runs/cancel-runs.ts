@@ -49,6 +49,10 @@ export async function cancelRunsInTransaction<
 /** Work in a conversation, including delegates whose execution history lives elsewhere. */
 export function conversationRunsWhere(threadId: string): Prisma.RunWhereInput {
   return {
-    OR: [{ threadId }, { trigger: BACKGROUND_HELPER_TRIGGER, sourceMessage: { threadId } }],
+    OR: [
+      { threadId },
+      { trigger: BACKGROUND_HELPER_TRIGGER, sourceMessage: { threadId } },
+      { approvalThreadId: threadId, trigger: "bot_message" },
+    ],
   };
 }

@@ -751,7 +751,11 @@ code-b
         toolCalls: [
           {
             name: "destination.write",
-            args: { collection: "notes", title: "Rakazo result", body: prompt },
+            args: {
+              collection: "notes",
+              title: "Rakazo result",
+              body: peerMessage(prompt)?.text ?? prompt,
+            },
           },
         ],
         complete: true,

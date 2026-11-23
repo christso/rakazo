@@ -776,6 +776,9 @@ async function showApprovalCard(ctx: RunContext, call: ToolCall, card: ApprovalC
     attemptId: ctx.attempt.id,
     leaseOwner: ctx.workerId,
     leaseFence: ctx.fence,
+    ...(run.trigger === "bot_message"
+      ? { delegatedApproval: { botName: displayName(bot.name, "Bot") } }
+      : {}),
     onPaused: async (tx) => {
       await scheduleRunSecretsExpiry(deps.jobs, runId)(tx);
       await scheduleApprovalExpiry(deps.jobs, tx, {
@@ -801,15 +804,16 @@ async function showApprovalCard(ctx: RunContext, call: ToolCall, card: ApprovalC
     throw new Error("Could not pause this run for approval; try sending again.");
   }
   await enqueueSteeringContinuation(deps, paused.continuationRunId);
-  await reportBotMessageWait(deps, run, bot, `approve ${name}`, ctx.attempt.id);
+  if (!paused.approvalThreadId)
+    await reportBotMessageWait(deps, run, bot, `approve ${name}`, ctx.attempt.id);
   await notifyRun(deps, run, {
     kind: "help",
     title: `${displayName(bot.name, "Bot")} needs approval`,
     // Only the action, with no verb: the card's title can name a recipient or subject, and a call
     // can decline rather than allow, so both stay on the card.
     body: approvalActionName(name, args, card.batch, ctx.secrets),
-    botId: bot.id,
-    threadId: thread.id,
+    botId: paused.approvalBotId ?? bot.id,
+    threadId: paused.approvalThreadId ?? thread.id,
   });
   return pauseForApproval(ctx);
 }

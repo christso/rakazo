@@ -1331,6 +1331,8 @@ model Run {
   computerUseStartedAt DateTime?
   // Original run for delegated work; authorization is recovered from its user message.
   delegatedFromRunId   String?
+  /// Chat holding the current native approval for this delegated run.
+  approvalThreadId     String?
   checkpoint           String?
   clientNonce          String?
   sourceMessageId      String?
@@ -1366,6 +1368,7 @@ model Run {
   @@index([taskId])
   @@index([sourceMessageId])
   @@index([threadId, status, createdAt])
+  @@index([approvalThreadId, status])
   @@index([threadId, createdAt, id])
   @@index([userId, status, createdAt])
   // Partial index runs_recent_activity_idx (recent foreground activity) is created in SQL.

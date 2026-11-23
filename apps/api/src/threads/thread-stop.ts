@@ -88,6 +88,7 @@ export function cancelThreadRuns(
         userId: true,
         spaceId: true,
         threadId: true,
+        approvalThreadId: true,
         trigger: true,
         sourceMessageId: true,
         routineId: true,
@@ -133,7 +134,7 @@ export function cancelThreadRuns(
     // and the helper's card update tells the chat instead.
     let eventSeq: number | null = null;
     for (const run of cancelled) {
-      if (run.threadId !== target.threadId) continue;
+      if (run.threadId !== target.threadId && run.approvalThreadId !== target.threadId) continue;
       const event = await appendEventInTransaction(tx, {
         spaceId: actor.spaceId,
         threadId: target.threadId,

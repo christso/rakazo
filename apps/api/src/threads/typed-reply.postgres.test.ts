@@ -8,6 +8,7 @@ import {
   createDb,
   createPendingSteeringRun,
   createThreadMessage,
+  pauseRunForInput,
   provisionMessagingIdentity,
   runAsSystem,
   runAsTenant,
@@ -619,6 +620,116 @@ describe.skipIf(!enabled)("typed replies to waiting cards (PostgreSQL)", () => {
       ).resolves.toMatchObject({
         status: "queued",
       });
+    },
+  );
+
+  it.each(["allow", "deny"] as const)(
+    "lets the initiating user choose %s for a delegated action in their own chat",
+    async (decision) => {
+      const { run } = await waitingCard(question, peerThreadId, peerBotId, "bot_message");
+      const attempt = await system.attempt.findFirstOrThrow({ where: { runId: run.id } });
+      const original = await send(privateTarget(), "Please ask Beta to prepare the test email");
+      const receipt = await createThreadMessage(system, {
+        threadId,
+        runId: original.runId,
+        botId,
+        role: "bot",
+        blocks: [
+          {
+            kind: "bot_message_sent",
+            toBotId: peerBotId,
+            toBotName: "Beta",
+            text: "Prepare",
+            intent: "request",
+          },
+        ],
+      });
+      const inbound = await createThreadMessage(system, {
+        threadId: peerThreadId,
+        runId: run.id,
+        role: "user",
+        blocks: [
+          {
+            kind: "bot_message_received",
+            fromBotId: botId,
+            fromBotName: "Alpha",
+            text: "Prepare",
+            intent: "request",
+            returnToMessageId: receipt.id,
+          },
+        ],
+      });
+      const effectId = randomUUID();
+      await system.run.update({
+        where: { id: run.id },
+        data: {
+          status: "running",
+          leaseOwner: "worker",
+          leaseFence: 1,
+          sourceMessageId: inbound.id,
+        },
+      });
+      await system.attempt.update({ where: { id: attempt.id }, data: { status: "running" } });
+      await system.externalEffect.create({
+        data: {
+          id: effectId,
+          spaceId: actor.spaceId,
+          runId: run.id,
+          idempotencyKey: effectId,
+          kind: "send_email",
+          status: "intended",
+          request: { to: "test@example.test", subject: "Test email", body: "Hello" },
+        },
+      });
+      const approval: MessageBlock = {
+        kind: "ask",
+        text: "Send email",
+        approvalEffectId: effectId,
+        status: "pending",
+        actions: [
+          { id: "allow", label: "Allow once" },
+          { id: "deny", label: "Deny" },
+        ],
+      };
+      await expect(
+        runAsTenant(actor, () =>
+          pauseRunForInput(prisma, {
+            spaceId: actor.spaceId,
+            threadId: peerThreadId,
+            botId: peerBotId,
+            runId: run.id,
+            attemptId: attempt.id,
+            leaseOwner: "worker",
+            leaseFence: 1,
+            delegatedApproval: { botName: "Beta" },
+            blocks: [approval],
+          }),
+        ),
+      ).resolves.toMatchObject({ approvalThreadId: threadId });
+
+      const card = await system.message.findFirstOrThrow({ where: { runId: run.id, threadId } });
+      expect(card).toMatchObject({
+        botId: peerBotId,
+        blocks: [{ ...approval, text: "Beta: Send email" }],
+      });
+      const decide = (targetThreadId: string, answeredByUserId = actor.userId) =>
+        runAsTenant(actor, () =>
+          answerRunInput(prisma, {
+            spaceId: actor.spaceId,
+            threadId: targetThreadId,
+            runId: run.id,
+            messageId: card.id,
+            answeredByUserId,
+            answer: decision,
+          }),
+        );
+      await expect(decide(peerThreadId)).resolves.toBe(false);
+      await expect(decide(threadId, randomUUID())).resolves.toBe(false);
+      await expect(decide(threadId)).resolves.toBe(true);
+      await expect(decide(threadId)).resolves.toBe(false);
+      await expect(
+        system.externalEffect.findUniqueOrThrow({ where: { id: effectId } }),
+      ).resolves.toMatchObject({ status: decision === "allow" ? "approved" : "denied" });
     },
   );
 

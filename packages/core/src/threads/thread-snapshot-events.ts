@@ -185,7 +185,10 @@ function reduce(prev: LiveThreadSnapshot, event: ThreadSnapshotEvent): LiveThrea
       const waitingRun: LiveThreadRun = {
         id: runId,
         botId: event.botId,
-        threadId: event.threadId ?? prev.threadId,
+        threadId:
+          typeof payload.executionThreadId === "string"
+            ? payload.executionThreadId
+            : (event.threadId ?? prev.threadId),
         taskId: runId,
         ...(userId ? { userId } : {}),
         status,
@@ -353,16 +356,18 @@ function reduce(prev: LiveThreadSnapshot, event: ThreadSnapshotEvent): LiveThrea
     const without = remaining.filter(
       (message) => message.id === id || !replacedSubagent(message, replacedSubagentIds),
     );
-    // Helper execution stays in its own thread. Answering its visible card ends the
-    // chat's waiting state; no hidden run.started event will arrive here to do that.
+    // Execution outside this chat resumes elsewhere; its run.started event will not arrive here.
     const requestRunId = event.runId ?? known?.runId;
-    const answeredHelper =
+    const answeredRemoteRun =
       blocks.some((block) => block.kind === "ask") &&
       blocks.every((block) => block.kind !== "ask" || block.status === "answered") &&
       activeThreadRuns(prev).some(
-        (run) => run.id === requestRunId && run.trigger === BACKGROUND_HELPER_TRIGGER,
+        (run) =>
+          run.id === requestRunId &&
+          (run.trigger === BACKGROUND_HELPER_TRIGGER ||
+            (run.trigger === "bot_message" && run.threadId !== prev.threadId)),
       );
-    const activeRuns = answeredHelper
+    const activeRuns = answeredRemoteRun
       ? activeThreadRuns(prev).filter((run) => run.id !== requestRunId)
       : prev.activeRuns;
     return {
@@ -370,7 +375,8 @@ function reduce(prev: LiveThreadSnapshot, event: ThreadSnapshotEvent): LiveThrea
       cursor,
       messages: upsertMessageById(without, next),
       activeRuns,
-      run: answeredHelper && prev.run?.id === requestRunId ? (activeRuns?.[0] ?? null) : prev.run,
+      run:
+        answeredRemoteRun && prev.run?.id === requestRunId ? (activeRuns?.[0] ?? null) : prev.run,
     };
   }
   return prev;
