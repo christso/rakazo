@@ -1,5 +1,14 @@
 import { useExternalLinkOpener } from "@rakazo/chat-ui/web";
-import { pageCopyRequest, pageCopyResult, pageLinkRequest } from "@rakazo/core";
+import type { PageSectionAnchor, PageState } from "@rakazo/contracts";
+import {
+  pageAskAnswer,
+  pageAskRequest,
+  pageCopyRequest,
+  pageCopyResult,
+  pageLinkRequest,
+  pageReviewSections,
+  pageStateRequest,
+} from "@rakazo/core";
 import type { CSSProperties } from "react";
 import { useCallback, useRef, useState } from "react";
 import { writeClipboard } from "../../lib/copy-text";
@@ -19,25 +28,37 @@ export function PageFrame({
   title,
   interactive = false,
   onHeight,
+  previewScrollTop,
   onReply,
+  onAsk,
+  onSections,
+  onSaveState,
 }: {
   document: string;
   title: string;
   interactive?: boolean;
   onHeight?: (height: number) => void;
+  /** The card's scroll position in the preview document's unscaled pixels. */
+  previewScrollTop?: number;
   /** Where a page's reply button puts its text; without it the page offers no replies. */
   onReply?: (text: unknown) => void;
+  /** Sends a page's question to its bot; without it the page asks nothing. */
+  onAsk?: (text: string) => Promise<string | null>;
+  onSections?: (sections: PageSectionAnchor[]) => void;
+  onSaveState?: (values: PageState) => void;
 }) {
   const { open, dialog } = useExternalLinkOpener();
   const box = useRef<HTMLDivElement>(null);
   const [drawnAt, setDrawnAt] = useState<CSSProperties | undefined>(undefined);
   const usedGesture = useRef<string | null>(null);
+  const scrollablePreview = previewScrollTop !== undefined;
   const receive = useCallback(
     (data: unknown, answer: (message: object) => void, focused: boolean) => {
       if (!data || typeof data !== "object") return;
       const message = data as {
         type?: unknown;
         height?: unknown;
+        scrollHeight?: unknown;
         text?: unknown;
         gesture?: unknown;
       };
@@ -49,12 +70,39 @@ export function PageFrame({
             "--page-height": `${height}px`,
           } as CSSProperties);
         }
-        onHeight?.(height);
+        const scrollHeight = message.scrollHeight;
+        onHeight?.(
+          scrollablePreview &&
+            typeof scrollHeight === "number" &&
+            Number.isFinite(scrollHeight) &&
+            scrollHeight >= 0
+            ? pageFrameHeight(scrollHeight)
+            : height,
+        );
+        return;
+      }
+      const sections = onSections && pageReviewSections(data);
+      if (sections) onSections(sections);
+      const values = interactive && onSaveState ? pageStateRequest(data) : null;
+      if (values) {
+        onSaveState?.(values);
         return;
       }
       const { gesture } = message;
-      if (!interactive || !focused || typeof gesture !== "string") return;
-      if (gesture === usedGesture.current) return;
+      const fresh =
+        interactive && focused && typeof gesture === "string" && gesture !== usedGesture.current;
+      const ask = interactive ? pageAskRequest(data) : null;
+      if (ask && onAsk) {
+        // A page waits on every question, so one it may not send is answered at once.
+        if (!fresh) {
+          answer(pageAskAnswer(ask.id, null));
+          return;
+        }
+        usedGesture.current = gesture;
+        void onAsk(ask.text).then((text) => answer(pageAskAnswer(ask.id, text)));
+        return;
+      }
+      if (!fresh) return;
       const copy = pageCopyRequest(data);
       const url = copy ? null : pageLinkRequest(data);
       const reply = !copy && !url && message.type === "rakazo-page:reply" && onReply;
@@ -64,7 +112,7 @@ export function PageFrame({
       else if (url) open(url);
       else if (reply) reply(message.text);
     },
-    [interactive, onHeight, onReply, open],
+    [interactive, onAsk, onHeight, onReply, onSaveState, onSections, open, scrollablePreview],
   );
   return (
     <>
@@ -77,6 +125,7 @@ export function PageFrame({
           html={document}
           title={title}
           className="bg-transparent"
+          previewScrollTop={previewScrollTop}
           onFrameMessage={receive}
         />
       </div>

@@ -8,7 +8,7 @@ import type { PrismaPushTokenStore, PushTokenStore } from "./push-token-store.js
 export function createExpoPushProvider(
   prisma: Pick<PrismaClient, "user" | "session">,
   tokens: PushTokenStore & Pick<PrismaPushTokenStore, "deviceForToken">,
-  options: Pick<ExpoPushOptions, "jobs" | "accessToken" | "voip"> & {
+  options: Pick<ExpoPushOptions, "jobs" | "accessToken" | "voip" | "notificationSounds"> & {
     authUrl?: string;
     webOrigin?: string;
   },
@@ -19,6 +19,7 @@ export function createExpoPushProvider(
     throw new Error("Push server URL must be an absolute http(s) URL");
   return new ExpoPushProvider(tokens, {
     apiBase: server.origin,
+    notificationSounds: options.notificationSounds,
     sessionExpiresAt: (sessionId) =>
       runAsSystem("read push session expiry", () => pushSessionExpiresAt(prisma, sessionId)),
     accountLabel: (userId) =>

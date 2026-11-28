@@ -9,15 +9,16 @@ import {
   otherSitesText,
   vaultKind,
 } from "@rakazo/contracts";
+import { siteHost } from "@rakazo/core";
 import { vaultBotsLine } from "@rakazo/i18n/vault";
 import { Button } from "@rakazo/ui-web";
-import { Check, Copy, Eye, EyeOff } from "lucide-react";
+import { Check, Copy, Eye, EyeOff, Trash2 } from "lucide-react";
 import type { ReactNode } from "react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { useCopyText } from "../../lib/copy-text";
 import { SettingsPageHeader } from "../settings/SettingsPageHeader";
 import type { VaultAuth } from "./kinds";
-import { siteHost, useVaultKindLabels, VaultTile } from "./kinds";
+import { useVaultKindLabels, VaultTile } from "./kinds";
 import { useVaultBots } from "./VaultItemAccess";
 import { VaultItemActivity, VaultItemUses } from "./VaultItemActivity";
 
@@ -26,15 +27,16 @@ export const REVEAL_MS = 30_000;
 
 const MASK = "••••••••";
 
-function CopyButton({ text }: { text: string }) {
+function CopyButton({ text, describedBy }: { text: string; describedBy: string }) {
   const { t } = useLingui();
   const [copied, copy] = useCopyText();
   return (
     <Button
       type="button"
       variant="ghost"
-      size="icon-xs"
+      size="icon"
       aria-label={copied ? t`Copied` : t`Copy`}
+      aria-describedby={describedBy}
       className="shrink-0 text-muted-foreground"
       onClick={() => copy(text)}
     >
@@ -57,15 +59,18 @@ function DetailRow({
   action?: ReactNode;
   testId?: string;
 }) {
+  const labelId = useId();
   return (
     <div
       data-testid={testId}
-      className="flex min-h-11 items-center gap-3 border-t border-border py-2 first:border-t-0"
+      className="flex min-h-11 items-center gap-3 border-t border-border px-3.5 py-2 first:border-t-0"
     >
-      <span className="w-28 shrink-0 text-body-sm text-muted-foreground">{label}</span>
+      <span id={labelId} className="w-28 shrink-0 text-body-sm text-muted-foreground">
+        {label}
+      </span>
       <span className="min-w-0 flex-1 whitespace-pre-line break-words text-body">{children}</span>
       {action}
-      {copy ? <CopyButton text={copy} /> : null}
+      {copy ? <CopyButton text={copy} describedBy={labelId} /> : null}
     </div>
   );
 }
@@ -163,7 +168,7 @@ export function VaultItemDetail({
     <Button
       type="button"
       variant="ghost"
-      size="icon-xs"
+      size="icon"
       aria-label={revealed ? t`Hide` : t`Show`}
       data-testid="vault-item-show"
       className="shrink-0 text-muted-foreground"
@@ -383,7 +388,8 @@ export function VaultItemDetail({
         }
         onBack={() => !busy && onClose()}
       />
-      {rows.length ? <div>{rows}</div> : null}
+      {/* The same card as the Vault list, so an item looks the same open as in the list. */}
+      {rows.length ? <div className="overflow-hidden rounded-xl bg-muted/50">{rows}</div> : null}
       <VaultItemActivity scope={scope} name={item.name} onOpen={() => setUsesOpen(true)} />
       {error ? (
         <p role="alert" className="text-body-sm text-destructive">
@@ -431,8 +437,7 @@ export function VaultItemDetail({
           <span className="flex-1" />
           <Button
             type="button"
-            variant="ghost"
-            className="text-destructive hover:text-destructive"
+            variant="destructive-secondary"
             data-testid="vault-item-remove"
             disabled={busy}
             onClick={() => {
@@ -440,6 +445,7 @@ export function VaultItemDetail({
               setConfirmingRemove(true);
             }}
           >
+            <Trash2 data-icon="inline-start" />
             <Trans>Remove</Trans>
           </Button>
         </div>

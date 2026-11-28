@@ -7,6 +7,7 @@ import type { SpaceChangeKind } from "@rakazo/contracts";
  */
 const SPACE_CHANGE_PROCEDURES: Record<string, readonly SpaceChangeKind[]> = {
   "computerProvider.space.update": ["computerProvider"],
+  "artifacts.create": ["artifacts"],
   "artifacts.remove": ["artifacts"],
   "routines.create": ["routines"],
   "routines.update": ["routines"],

@@ -34,7 +34,6 @@
     "apps/web/vite.config.ts -> ../../packages/adapters/src/providers/computer/wuying/wuying-screen-assets.ts",
     "apps/web/vite.config.ts -> ../../packages/adapters/src/providers/computer/wuying/wuying-screen-policy.ts",
     "apps/web/vite.config.ts -> ../../packages/logging/src/env.ts",
-    "apps/worker/src/secret-store.test.ts -> ../../../packages/adapters/src/secrets/secret-store-fake.js",
     "apps/www/src/github.ts -> ../../../packages/core/src/primitives/http-response.js",
     "infra/sandboxes/supervisor/src/clipboard-bridge.test.ts -> ../../computer/clipboard-bridge.js",
     "infra/sandboxes/supervisor/src/mobile-keyboard.test.ts -> ../../computer/mobile-keyboard.js",
@@ -76,14 +75,14 @@
     "packages/testkit/src/runtime/pi-runtime-checkpoint.test.ts -> ../../../adapters/src/tools/builtin.tool-definition.js",
     "packages/testkit/src/screenshots/mobile-screenshots-env.test.ts -> ../../../db/prisma.config.js",
     "scripts/agent-import-defaults.mjs -> ../packages/core/src/agent-import/stock.ts",
-    "scripts/build-server.mjs -> ../packages/core/src/node/prompt-source-version.ts"
+    "scripts/build-server.mjs -> ../packages/core/src/node/prompt-source-version.ts",
+    "scripts/build-server.mjs -> ../packages/page-kit/src/runtime-build.ts"
   ],
   "server": [
     "apps/web/vite.config.ts -> ../../packages/adapters/src/providers/computer/wuying/wuying-screen-assets.ts",
     "apps/web/vite.config.ts -> ../../packages/adapters/src/providers/computer/wuying/wuying-screen-policy.ts"
   ],
   "vendor": [
-    "packages/adapters/src/providers/computer/wuying/wuying-sandbox.ts -> ../desktop/desktop-sandbox-paths.js",
     "packages/adapters/src/providers/memory/hindsight/hindsight-memory-provider.test.ts -> ../serenity/serenity-memory-provider.js",
     "packages/adapters/src/providers/memory/honcho/honcho-memory-provider.test.ts -> ../serenity/serenity-memory-provider.js",
     "packages/adapters/src/providers/memory/supermemory/supermemory-memory-provider.test.ts -> ../serenity/serenity-memory-provider.js",

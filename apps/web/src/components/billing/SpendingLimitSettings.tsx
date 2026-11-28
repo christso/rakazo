@@ -20,6 +20,7 @@ import {
   SelectValue,
 } from "@rakazo/ui-web";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Trash2 } from "lucide-react";
 import { useState } from "react";
 import { formatRelativeTime } from "../../lib/locale/relative-time";
 import { useSave, useSpaceQueries } from "../../lib/query/query";
@@ -175,19 +176,19 @@ export function SpendingLimitSettings() {
             {limit ? (
               <Button
                 type="button"
-                variant="ghost"
+                variant="destructive-secondary"
                 size="sm"
-                className="text-destructive hover:text-destructive"
                 disabled={saving}
                 onClick={() => save.run(null)}
               >
+                <Trash2 data-icon="inline-start" />
                 <Trans>Remove</Trans>
               </Button>
             ) : null}
           </form>
         ) : null}
         {save.error ? (
-          <p className="mt-1 text-body-sm text-destructive">
+          <p role="alert" className="mt-1 text-body-sm text-destructive">
             {errorText(save.error, t`Could not save spending limit`)}
           </p>
         ) : null}

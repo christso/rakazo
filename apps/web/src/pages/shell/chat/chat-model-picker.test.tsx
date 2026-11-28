@@ -28,16 +28,18 @@ vi.mock("@lingui/react/macro", () => {
   return { useLingui: () => ({ t }), Trans: ({ children }: { children: ReactNode }) => children };
 });
 
+/** Models of different families (`model-1a`, `model-2b`, ...), so none waits behind Show more. */
 function choices(count: number): ChatModelChoice[] {
+  const id = (index: number) => `vendor/model-${index + 1}${String.fromCharCode(97 + index)}`;
   return [
     { key: "", label: "Space default" },
     ...Array.from({ length: count }, (_, index) => ({
-      key: `openrouter::vendor/model-${index + 1}`,
+      key: `openrouter::${id(index)}`,
       label: `Model ${index + 1} (OpenRouter)`,
       provider: "openrouter",
       providerLabel: "OpenRouter",
       modelLabel: `Model ${index + 1}`,
-      modelId: `vendor/model-${index + 1}`,
+      modelId: id(index),
     })),
   ];
 }
@@ -94,9 +96,9 @@ describe("ChatModelPicker", () => {
 
   it("marks text-only rows and the selected model in a long list", () => {
     const list = choices(11).map((choice) =>
-      choice.modelId === "vendor/model-3" ? { ...choice, images: false } : choice,
+      choice.modelId === "vendor/model-3c" ? { ...choice, images: false } : choice,
     );
-    render(list, "openrouter::vendor/model-3");
+    render(list, "openrouter::vendor/model-3c");
     const trigger = container.querySelector<HTMLButtonElement>("button#model")!;
     expect(trigger.querySelector('[title="Can\'t read images"]')).not.toBeNull();
     act(() => trigger.click());
@@ -110,7 +112,7 @@ describe("ChatModelPicker", () => {
   });
 
   it("searches a long list by name or id and picks from it", () => {
-    render(choices(11), "openrouter::vendor/model-2");
+    render(choices(11), "openrouter::vendor/model-2b");
     expect(container.querySelector("select")).toBeNull();
     const trigger = container.querySelector<HTMLButtonElement>("button#model")!;
     expect(trigger.textContent).toBe("ModelModel 2 (OpenRouter)");
@@ -118,22 +120,92 @@ describe("ChatModelPicker", () => {
     act(() => trigger.click());
     expect(options()).toHaveLength(12);
     expect(document.querySelector("[cmdk-group-heading]")?.textContent).toBe("OpenRouter");
-    expect(options()[2]?.getAttribute("aria-label")).toBe("Model 2 (OpenRouter)");
+    expect(options()[1]?.textContent).toBe("Model 11");
+    expect(options()[10]?.getAttribute("aria-label")).toBe("Model 2 (OpenRouter)");
     const checked = options().filter((option) => option.getAttribute("data-checked") === "true");
     expect(checked.map((option) => option.textContent)).toEqual(["Model 2"]);
 
     search("MODEL 1");
     expect(options().map((option) => option.textContent)).toEqual([
-      "Model 1",
-      "Model 10",
       "Model 11",
+      "Model 10",
+      "Model 1",
     ]);
     search("vendor/model-7");
     expect(options().map((option) => option.textContent)).toEqual(["Model 7"]);
 
     act(() => (options()[0] as HTMLElement).click());
-    expect(onChange).toHaveBeenCalledExactlyOnceWith("openrouter::vendor/model-7");
+    expect(onChange).toHaveBeenCalledExactlyOnceWith("openrouter::vendor/model-7g");
     expect(options()).toHaveLength(0);
+  });
+
+  it("starts unfiltered after its owner closes and reopens it", () => {
+    const show = (open: boolean) =>
+      act(() =>
+        root.render(
+          <ChatModelPicker
+            compact
+            choices={choices(11)}
+            value=""
+            onChange={onChange}
+            open={open}
+            onOpenChange={vi.fn()}
+          />,
+        ),
+      );
+    show(true);
+    search("vendor/model-7");
+    expect(options()).toHaveLength(1);
+    show(false);
+    show(true);
+    expect(options()).toHaveLength(12);
+  });
+
+  it("names its keys on the compact button's tooltip, and hides it while the list is open", async () => {
+    act(() =>
+      root.render(
+        <ChatModelPicker
+          compact
+          choices={choices(2)}
+          value=""
+          onChange={onChange}
+          hint="Model ⌘⇧M"
+          keyShortcuts="Meta+Shift+M"
+        />,
+      ),
+    );
+    const trigger = container.querySelector<HTMLButtonElement>('button[aria-label^="Model"]')!;
+    expect(trigger.getAttribute("aria-keyshortcuts")).toBe("Meta+Shift+M");
+    const tooltip = () => document.querySelector('[data-slot="tooltip-content"]');
+    await act(async () => {
+      trigger.dispatchEvent(new PointerEvent("pointerenter", { bubbles: true }));
+      trigger.dispatchEvent(new MouseEvent("mouseenter", { bubbles: true }));
+      trigger.dispatchEvent(new MouseEvent("mousemove", { bubbles: true }));
+    });
+    await vi.waitFor(() => expect(tooltip()?.textContent).toContain("Model ⌘⇧M"));
+    act(() => trigger.click());
+    expect(options().length).toBeGreaterThan(0);
+    await vi.waitFor(() => expect(tooltip()).toBeNull());
+  });
+
+  it("shows each model's newest version until Show more lists the older ones", () => {
+    const versions = ["4.5", "5.5", "5"].map((version) => ({
+      key: `openrouter::vendor/model-${version}`,
+      label: `Model ${version} (OpenRouter)`,
+      provider: "openrouter",
+      providerLabel: "OpenRouter",
+      modelLabel: `Model ${version}`,
+      modelId: `vendor/model-${version}`,
+    }));
+    render(versions, "");
+    act(() => container.querySelector<HTMLButtonElement>("button#model")!.click());
+    expect(options().map((option) => option.textContent)).toEqual(["Model 5.5", "Show more"]);
+    act(() => (options()[1] as HTMLElement).click());
+    expect(options().map((option) => option.textContent)).toEqual([
+      "Model 5.5",
+      "Model 5",
+      "Model 4.5",
+    ]);
   });
 
   it("says when nothing matches", () => {

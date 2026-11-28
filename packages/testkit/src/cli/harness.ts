@@ -76,7 +76,8 @@ async function main() {
     runtimeUrl.password = "rakazo-test-runtime";
     const databaseUrl = runtimeUrl.toString();
     const apiPort = Number(process.env.API_PORT ?? 3110);
-    const webPort = Number(process.env.WEB_PORT ?? 5180);
+    // Integration starts no web server; its tests send the default web origin.
+    const webPort = Number(process.env.WEB_PORT ?? (integration ? 5173 : 5180));
     const webOrigin = `http://127.0.0.1:${webPort}`;
 
     process.env.DATABASE_URL = databaseUrl;
@@ -93,6 +94,9 @@ async function main() {
       process.env.INBOUND_EMAIL_SECRET = "test-inbound-email-secret-test-32chars";
       // The offline wallet, so Settings shows Wallet and sign-in completes without a provider.
       process.env.PAYMENT_WALLET_PROVIDER = "emulator";
+      process.env.MEETING_PROVIDER = "emulator";
+      process.env.MEETING_SIGNING_KEY = "test-meeting-signing-key-test-32chars";
+      process.env.MEETING_PUBLIC_ORIGIN = "";
       process.env.RAKAZO_NAV_LINKS = JSON.stringify([
         { id: "clients", label: "Clients", path: "/ext/clients/" },
       ]);

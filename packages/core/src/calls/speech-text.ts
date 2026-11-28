@@ -1,4 +1,5 @@
 import type { MessageBlock } from "@rakazo/contracts";
+import { feedbackReceiptText } from "../messages/message-text.js";
 import { isToolActivityBlock } from "../runs/tool-activity.js";
 
 /** A fenced block becomes a mention of itself, with its language if known. */
@@ -183,6 +184,9 @@ export function speakable(input: string): string {
 
 const BOUNDARY =
   /(?<!\b(?:e\.g|i\.e|etc|vs|Dr|Mr|Mrs|Ms|No|approx))(?<![.\d])([.!?])(["')\]]*)\s+/g;
+// CJK sentences end with full-width marks and no following space. A full-width period after a
+// digit is a decimal point in a number, not a sentence end.
+const CJK_BOUNDARY = /((?:[。！？｡]|(?<!\p{N})．|…)+)(["'”’」』）】)\]]*)/gu;
 
 /**
  * Markdown (or any agent output) as the sentences a voice reads, one per item. Unlike
@@ -192,6 +196,7 @@ export function splitSentences(input: string): string[] {
   const MARK = "\u0000";
   return speakable(input)
     .replace(BOUNDARY, `$1$2${MARK}`)
+    .replace(CJK_BOUNDARY, `$1$2${MARK}`)
     .split(MARK)
     .map((s) => s.trim())
     .filter(Boolean);
@@ -201,6 +206,10 @@ export function splitSentences(input: string): string[] {
 export function sentenceKey(sentence: string): string {
   return sentence.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
 }
+
+/** A piece that starts or ends in a script written without spaces is glued with no space. */
+const UNSPACED_EDGE =
+  /^[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Thai}]|[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Thai}。！？｡．…」』）】”’]$/u;
 
 /**
  * Split speakable text into utterances a synthesizer can start on.
@@ -224,7 +233,8 @@ export function toUtterances(input: string, { minChars = 12, maxChars = 320 } = 
         (prev.length < minChars || part.length < minChars) &&
         prev.length + 1 + part.length <= maxChars
       ) {
-        out[out.length - 1] = `${prev} ${part}`;
+        out[out.length - 1] =
+          `${prev}${UNSPACED_EDGE.test(prev) || UNSPACED_EDGE.test(part) ? "" : " "}${part}`;
       } else {
         out.push(part);
       }
@@ -305,7 +315,7 @@ export function narrateTool(toolName: string): string | null {
     [/^create_child_routine$/, "scheduling a routine"],
     [/^archive_bot$/, "archiving a bot"],
     [/^remember$/, "writing a memory"],
-    [/^save_shared_memory$/, "saving shared memory"],
+    [/^delete_shared_memory$/, "deleting shared memory"],
     [/^attach_file$/, "attaching a file"],
     [/^request_takeover$/, "asking you to take over"],
   ];
@@ -316,7 +326,7 @@ export function narrateTool(toolName: string): string | null {
   return /^[\w .:/-]+$/.test(short) ? `running ${short}` : null;
 }
 
-/** What a voice reads from a message: the bot's own words, never its tool activity. */
+/** What a voice reads from a message, leaving out tool activity. */
 export function speechFromBlocks(blocks: MessageBlock[]): string {
   return blocks
     .map((block) => {
@@ -324,6 +334,7 @@ export function speechFromBlocks(blocks: MessageBlock[]): string {
       if (block.kind === "text" || block.kind === "progress" || block.kind === "meta")
         return block.text;
       if (block.kind === "ask") return block.text;
+      if (block.kind === "feedback_receipt") return feedbackReceiptText(block);
       if (block.kind === "cloud_agent")
         return `${block.title}: ${block.status}${block.prUrl ? ` ${block.prUrl}` : ""}`;
       if (block.kind === "computer") return block.text;

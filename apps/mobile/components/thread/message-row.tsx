@@ -11,9 +11,11 @@ import type { ChildBotBlock, PeerExchange } from "@rakazo/core";
 import {
   canMarkMessageUnread,
   copyableMessageText,
+  isFeedbackReceiptMessage,
   isPeerReceiptBlocks,
   liveMessageComposing,
   selectableMessageText,
+  speechFromBlocks,
 } from "@rakazo/core";
 import * as Clipboard from "expo-clipboard";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -22,6 +24,7 @@ import { Platform, Pressable, View } from "react-native";
 import Animated, { useReducedMotion, ZoomIn } from "react-native-reanimated";
 import type { MobileBot, MobileMessage, MobileSnapshot } from "../../lib/api/mobile-types";
 import { blockText } from "../../lib/api/mobile-types";
+import type { ImageArtifactPreviewTarget } from "../../lib/artifacts/artifact-gallery";
 import type { MobileArtifactTarget } from "../../lib/artifacts/artifact-open";
 import { useUiLocale } from "../../lib/i18n/i18n";
 import { canDoubleTapReact } from "../../lib/messages/double-tap";
@@ -39,7 +42,6 @@ import { useMobileTokens, useResolvedAppearance } from "../../lib/native/native"
 import { previewMessageText } from "../../lib/thread/thread-message-text";
 import { ThreadReadOnlyContext } from "../../lib/thread/thread-read-only";
 import { BotAvatar } from "../bots/bot-avatar";
-import type { ImageArtifactPreviewTarget } from "../media/image-artifact-viewer";
 import { presentMessageMenu } from "../messages/message-action-menu";
 import { MessageContextMenu } from "../messages/message-context-menu";
 import { NativeSymbol } from "../native/native-symbol";
@@ -73,7 +75,10 @@ export type MessageRowActions = {
   openBot: (id: string, name: string) => void;
   openComputer: (id: string, name: string) => void;
   previewFile: (artifactId: string) => void;
-  previewImage: (target: ImageArtifactPreviewTarget) => void;
+  previewImage: (
+    target: ImageArtifactPreviewTarget,
+    gallery?: readonly ImageArtifactPreviewTarget[],
+  ) => void;
   jump: (messageId: string) => void;
   dismissChoice: (messageId: string, question: string) => void;
   openPeerChat: (peer: { peerBotId: string; peerBotName: string }) => void;
@@ -87,6 +92,7 @@ type MessageRowProps = {
   bubbleBotId: string;
   groupId?: string;
   botName?: string;
+  hideSenderLabel?: boolean;
   showBotSenderName: boolean;
   bots: MobileBot[];
   members?: MobileSnapshot["members"];
@@ -130,6 +136,7 @@ export const MessageRow = memo(function MessageRow({
   bubbleBotId,
   groupId,
   botName,
+  hideSenderLabel,
   showBotSenderName,
   bots,
   members,
@@ -204,7 +211,8 @@ export const MessageRow = memo(function MessageRow({
       hasQuotableText(message.role, message.blocks);
     const includeReact = !readOnly && canReactToThreadMessage(message);
     // The call already reads replies aloud; a second voice would talk over it.
-    const includeSpeak = message.role === "bot" && !onCall && Boolean(blockText(message));
+    const includeSpeak =
+      message.role === "bot" && !onCall && Boolean(speechFromBlocks(message.blocks));
     const includeSelect = messageText.trim().length > 0;
     const includeSelectMessages = canSelectMessage(message);
     // Any sent message can be marked unread; the next open starts New at the first reply from it.
@@ -214,7 +222,9 @@ export const MessageRow = memo(function MessageRow({
     const speakMessage = () => actions.speak(message);
     const select = () =>
       actions.select(
-        message.role === "user" ? messageText : selectableTextFromMarkdown(messageText),
+        message.role === "user" || isFeedbackReceiptMessage(message.blocks)
+          ? messageText
+          : selectableTextFromMarkdown(messageText),
       );
     const selectMessages = () => actions.startSelection(message);
     const copy = () => {
@@ -412,6 +422,7 @@ export const MessageRow = memo(function MessageRow({
   ]);
   const layout = messageRowLayout(message.blocks, { activityBotId, inGroup, columnWidth });
   const choosable = selecting && canSelectMessage(message);
+  const selectionInset = choosable ? 30 : 0;
   return (
     <View
       key={message.id}
@@ -428,7 +439,7 @@ export const MessageRow = memo(function MessageRow({
         style={{
           width: "100%",
           // Room for the check mark, so it never sits on the bubble.
-          paddingStart: choosable ? 30 : 0,
+          paddingStart: selectionInset,
           flexDirection: "row",
           alignItems: "flex-start",
           gap: 8,
@@ -489,6 +500,7 @@ export const MessageRow = memo(function MessageRow({
                 message={message}
                 authorName={authorName}
                 botName={botName}
+                hideSenderLabel={hideSenderLabel}
                 showBotSenderName={showBotSenderName}
                 bots={bots}
                 members={members}
@@ -501,6 +513,7 @@ export const MessageRow = memo(function MessageRow({
                 onChoiceDismissed={onChoiceDismissed}
                 onPreviewFile={actions.previewFile}
                 onPreviewImage={actions.previewImage}
+                imageStackMaxWidth={layout.menuMaxWidth - selectionInset}
                 peerExchange={peerExchange}
                 onOpenPeerChat={actions.openPeerChat}
                 actionProps={actionProps}

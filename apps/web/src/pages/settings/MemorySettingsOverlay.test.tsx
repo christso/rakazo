@@ -142,7 +142,7 @@ it("connects the provider picked from the ones the server describes", async () =
   const saved = { ...connected, defaultMemoryScope: "shared" as const };
   memory.connectProvider.mockResolvedValue(saved);
   const { onConfigChange, onBusyChange } = await render(null);
-  await click(button("Connect memory provider"));
+  await click(button("Connect"));
   const select = host.querySelector<HTMLElement>('[role="combobox"]')!;
   expect(select.textContent).toBe("Notes");
   expect(input("API key")).toBeDefined();
@@ -172,7 +172,7 @@ it("shows why a connection failed, and keeps the form", async () => {
   memory.connectProvider.mockRejectedValueOnce(new Error("The key was rejected"));
   memory.connectProvider.mockRejectedValueOnce(new Error(""));
   const { onConfigChange } = await render(null);
-  await click(button("Connect memory provider"));
+  await click(button("Connect"));
   await type("API key", "key_12345678");
   await click(button("Connect"));
   expect(host.textContent).toContain("The key was rejected");
@@ -213,6 +213,7 @@ it("reports a failed edit until it is cancelled", async () => {
   await click(button("Edit"));
   await click(button("Save"));
   expect(host.textContent).toContain("Could not save Notes");
+  expect(host.querySelector('[role="alert"]')?.textContent).toBe("Could not save Notes");
   await click(button("Cancel"));
   expect(host.textContent).not.toContain("Could not save Notes");
 });
@@ -231,6 +232,17 @@ it("changes the default scope and disconnects", async () => {
   await click(button("Disconnect"));
   expect(memory.disconnectProvider).toHaveBeenCalledOnce();
   expect(onConfigChange).toHaveBeenLastCalledWith(null);
+});
+
+it("announces a failed disconnect and keeps the connection", async () => {
+  memory.disconnectProvider.mockRejectedValueOnce(new Error(""));
+  const { onConfigChange } = await render(connected);
+  await click(button("Disconnect"));
+  expect(host.querySelector('[role="alert"]')?.textContent).toBe(
+    "Could not disconnect memory provider",
+  );
+  expect(onConfigChange).not.toHaveBeenCalled();
+  expect(button("Disconnect")).toBeDefined();
 });
 
 it("reads the connection and what is remembered again after a change", async () => {

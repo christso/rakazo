@@ -47,7 +47,7 @@ vi.mock("../api/api", () => ({
   selectedSpaceId: () => state.selected,
 }));
 vi.mock("../spaces/organizations", () => ({ selectSpaceAcrossOrganizations: state.selectSpace }));
-vi.mock("../integrations/integrations-cache", () => ({ integrationsCacheScope: () => null }));
+vi.mock("../api/verified-scope", () => ({ verifiedScope: () => null }));
 vi.mock("../appearance/appearance", () => ({ mobileTokens: () => ({}) }));
 vi.mock("../native/native", () => ({
   useMobileTokens: () => ({}),
@@ -58,6 +58,10 @@ vi.mock("../api/session", () => ({
   currentSessionGeneration: () => state.generation,
   subscribeSessionGeneration: () => () => undefined,
   loadVerifiedIntegrationsScope: state.verifyOwner,
+  loadVerifiedScope: async () => ({
+    apiBase: "https://app.example.test",
+    userId: "user-1",
+  }),
 }));
 vi.mock("../api/user-error", () => ({ errorText: () => "error" }));
 

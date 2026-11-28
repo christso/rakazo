@@ -20,7 +20,7 @@ import {
 } from "@rakazo/ui-web";
 import { ChevronLeft } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
+import { Link, Navigate, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { AccountAvatar } from "../../components/account/AccountAvatar";
 import { PasskeySignIn, usePasskeySignIn } from "../../components/account/PasskeySignIn";
 import { SocialSignInButtons } from "../../components/account/SocialSignInButtons";
@@ -30,6 +30,7 @@ import { authClient } from "../../lib/auth/auth";
 import type { AuthCapabilities } from "../../lib/auth/auth-capabilities";
 import { fetchAuthCapabilities } from "../../lib/auth/auth-capabilities";
 import { newAccountDestination, signInNext } from "../../lib/auth/sign-in-next";
+import { holdSsoAutoStart, ssoAutoStartAllowed } from "../../lib/auth/sso-auto-start";
 import { runSsoFlow } from "../../lib/auth/sso-flow";
 import { desktopBridge } from "../../lib/platform/desktop";
 import { clearSpaceSelection } from "../../lib/query/rpc";
@@ -41,20 +42,29 @@ const fieldClass = "mt-2";
 const CODE_LENGTH = 6;
 export const submitClass = "mt-3 w-full";
 
-export function AuthPage({ mode }: { mode: AuthMode }) {
+export function AuthPage({
+  mode,
+  at,
+}: {
+  mode: AuthMode;
+  /** Where the form lives when another screen shows it in place of sign-in's own address. */
+  at?: string;
+}) {
   const { t } = useLingui();
   const [searchParams, setSearchParams] = useSearchParams();
   const saved = useSavedAccounts();
   const location = useLocation();
   const navigate = useNavigate();
-  const chooserPath = mode === "up" ? "/sign-up" : "/sign-in";
+  const chooserPath = at ?? (mode === "up" ? "/sign-up" : "/sign-in");
   const emailStep = location.pathname === `${chooserPath}/email`;
   const next = signInNext(searchParams.get("next"));
-  // Switching between sign-in and sign-up keeps where the person was going.
-  const authQuery = new URLSearchParams();
-  if (next) authQuery.set("next", next);
-  if (searchParams.get("add") === "1") authQuery.set("add", "1");
-  const nextQuery = authQuery.size ? `?${authQuery}` : "";
+  // Switching between sign-in and sign-up keeps where the person was going; a form shown in place
+  // of sign-in also keeps the rest of its own address, such as a page app's Space.
+  const kept = new URLSearchParams(at ? searchParams : undefined);
+  kept.delete("error");
+  if (next) kept.set("next", next);
+  if (searchParams.get("add") === "1") kept.set("add", "1");
+  const nextQuery = kept.toString() ? `?${kept}` : "";
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
@@ -73,6 +83,7 @@ export function AuthPage({ mode }: { mode: AuthMode }) {
   // Signup triggers a session refresh that remounts the anonymous auth page.
   const sent = resetSent || searchParams.get("verify") === "email";
   const [reset, setReset] = useState<AuthCapabilities | null>(null);
+  const showAccountSwitch = mode !== "in" || reset?.registrationOpen !== false;
   const [capabilityError, setCapabilityError] = useState(false);
   const [capabilityAttempt, setCapabilityAttempt] = useState(0);
   const [codeSent, setCodeSent] = useState(false);
@@ -122,6 +133,26 @@ export function AuthPage({ mode }: { mode: AuthMode }) {
       active = false;
     };
   }, [mode, capabilityAttempt]);
+
+  // A server whose only way in is one provider starts it at once, on sign-up too since a first
+  // visit lands there, but never after the provider sent back an error. Desktop keeps the click,
+  // as its sign-in opens a window.
+  const onlyProvider =
+    (mode === "in" || (mode === "up" && reset?.registrationOpen !== false)) &&
+    reset &&
+    !reset.passwordAuth &&
+    providers.length === 1 &&
+    (!reset.sso || reset.sso.availability === "available") &&
+    !searchParams.has("error") &&
+    !desktopBridge()
+      ? providers[0]?.id
+      : undefined;
+  useEffect(() => {
+    // The hold also keeps this from starting twice; when it cannot be saved, nothing starts.
+    if (onlyProvider && ssoAutoStartAllowed() && holdSsoAutoStart()) {
+      void signInWithProvider(onlyProvider);
+    }
+  }, [onlyProvider]);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -273,7 +304,7 @@ export function AuthPage({ mode }: { mode: AuthMode }) {
             provider,
             newUserCallbackURL: callbackURL(newAccountDestination(next)),
             callbackURL: callbackURL(next ?? "/app"),
-            errorCallbackURL: callbackURL("/sign-in"),
+            errorCallbackURL: callbackURL(at ? `${at}${nextQuery}` : "/sign-in"),
           }),
         ["/app", "/onboarding", "/integrations/setup", "/sign-in", ...(next ? [next] : [])],
       );
@@ -285,6 +316,9 @@ export function AuthPage({ mode }: { mode: AuthMode }) {
 
   if (!sent && !reset && !capabilityError) {
     return <div className="h-full bg-background" />;
+  }
+  if (!sent && mode === "up" && reset?.registrationOpen === false) {
+    return <Navigate to={`/sign-in${nextQuery}`} replace />;
   }
 
   return (
@@ -402,23 +436,25 @@ export function AuthPage({ mode }: { mode: AuthMode }) {
                   {error}
                 </p>
               ) : null}
-              <p className="mt-8 text-center text-muted-foreground">
-                {mode === "in" ? (
-                  <>
-                    <Trans>Don’t have an account?</Trans>{" "}
-                    <Link to={`/sign-up${nextQuery}`} className="font-medium text-foreground">
-                      <Trans>Sign up</Trans>
-                    </Link>
-                  </>
-                ) : (
-                  <>
-                    <Trans>Already have an account?</Trans>{" "}
-                    <Link to={`/sign-in${nextQuery}`} className="font-medium text-foreground">
-                      <Trans>Sign in</Trans>
-                    </Link>
-                  </>
-                )}
-              </p>
+              {showAccountSwitch ? (
+                <p className="mt-8 text-center text-muted-foreground">
+                  {mode === "in" ? (
+                    <>
+                      <Trans>Don’t have an account?</Trans>{" "}
+                      <Link to={`/sign-up${nextQuery}`} className="font-medium text-foreground">
+                        <Trans>Sign up</Trans>
+                      </Link>
+                    </>
+                  ) : (
+                    <>
+                      <Trans>Already have an account?</Trans>{" "}
+                      <Link to={`/sign-in${nextQuery}`} className="font-medium text-foreground">
+                        <Trans>Sign in</Trans>
+                      </Link>
+                    </>
+                  )}
+                </p>
+              ) : null}
             </>
           ) : null}
           {reset?.passwordAuth && !chooser ? (
@@ -523,7 +559,10 @@ export function AuthPage({ mode }: { mode: AuthMode }) {
                   />
                   {mode === "in" && reset?.passwordReset ? (
                     <div className="mt-2 text-right text-body">
-                      <Link to="/forgot-password" className="font-medium text-foreground">
+                      <Link
+                        to={`/forgot-password${next ? `?next=${encodeURIComponent(next)}` : ""}`}
+                        className="font-medium text-foreground"
+                      >
                         <Trans>Forgot password?</Trans>
                       </Link>
                     </div>
@@ -586,7 +625,7 @@ export function AuthPage({ mode }: { mode: AuthMode }) {
                   <Trans>Back</Trans>
                 </Button>
               ) : null}
-              {codeStep ? null : (
+              {!codeStep && showAccountSwitch ? (
                 <p className="mt-8 text-center text-muted-foreground">
                   {mode === "in" ? (
                     <>
@@ -618,7 +657,7 @@ export function AuthPage({ mode }: { mode: AuthMode }) {
                     </Link>
                   )}
                 </p>
-              )}
+              ) : null}
             </>
           ) : null}
         </>

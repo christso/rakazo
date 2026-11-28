@@ -9,10 +9,10 @@ import {
   guestSpaceOfSelection,
   organizationOfSpace,
 } from "@rakazo/core";
+import { identityLabels } from "@rakazo/i18n/identity-display";
 import { clientCorrelationHeaders, responseCorrelation } from "@rakazo/logging/monitoring";
 import { accountRequestHeaders } from "../auth/account-identity";
 import { authClient } from "../auth/auth";
-import { identityLabels } from "../bots/identity-display";
 import { i18n } from "../locale/i18n";
 import { CLIENT_BUILD } from "../platform/client-build";
 import { reportClientError } from "../platform/monitoring";

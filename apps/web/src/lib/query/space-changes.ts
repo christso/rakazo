@@ -1,4 +1,7 @@
 import type { RpcPath, SpaceChangeKind } from "@rakazo/contracts";
+import { CAPABILITY_READ_PATHS } from "@rakazo/contracts";
+import { refreshQueriesAfterSignal } from "@rakazo/core";
+import type { QueryFilters } from "@tanstack/react-query";
 import { queryClient } from "./query";
 
 type ReadChangeKind = Exclude<SpaceChangeKind, "computerUpdates">;
@@ -9,6 +12,19 @@ type ProcedureSegments<Path extends string> = Path extends `${infer Head}/${infe
 type Procedure = ProcedureSegments<RpcPath>;
 
 const READS: Record<ReadChangeKind, readonly Procedure[]> = {
+  deploymentModel: [],
+  capabilities: [],
+  integrations: [
+    ["connections", "catalog"],
+    ["connections", "list"],
+    ["connections", "tools"],
+  ],
+  preferences: [
+    ["approvalRules", "list"],
+    ["approvalRules", "effective"],
+    ["autoReview", "get"],
+    ["spaceSettings", "overrides"],
+  ],
   runs: [
     ["runs", "list"],
     ["routines", "history"],
@@ -16,12 +32,22 @@ const READS: Record<ReadChangeKind, readonly Procedure[]> = {
   ],
   routines: [["routines", "list"]],
   computerProvider: [["computerProvider", "space", "get"]],
+  nativeCalendar: [],
   meetingCalendar: [["meetingCalendar", "upcoming"]],
   meetings: [
     ["meetings", "list"],
     ["meetings", "transcript"],
   ],
   artifacts: [["artifacts", "listSpace"]],
+  pages: [
+    ["pages", "get"],
+    ["pages", "list"],
+    ["pageReviews", "get"],
+    ["pageReviews", "list"],
+    ["pageReviews", "grants"],
+    ["pageReviews", "comments"],
+    ["pageReviews", "draft"],
+  ],
 };
 
 export const isReadChangeKind = (kind: string): kind is ReadChangeKind =>
@@ -30,11 +56,23 @@ export const isReadChangeKind = (kind: string): kind is ReadChangeKind =>
 /** Reads again what the server says may have changed; only screens showing it refetch. */
 export function spaceChanged(kind: ReadChangeKind, client = queryClient): Promise<void> {
   const procedures = READS[kind];
-  return client.invalidateQueries({
-    predicate: ({ queryKey: [path] }) =>
-      Array.isArray(path) &&
-      procedures.some(
-        (procedure) => path.slice(-procedure.length).join("/") === procedure.join("/"),
-      ),
-  });
+  const filters: QueryFilters = {
+    predicate: ({ queryKey: [path] }) => {
+      if (!Array.isArray(path)) return false;
+      if (kind === "deploymentModel") return path[2] === "me" || path[2] === "models";
+      if (
+        kind === "preferences" &&
+        (path[2] === "me" ||
+          path.slice(-3).join(".") === "models.organizationConnections.available")
+      )
+        return true;
+      if (kind === "capabilities") {
+        return CAPABILITY_READ_PATHS.some(
+          (procedure) => path.slice(-procedure.split("/").length).join("/") === procedure,
+        );
+      }
+      return procedures.some((procedure) => path.slice(-procedure.length).join(".") === procedure.join("."));
+    },
+  };
+  return refreshQueriesAfterSignal(client, filters);
 }

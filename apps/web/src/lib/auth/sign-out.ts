@@ -10,6 +10,7 @@ import { clearSpaceSelection } from "../query/rpc";
 import { accountIdentity, pauseAccountRequests } from "./account-identity";
 import { changeSavedAccount, savedAccountsUnsupported } from "./account-sessions";
 import { authClient } from "./auth";
+import { holdSsoAutoStart } from "./sso-auto-start";
 
 /** Kept across the reload after a failed sign-out, so the fresh page can say it failed. */
 export const LOG_OUT_FAILED_KEY = "rakazo.logOutFailed";
@@ -29,6 +30,9 @@ export async function signOut(destination: string, all = false): Promise<void> {
     window.location.reload();
     return;
   }
+  // Held before asking: a lost answer can still mean the session ended. A sign-out that really
+  // failed reloads signed in, which releases it.
+  holdSsoAutoStart();
   const result = await (userId && !all && !savedAccountsUnsupported()
     ? changeSavedAccount("remove", userId).then(() => ({ error: null }))
     : authClient.signOut()

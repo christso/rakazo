@@ -1,4 +1,5 @@
 import { deferred } from "@rakazo/core/test-async";
+import type { NavigationState } from "expo-router/react-navigation";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("expo-notifications", () => ({
@@ -9,7 +10,10 @@ vi.mock("expo-notifications", () => ({
   useLastNotificationResponse: vi.fn(),
 }));
 vi.mock("expo-router", () => ({
-  router: { push: vi.fn(), dismissTo: vi.fn(), replace: vi.fn() },
+  router: { dismissTo: vi.fn(), push: vi.fn(), replace: vi.fn() },
+}));
+vi.mock("expo-router/react-navigation", () => ({
+  CommonActions: { reset: (payload: unknown) => ({ type: "RESET", payload }) },
 }));
 vi.mock("../auth/account-sessions", () => ({
   selectNotificationAccount: vi.fn(),
@@ -18,20 +22,71 @@ vi.mock("../api/session", () => ({ loadSessionToken: vi.fn() }));
 vi.mock("../api/api", () => ({ currentApiBase: () => "https://api.example.test" }));
 vi.mock("../i18n/i18n", () => ({ t: (text: string) => text }));
 vi.mock("react-native", () => ({ Alert: { alert: vi.fn() } }));
-vi.mock("../settings/settings-sheet", () => ({
-  closeSettingsSheet: vi.fn(),
-}));
 
 import * as Notifications from "expo-notifications";
 import { router } from "expo-router";
 import { Alert } from "react-native";
 import { selectNotificationAccount } from "../auth/account-sessions";
-import { closeSettingsSheet } from "../settings/settings-sheet";
 import { threadRouteId } from "./notification-open";
-import { openNotificationResponse } from "./open-notification";
+import { openNotificationResponse as openResponse } from "./open-notification";
 
 type Account = Awaited<ReturnType<typeof selectNotificationAccount>>;
 const DEFAULT_ACTION = "expo.modules.notifications.actions.DEFAULT";
+const navigation = { getRootState: vi.fn<() => NavigationState>(), dispatch: vi.fn() };
+
+function openNotificationResponse(response: Notifications.NotificationResponse | null) {
+  return openResponse(response, navigation);
+}
+
+function rootWithChatStack(routes: NavigationState["routes"]): NavigationState {
+  const stack: NavigationState = {
+    stale: false,
+    type: "stack",
+    key: "app-stack",
+    index: routes.length - 1,
+    routeKeySeq: routes.length,
+    routeNames: [
+      "index",
+      "thread",
+      "group-thread",
+      "(settings)",
+      "share",
+      "new-bot",
+      "new-group",
+      "new-space",
+    ],
+    routes,
+  };
+  return {
+    stale: false,
+    type: "stack",
+    key: "expo-root",
+    index: 0,
+    routeKeySeq: 1,
+    routeNames: ["__root"],
+    routes: [{ name: "__root", key: "root-slot", state: stack }],
+  };
+}
+
+function settingsSheet(
+  pages: (string | NavigationState["routes"][number])[],
+  key = "settings",
+): NavigationState["routes"][number] {
+  const routes = pages.map((page) => (typeof page === "string" ? { name: page, key: page } : page));
+  return {
+    name: "(settings)",
+    key,
+    state: {
+      stale: false,
+      type: "stack",
+      key: "settings-stack",
+      index: routes.length - 1,
+      routeKeySeq: routes.length,
+      routeNames: routes.map(({ name }) => name),
+      routes,
+    },
+  };
+}
 
 it("routes an authenticated server alias through the configured API", async () => {
   vi.mocked(selectNotificationAccount).mockResolvedValue("selected");
@@ -65,6 +120,7 @@ function tap(id: string, data: Record<string, unknown> = { botId: "bot-1", threa
 
 beforeEach(() => {
   vi.clearAllMocks();
+  navigation.getRootState.mockReset();
 });
 
 describe("opening a notification tap", () => {
@@ -88,13 +144,137 @@ describe("opening a notification tap", () => {
     expect(router.replace).not.toHaveBeenCalled();
   });
 
-  it("closes the settings sheet before opening the thread, so it doesn't open behind it", async () => {
+  it("opens a different chat with the list as its back route", async () => {
     vi.mocked(selectNotificationAccount).mockResolvedValue("selected");
+    const inbox = { name: "index", key: "inbox" };
+    navigation.getRootState.mockReturnValue(
+      rootWithChatStack([inbox, { name: "thread", key: "prior-chat", params: { botId: "bot-2" } }]),
+    );
+
+    await expect(openNotificationResponse(tap("tap-over-other-chat"))).resolves.toBe(true);
+    expect(navigation.dispatch).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        target: "app-stack",
+        payload: expect.objectContaining({
+          index: 1,
+          routes: [inbox, { name: "thread", params: { botId: "bot-1", threadId: "thread-1" } }],
+        }),
+      }),
+    );
+  });
+
+  it("returns to the chat list after opening a notification from settings", async () => {
+    vi.mocked(selectNotificationAccount).mockResolvedValue("selected");
+    const inbox = { name: "index", key: "inbox" };
+    navigation.getRootState.mockReturnValue(
+      rootWithChatStack([
+        inbox,
+        { name: "thread", key: "prior-chat", params: { botId: "bot-2" } },
+        settingsSheet(["account", "memory-note"]),
+      ]),
+    );
 
     await expect(openNotificationResponse(tap("tap-over-settings"))).resolves.toBe(true);
-    expect(closeSettingsSheet).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(closeSettingsSheet).mock.invocationCallOrder[0]).toBeLessThan(
-      vi.mocked(router.push).mock.invocationCallOrder[0] ?? 0,
+
+    expect(navigation.dispatch).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        type: "RESET",
+        target: "app-stack",
+        payload: expect.objectContaining({
+          index: 1,
+          routes: [inbox, { name: "thread", params: { botId: "bot-1", threadId: "thread-1" } }],
+        }),
+      }),
+    );
+    expect(router.push).not.toHaveBeenCalled();
+  });
+
+  it.each([...["new-bot", "new-group", "new-space"].map((name) => ({ name, key: name }))])(
+    "opens above $key without removing it",
+    async (screen) => {
+      vi.mocked(selectNotificationAccount).mockResolvedValue("selected");
+      navigation.getRootState.mockReturnValue(
+        rootWithChatStack([
+          { name: "index", key: "inbox" },
+          { name: "thread", key: "prior-chat", params: { botId: "bot-2" } },
+          screen,
+        ]),
+      );
+
+      await expect(openNotificationResponse(tap(`tap-over-${screen.key}`))).resolves.toBe(true);
+
+      expect(navigation.dispatch).not.toHaveBeenCalled();
+      expect(router.dismissTo).not.toHaveBeenCalled();
+      expect(router.push).toHaveBeenCalledExactlyOnceWith(
+        { pathname: "/thread", params: { botId: "bot-1", threadId: "thread-1" } },
+        { dangerouslySingular: threadRouteId },
+      );
+    },
+  );
+
+  it("opens a notification above the protected share picker with ordinary chat parameters", async () => {
+    vi.mocked(selectNotificationAccount).mockResolvedValue("selected");
+    navigation.getRootState.mockReturnValue(
+      rootWithChatStack([
+        { name: "index", key: "inbox" },
+        { name: "share", key: "share" },
+      ]),
+    );
+
+    await expect(openNotificationResponse(tap("tap-over-share"))).resolves.toBe(true);
+
+    expect(navigation.dispatch).not.toHaveBeenCalled();
+    expect(router.dismissTo).not.toHaveBeenCalled();
+    expect(router.push).toHaveBeenCalledExactlyOnceWith(
+      {
+        pathname: "/thread",
+        params: { botId: "bot-1", threadId: "thread-1" },
+      },
+      { dangerouslySingular: threadRouteId },
+    );
+  });
+
+  it("keeps the open chat screen for a new delivery and makes Back return to the list", async () => {
+    vi.mocked(selectNotificationAccount).mockResolvedValue("selected");
+    const inbox = { name: "index", key: "inbox" };
+    navigation.getRootState.mockReturnValue(
+      rootWithChatStack([
+        inbox,
+        { name: "group-thread", key: "other-chat", params: { groupId: "bot-1" } },
+        { name: "thread", key: "active-chat", params: { botId: "bot-1", readOnly: "1" } },
+      ]),
+    );
+    const params = { botId: "bot-1", threadId: "thread-1", spaceId: "space-1" };
+
+    await expect(openNotificationResponse(tap("active-chat", params))).resolves.toBe(true);
+
+    expect(navigation.dispatch).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        type: "RESET",
+        target: "app-stack",
+        payload: expect.objectContaining({
+          index: 1,
+          routes: [inbox, { name: "thread", key: "active-chat", params }],
+        }),
+      }),
+    );
+    expect(router.dismissTo).not.toHaveBeenCalled();
+    expect(router.push).not.toHaveBeenCalled();
+  });
+
+  it("keeps a group opened by a deep link and adds a chat-list back route", async () => {
+    vi.mocked(selectNotificationAccount).mockResolvedValue("selected");
+    const params = { groupId: "group-1", threadId: "thread-2" };
+    const group = { name: "group-thread", key: "active-group", params };
+    navigation.getRootState.mockReturnValue(rootWithChatStack([group]));
+
+    await expect(openNotificationResponse(tap("active-group", params))).resolves.toBe(true);
+
+    expect(navigation.dispatch).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        target: "app-stack",
+        payload: expect.objectContaining({ index: 1, routes: [{ name: "index" }, group] }),
+      }),
     );
   });
 
@@ -107,10 +287,11 @@ describe("opening a notification tap", () => {
     release.resolve("selected");
     await expect(first).resolves.toBe(true);
     await expect(second).resolves.toBe(false);
+    expect(router.dismissTo).not.toHaveBeenCalled();
     expect(router.push).toHaveBeenCalledTimes(1);
     expect(router.push).toHaveBeenCalledWith(
       { pathname: "/thread", params: { botId: "bot-1", threadId: "thread-1" } },
-      { dangerouslySingular: threadRouteId },
+      { dangerouslySingular: threadRouteId, withAnchor: true },
     );
     expect(Notifications.clearLastNotificationResponse).not.toHaveBeenCalled();
   });
@@ -124,6 +305,7 @@ describe("opening a notification tap", () => {
     });
     vi.mocked(Notifications.getLastNotificationResponse).mockReturnValue(response);
     await expect(openNotificationResponse(response)).resolves.toBe(false);
+    expect(router.dismissTo).not.toHaveBeenCalled();
     expect(router.push).not.toHaveBeenCalled();
     expect(Notifications.clearLastNotificationResponse).toHaveBeenCalledTimes(1);
 
@@ -168,7 +350,7 @@ describe("opening a notification tap", () => {
     expect(router.push).toHaveBeenCalledTimes(1);
     expect(router.push).toHaveBeenCalledWith(
       { pathname: "/thread", params: { botId: "bot-2", threadId: "thread-2" } },
-      { dangerouslySingular: threadRouteId },
+      { dangerouslySingular: threadRouteId, withAnchor: true },
     );
   });
 

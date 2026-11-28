@@ -7,7 +7,7 @@ import type {
   WebSearchHit,
   WebSearchRequest,
 } from "@rakazo/adapter-kit";
-import { JSDOM } from "jsdom";
+import { isToolImage } from "../../../media/tool-result-image.js";
 import {
   clampMaxChars,
   clampMaxResults,
@@ -15,7 +15,7 @@ import {
   pageWindow,
 } from "../../../web/web-limits.js";
 import type { ResolveHostname } from "../../../web/web-ssrf.js";
-import { fetchSafeWebText } from "../../../web/web-ssrf.js";
+import { decodeWebText, fetchSafeWebBytes, fetchSafeWebText } from "../../../web/web-ssrf.js";
 
 export {
   clampMaxChars,
@@ -32,7 +32,7 @@ const DEFAULT_SEARCH_ENDPOINT = "https://html.duckduckgo.com/html/";
 export type KeylessHtmlSearchBackend = {
   id: string;
   endpoint: string;
-  parse(html: string, maxResults: number): WebSearchHit[];
+  parse(html: string, maxResults: number): Promise<WebSearchHit[]>;
 };
 
 export type KeylessHttpWebOptions = {
@@ -108,7 +108,7 @@ export class KeylessHttpWebProvider implements WebProvider {
   async fetch(request: WebFetchRequest, context: AdapterContext): Promise<WebFetchResult> {
     const maxChars = clampMaxChars(request.maxChars);
     const offset = clampOffset(request.offset);
-    const { url, body, contentType } = await fetchSafeWebText(request.url, {
+    const response = await fetchSafeWebBytes(request.url, {
       fetch: this.fetchImpl,
       resolveHostname: this.resolveHostname,
       timeoutMs: this.fetchTimeoutMs,
@@ -116,15 +116,22 @@ export class KeylessHttpWebProvider implements WebProvider {
       userAgent: this.userAgent,
       signal: request.signal ?? context.signal,
     });
-    if (!body.trim()) throw new Error(`Failed to fetch content from ${url}`);
+    const { url, contentType } = response;
+    // The bytes decide, not the label: servers often send pictures as octet-stream.
+    if (isToolImage(response.body))
+      return { url, title: "", text: "", truncated: false, image: response.body };
     const mediaType = contentType?.split(";", 1)[0]?.trim().toLowerCase();
+    if (mediaType?.startsWith("image/") && mediaType !== "image/svg+xml")
+      throw new Error(`${url} is an image in a format that cannot be read (${mediaType}).`);
+    const body = decodeWebText(response.body, contentType);
+    if (!body.trim()) throw new Error(`Failed to fetch content from ${url}`);
     const extracted =
       mediaType === "text/plain" ||
       mediaType === "text/markdown" ||
       mediaType === "application/json" ||
       mediaType?.endsWith("+json")
         ? { title: "Untitled", text: body }
-        : extractReadableText(body, url);
+        : await extractReadableText(body, url);
     return {
       url,
       title: extracted.title,
@@ -133,7 +140,11 @@ export class KeylessHttpWebProvider implements WebProvider {
   }
 }
 
-export function parseDuckDuckGoResults(html: string, maxResults: number): WebSearchHit[] {
+export async function parseDuckDuckGoResults(
+  html: string,
+  maxResults: number,
+): Promise<WebSearchHit[]> {
+  const { JSDOM } = await import("jsdom");
   const dom = new JSDOM(html, { url: DEFAULT_SEARCH_ENDPOINT });
   const document = dom.window.document;
   const results: WebSearchHit[] = [];
@@ -169,8 +180,11 @@ function unwrapDuckDuckGoUrl(rawUrl: string): string {
   }
 }
 
-export function extractReadableText(html: string, url: string): { title: string; text: string } {
-  const readable = extractWithReadability(html, url);
+export async function extractReadableText(
+  html: string,
+  url: string,
+): Promise<{ title: string; text: string }> {
+  const readable = await extractWithReadability(html, url);
   if (readable) return readable;
   return stripHtmlFallback(html);
 }
@@ -179,7 +193,11 @@ export function extractReadableText(html: string, url: string): { title: string;
 // tens of thousands of elements), freezing the server. Bigger pages take the linear fallback.
 const MAX_READABILITY_ELEMENTS = 10_000;
 
-function extractWithReadability(html: string, url: string): { title: string; text: string } | null {
+async function extractWithReadability(
+  html: string,
+  url: string,
+): Promise<{ title: string; text: string } | null> {
+  const { JSDOM } = await import("jsdom");
   try {
     const dom = new JSDOM(html, { url });
     const article = new Readability(dom.window.document, {
@@ -198,10 +216,11 @@ function extractWithReadability(html: string, url: string): { title: string; tex
 }
 
 /** Read visible text before and after removing elements selected by the caller. */
-export function htmlTextWithOmissions(
+export async function htmlTextWithOmissions(
   html: string,
   omitSelector: string,
-): { text: string; filteredText: string } {
+): Promise<{ text: string; filteredText: string }> {
+  const { JSDOM } = await import("jsdom");
   // JSDOM runs no scripts and loads nothing unless asked to.
   const { document } = new JSDOM(html).window;
   for (const element of document.querySelectorAll("head, script, style, template")) {

@@ -5,6 +5,7 @@ import {
   LoginFieldLabels,
   OneTimeCodeTarget,
 } from "../bots/bot-secrets.js";
+import { FEEDBACK_KINDS } from "../bots/builtin-tools.js";
 import { Id, ThinkingLevelSchema } from "../ids.js";
 import { AgentImportSetupItemSchema } from "../integrations/agent-import-setup.js";
 import { McpTransportSchema } from "../integrations/mcp.js";
@@ -49,8 +50,21 @@ const ChartBlock = z
   });
 
 /** What a routine row in the chat says happened. */
-export const RoutineEventChange = z.enum(["created", "updated", "enabled", "disabled", "deleted"]);
+export const RoutineEventChange = z.enum([
+  "created",
+  "updated",
+  "enabled",
+  "disabled",
+  "deleted",
+  "ended",
+]);
 export type RoutineEventChange = z.infer<typeof RoutineEventChange>;
+
+/**
+ * An option added to a new user's first bot's opening question: clients open the agent import
+ * instead of answering with it, and hide it where there is no importer.
+ */
+export const AGENT_IMPORT_ASK_ACTION_ID = "agent-import";
 
 export const SecretAskPurpose = z.enum(["otp", "password", "api_key"]);
 export type SecretAskPurpose = z.infer<typeof SecretAskPurpose>;
@@ -80,6 +94,32 @@ export const AskReceipt = z.object({
 });
 export type AskReceipt = z.infer<typeof AskReceipt>;
 
+// In display order, with the potentially long instructions last.
+export const RoutineApprovalField = z.enum([
+  "active",
+  "name",
+  "schedule",
+  "timezone",
+  "nextRun",
+  "inChat",
+  "prompt",
+]);
+export type RoutineApprovalField = z.infer<typeof RoutineApprovalField>;
+
+const RoutineApprovalValue = z.union([z.string(), z.boolean(), z.null()]);
+const RoutineApprovalChange = z.object({
+  field: RoutineApprovalField,
+  before: RoutineApprovalValue,
+  after: RoutineApprovalValue,
+});
+export type RoutineApprovalChange = z.infer<typeof RoutineApprovalChange>;
+
+const RoutineUpdateApproval = z.object({
+  changes: z.array(RoutineApprovalChange).min(1).max(RoutineApprovalField.options.length),
+  reason: z.string().optional(),
+});
+export type RoutineUpdateApproval = z.infer<typeof RoutineUpdateApproval>;
+
 export const MessageBlock = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("text"), text: z.string() }),
   z.object({
@@ -106,6 +146,8 @@ export const MessageBlock = z.discriminatedUnion("kind", [
       .optional(),
     detail: z.string().optional(),
     detailFormat: z.enum(["text", "code"]).optional(),
+    /** A proposed routine edit. The detail remains readable by clients using the plain card. */
+    routineUpdate: RoutineUpdateApproval.optional(),
     /** On a payment card, the order as the page shows it, drawn as a receipt in place of `detail`. */
     receipt: AskReceipt.optional(),
     input: z.enum(["text", "secret"]).optional(),
@@ -157,6 +199,7 @@ export const MessageBlock = z.discriminatedUnion("kind", [
     /** Inline app authorization card: logo, name, one-line
         description, and an Authorize button that flips to connected. */
     kind: z.literal("app_connect"),
+    organizationConnectionId: z.string().optional(),
     /** Absent on cards stored before connector ids; the server reads those as its default. */
     connectorId: z.string().optional(),
     provider: z.string(),
@@ -201,6 +244,12 @@ export const MessageBlock = z.discriminatedUnion("kind", [
     durationSeconds: z.number().int().nonnegative().optional(),
   }),
   z.object({ kind: z.literal("meta"), text: z.string() }),
+  z.object({
+    kind: z.literal("feedback_receipt"),
+    reportId: Id,
+    reportKind: z.enum(FEEDBACK_KINDS),
+    description: z.string(),
+  }),
   /**
    * A routine was created, changed, switched on or off, or deleted. The name only, never the
    * prompt, and no `text` field on purpose: clients word the row, and the model never sees it.
@@ -209,6 +258,8 @@ export const MessageBlock = z.discriminatedUnion("kind", [
     kind: z.literal("routine_event"),
     change: RoutineEventChange,
     name: z.string().max(200),
+    /** A webhook starts the routine: the creator's client can show its URL and the bot's key. */
+    webhook: z.literal(true).optional(),
   }),
   /**
    * Marks a user message as what woke the bot (a webhook, an email, a chat message). Its text
@@ -419,6 +470,12 @@ export type ToolStepCall = z.infer<typeof ToolStepCallSchema>;
  */
 export const ToolHistorySchema = z.object({
   steps: z.array(z.object({ tool: z.string(), calls: z.array(ToolStepCallSchema) }).nullable()),
+  /**
+   * The turn this reply ended, exactly as the model was sent it and answered (opaque, written by
+   * the runtime), so the bot's next turn can send it unchanged and the provider can reuse it
+   * from its prompt cache.
+   */
+  transcript: z.string().optional(),
 });
 export type ToolHistory = z.infer<typeof ToolHistorySchema>;
 /** A step as a run replays it: what the UI shows, with its tool and kept calls when it has them. */
@@ -426,3 +483,26 @@ export type HistoryToolStep = Extract<MessageBlock, { kind: "steps" }>["steps"][
   tool?: string;
   calls?: ToolStepCall[];
 };
+
+/**
+ * The run of consecutive pictures that starts at `index`, or null when `index` is not a picture or
+ * not the first of its run. A lone picture is a run of one. Web and mobile both group a message's
+ * pictures by it; `isPicture` narrows which image blocks a client draws as pictures.
+ */
+export function consecutiveImageRun<T extends { kind: string }>(
+  items: readonly T[],
+  index: number,
+  isPicture: (item: T) => boolean = () => true,
+): (T & { kind: "image" })[] | null {
+  const matches = (item: T | undefined): item is T & { kind: "image" } =>
+    item?.kind === "image" && isPicture(item);
+  const first = items[index];
+  if (!matches(first) || matches(items[index - 1])) return null;
+  const pictures = [first];
+  for (let at = index + 1; at < items.length; at += 1) {
+    const item = items[at];
+    if (!matches(item)) break;
+    pictures.push(item);
+  }
+  return pictures;
+}

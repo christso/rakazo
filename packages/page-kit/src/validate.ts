@@ -1,5 +1,6 @@
 /// <reference path="./sucrase-parser.d.ts" />
-import { PAGE_SOURCE_MAX_BYTES, pageSourceBytes } from "@rakazo/contracts";
+import type { PageAbility } from "@rakazo/contracts";
+import { PAGE_ABILITIES, PAGE_SOURCE_MAX_BYTES, pageSourceBytes } from "@rakazo/contracts";
 // Sucrase's own parser, pinned with it, so the check reads the same tokens the compiler does.
 import { parse } from "sucrase/dist/parser/index.js";
 import { IdentifierRole } from "sucrase/dist/parser/tokenizer/index.js";
@@ -12,6 +13,7 @@ import {
   PAGE_KIT_MODULE,
   PAGE_MODULES,
 } from "./components.js";
+import { closeIconNames, isPageIcon } from "./icon-names.js";
 import { selfRenderingKitNames, selfRenderingMessage } from "./shadow.js";
 
 export { PAGE_KIT_GUIDE } from "./guide.js";
@@ -19,12 +21,19 @@ export { PAGE_KIT_GUIDE } from "./guide.js";
 const MAX_REPORTED_ERRORS = 20;
 
 /**
- * A page that passes carries its viewer code, compiled once here and stored with the version.
- * Warnings do not stop the save; they tell the bot about text the reader would see verbatim.
+ * A page that passes carries its viewer code, compiled once here and stored with the version,
+ * and the abilities its source uses. Warnings do not stop the save; they tell the bot about text
+ * the reader would see verbatim.
  */
 type PageSourceCheck =
-  | { ok: true; code: string; warnings?: string[] }
+  | { ok: true; code: string; abilities: PageAbility[]; warnings?: string[] }
   | { ok: false; errors: string[] };
+
+/** The kit helpers each ability comes from. */
+const ABILITY_HELPERS: ReadonlyMap<string, PageAbility> = new Map([
+  ["askBot", "ask"],
+  ["notify", "notify"],
+]);
 
 const KIT_NAMES: ReadonlySet<string> = new Set(PAGE_KIT_COMPONENTS);
 // Built once; the kit is long enough that the checker gives up on joining the literal tuple.
@@ -44,6 +53,7 @@ const REACT_HOOKS: ReadonlySet<string> = new Set([
   "useInsertionEffect",
   "useLayoutEffect",
   "useMemo",
+  "usePageState",
   "useReducer",
   "useRef",
   "useSource",
@@ -94,9 +104,24 @@ export function checkPageSource(source: string): PageSourceCheck {
   const tags = new Map<string, number>();
   let defaults = 0;
   const blocked = new Set<string>();
+  let tag = "";
+  const icons: { name: string; line: number; tag: string }[] = [];
   tokens.forEach((token, index) => {
     const text = source.slice(token.start, token.end);
     const line = lineOf(token.start);
+    const iconOf =
+      token.type === TokenType.string ? iconTarget(tokens, index, source, tag) : undefined;
+    if (iconOf !== undefined) icons.push({ name: text.slice(1, -1), line, tag: iconOf });
+    if (
+      token.type === TokenType.string &&
+      /^[a-z]/.test(tag) &&
+      text.slice(1).startsWith("image:") &&
+      PICTURE_ATTRIBUTES.has(attributeOf(tokens, index, source))
+    ) {
+      warnings.push(
+        `line ${line}: <${tag}> does not load "${text.slice(1, -1)}"; only kit components resolve image: names, so use <Image src="${text.slice(1, -1)}" />.`,
+      );
+    }
     if (token.type === TokenType._import) {
       const problem = importProblem(tokens, index, source);
       if (problem) errors.push(`line ${line}: ${problem}`);
@@ -120,6 +145,7 @@ export function checkPageSource(source: string): PageSourceCheck {
       const nameToken =
         tokens[index + 1]?.type === TokenType.jsxName ? tokens[index + 1] : undefined;
       const name = nameToken ? source.slice(nameToken.start, nameToken.end) : "";
+      tag = name;
       // A lowercase first letter makes an element, and HTML reads its name in any case.
       const element = /^[a-z]/.test(name) ? name.toLowerCase() : "";
       if (BLOCKED_ELEMENTS.has(element) && !blocked.has(element)) {
@@ -183,6 +209,10 @@ export function checkPageSource(source: string): PageSourceCheck {
   for (const { name, start } of selfRenderingKitNames(tokens, source)) {
     errors.push(`line ${lineOf(start)}: ${selfRenderingMessage(name)}`);
   }
+  for (const icon of icons) {
+    if (!icon.name || isPageIcon(icon.name) || declared.has(icon.tag)) continue;
+    warnings.push(`line ${icon.line}: ${unknownIconMessage(icon.name)}`);
+  }
   for (const [name, line] of tags) {
     if (GIVEN.has(name) || declared.has(name)) continue;
     errors.push(
@@ -211,12 +241,52 @@ export function checkPageSource(source: string): PageSourceCheck {
     return { ok: false, errors: [syntaxErrorText(error)] };
   }
   const code = pageViewerCode(source, compiled);
+  const abilities = abilitiesIn(tokens, source);
   return warnings.length
-    ? { ok: true, code, warnings: warnings.slice(0, MAX_REPORTED_ERRORS) }
-    : { ok: true, code };
+    ? { ok: true, code, abilities, warnings: warnings.slice(0, MAX_REPORTED_ERRORS) }
+    : { ok: true, code, abilities };
 }
 
 type Tokens = ReturnType<typeof parse>["tokens"];
+
+/** An identifier as JavaScript reads it: `ask\u0042ot` names askBot. */
+function identifierName(text: string): string {
+  return text.includes("\\")
+    ? text.replace(/\\u(?:\{([0-9a-fA-F]+)\}|([0-9a-fA-F]{4}))/g, (_, braced, plain) =>
+        String.fromCodePoint(Number.parseInt(braced ?? plain, 16)),
+      )
+    : text;
+}
+
+/** The abilities a page's source uses, for a version saved without the full check. */
+export function pageAbilities(source: string): PageAbility[] {
+  try {
+    return abilitiesIn(parse(source, true, false, false).tokens, source);
+  } catch {
+    // Source the parser rejects cannot run in the viewer, so it uses nothing.
+    return [];
+  }
+}
+
+/**
+ * Counts every mention of an ability's helper, so a page never uses one it did not list. A
+ * namespace import of the kit can reach any helper by a computed name, so it counts as all.
+ */
+function abilitiesIn(tokens: Tokens, source: string): PageAbility[] {
+  const found = new Set<PageAbility>();
+  tokens.forEach((token, index) => {
+    if (token.type === TokenType.star && tokens[index - 1]?.type === TokenType._import) {
+      const from = tokens.slice(index).find((next) => next.type === TokenType.string);
+      if (from && source.slice(from.start + 1, from.end - 1) === PAGE_KIT_MODULE)
+        for (const ability of PAGE_ABILITIES) found.add(ability);
+      return;
+    }
+    if (token.type !== TokenType.name) return;
+    const ability = ABILITY_HELPERS.get(identifierName(source.slice(token.start, token.end)));
+    if (ability) found.add(ability);
+  });
+  return PAGE_ABILITIES.filter((ability) => found.has(ability));
+}
 
 // Plain HTML and SVG elements are fine for custom visuals; these would load or run something
 // else, which the viewer's sandbox blocks anyway, so the page would show a hole.
@@ -276,6 +346,48 @@ function importProblem(tokens: Tokens, start: number, source: string): string | 
   return unknown.length
     ? `${unknown.join(", ")} ${unknown.length > 1 ? "are" : "is"} not in the kit. Use ${KIT_LIST}.`
     : undefined;
+}
+
+function iconTarget(
+  tokens: Tokens,
+  index: number,
+  source: string,
+  tag: string,
+): string | undefined {
+  const braced =
+    tokens[index - 1]?.type === TokenType.braceL && tokens[index + 1]?.type === TokenType.braceR;
+  const at = braced ? index - 1 : index;
+  const key = tokens[at - 2];
+  if (!key) return undefined;
+  const word = source.slice(key.start, key.end);
+  if (tokens[at - 1]?.type === TokenType.eq && key.type === TokenType.jsxName) {
+    const kitProp = (word === "icon" && tag === "Callout") || (word === "name" && tag === "Icon");
+    return kitProp ? tag : undefined;
+  }
+  const objectKey =
+    !braced &&
+    tokens[index - 1]?.type === TokenType.colon &&
+    (key.type === TokenType.name || key.type === TokenType.string) &&
+    word.replace(/^["']|["']$/g, "") === "icon";
+  return objectKey ? "" : undefined;
+}
+
+function unknownIconMessage(name: string): string {
+  const close = closeIconNames(name);
+  return `no kit icon is named "${name}", and an unknown icon draws nothing.${close.length ? ` Did you mean ${close.map((icon) => `"${icon}"`).join(", ")}?` : " Pick one from the icon list in the guide."}`;
+}
+
+// Attributes a plain element loads a picture from.
+const PICTURE_ATTRIBUTES = new Set(["src", "poster", "href"]);
+
+/** The attribute a string is the value of, written name="x" or name={"x"}; "" otherwise. */
+function attributeOf(tokens: Tokens, index: number, source: string): string {
+  const braced =
+    tokens[index - 1]?.type === TokenType.braceL && tokens[index + 1]?.type === TokenType.braceR;
+  const at = braced ? index - 1 : index;
+  if (!isJsxAttributeValue(tokens, at)) return "";
+  const name = tokens[at - 2]!;
+  return source.slice(name.start, name.end);
 }
 
 function isJsxAttributeValue(tokens: Tokens, index: number): boolean {

@@ -1,13 +1,24 @@
 import type { SkillRecord, SkillSource } from "@rakazo/core";
 import {
   buildSkillMd,
+  ClientError,
   findSkillByName,
   isSkillReadOnly,
   mergeBuiltinSkills,
   parseSkillMd,
+  renameRoutineSkillMentions,
+  routineSkillMentionSequence,
 } from "@rakazo/core";
-import type { PrismaClient } from "@rakazo/db";
-import { availableInSpace } from "@rakazo/db";
+import type { Prisma, PrismaClient, ThreadEvents } from "@rakazo/db";
+import {
+  AVAILABILITY_SELECT,
+  assertNameFreeWhereAvailable,
+  availableInSpace,
+  lockOwner,
+  personalOrOrganizationItemIn,
+  runAsSystemInTransaction,
+  spaceAvailability,
+} from "@rakazo/db";
 import { BUILTIN_AGENT_SKILLS } from "./builtin-skills.prompt.js";
 
 export const SKILL_TOOL_NAMES = new Set([
@@ -33,6 +44,7 @@ type AgentSkillRow = {
   description: string;
   content: string;
   source: string;
+  organizationId?: string | null;
 };
 
 function asSource(value: string): SkillSource {
@@ -48,7 +60,7 @@ function toRecord(row: AgentSkillRow): SkillRecord & { id: string } {
     description: row.description,
     content: row.content,
     source,
-    readOnly: isSkillReadOnly(source),
+    readOnly: isSkillReadOnly(source) || Boolean(row.organizationId),
   };
 }
 
@@ -82,46 +94,132 @@ function rejectInvalidSkillFields(name: string, description: string): string | u
   return undefined;
 }
 
-/**
- * A bot changes only skills that live in its own space alone: writing this space's details into
- * a skill other spaces read would carry them across the boundary.
- */
-function onlyInSpace(owner: SkillOwner) {
-  return {
-    spaceId: owner.spaceId,
-    userId: owner.userId,
-    allSpaces: false,
-    availableIn: { none: {} },
-  };
+/** Repairs references in the same transaction as the skill rename. */
+export async function renameSkillInRoutines(
+  db: Pick<Prisma.TransactionClient, "agentSkill" | "routine">,
+  scope: { organizationId: string } | { userId: string; spaceIds: string[] | null },
+  skillId: string,
+  from: string,
+  to: string,
+): Promise<string[]> {
+  if (from.toLowerCase() === to.toLowerCase()) return [];
+  const routines = await db.routine.findMany({
+    where: {
+      ...("organizationId" in scope
+        ? { space: { organizationId: scope.organizationId } }
+        : {
+            userId: scope.userId,
+            ...(scope.spaceIds ? { spaceId: { in: scope.spaceIds } } : {}),
+          }),
+      prompt: { contains: `@${from.trim()}`, mode: "insensitive" },
+    },
+    select: { id: true, spaceId: true, userId: true, prompt: true },
+  });
+  const catalogs = new Map<string, SkillKey[]>();
+  const changed = new Set<string>();
+  for (const routine of routines) {
+    const key = JSON.stringify([routine.userId, routine.spaceId]);
+    let rows = catalogs.get(key);
+    if (!rows) {
+      rows = await db.agentSkill.findMany({
+        ...visibleSkillQuery(routine),
+        select: { id: true, name: true },
+      });
+      catalogs.set(key, rows);
+    }
+    if (!rows.some((row) => row.id === skillId)) continue;
+
+    const builtins = builtinAgentSkillRecords();
+    const before = mergeBuiltinSkills(
+      builtins,
+      rows.map((row) => (row.id === skillId ? { ...row, name: from } : row)),
+    );
+    if (findSkillByName(before, from)?.id !== skillId) continue;
+
+    const names = before.map(({ name }) => name.trim().toLowerCase());
+    const renames = new Map(names.map((name) => [name, name]));
+    renames.set(from.trim().toLowerCase(), to);
+    const prompt = renameRoutineSkillMentions(routine.prompt, renames);
+    if (prompt === routine.prompt) continue;
+
+    const after = mergeBuiltinSkills(builtins, rows);
+    const mentions = (text: string, skills: SkillKey[]) =>
+      routineSkillMentionSequence(
+        text,
+        skills.map((skill) => skill.name),
+      ).map((name) => findSkillByName(skills, name)?.id);
+    const previous = mentions(routine.prompt, before);
+    const next = mentions(prompt, after);
+    if (previous.length !== next.length || previous.some((id, index) => id !== next[index])) {
+      throw new ClientError("CONFLICT", "That name would change which skills a routine uses.");
+    }
+
+    // A prompt edited since the read is left alone rather than overwritten.
+    const { count } = await db.routine.updateMany({
+      where: { id: routine.id, prompt: routine.prompt },
+      data: { prompt },
+    });
+    if (count > 0) changed.add(routine.spaceId);
+  }
+  return [...changed];
 }
 
-const SHARED_SKILL_ERROR =
-  "Could not change this skill. A skill available in other spaces can only be changed by the user.";
+/** Tells clients showing routines that a rename changed them; call after the commit. */
+export async function signalRenamedRoutines(
+  events: Pick<ThreadEvents, "publishSpaceChange"> | undefined,
+  spaceIds: readonly string[],
+): Promise<void> {
+  for (const spaceId of spaceIds) await events?.publishSpaceChange?.(spaceId, "routines");
+}
 
-export async function listAgentSkillRecords(
+function visibleSkillQuery(owner: SkillOwner) {
+  return {
+    where: personalOrOrganizationItemIn(owner),
+    orderBy: [{ organizationId: { sort: "asc", nulls: "first" } }, { name: "asc" }, { id: "asc" }],
+  } satisfies Prisma.AgentSkillFindManyArgs;
+}
+
+async function listVisibleSkillRecords(
   prisma: PrismaClient,
   owner: SkillOwner,
 ): Promise<Array<SkillRecord & { id: string }>> {
   const rows = await prisma.agentSkill.findMany({
-    where: availableInSpace(owner),
+    ...visibleSkillQuery(owner),
     // Reference files are read one at a time through skill_read, never with the catalog.
     omit: { files: true },
-    orderBy: [{ name: "asc" }, { id: "asc" }],
   });
   return mergeBuiltinSkills(builtinAgentSkillRecords(), rows.map(toRecord));
 }
 
-async function findOwnedSkill(
-  prisma: PrismaClient,
-  owner: SkillOwner,
-  input: { skillId?: string; name?: string },
-): Promise<(SkillRecord & { id: string }) | null> {
-  const skills = await listAgentSkillRecords(prisma, owner);
-  if (input.skillId) {
-    return skills.find((skill) => skill.id === input.skillId) ?? null;
-  }
-  if (input.name) return findSkillByName(skills, input.name) ?? null;
-  return null;
+export async function listAgentSkillRecords(prisma: PrismaClient, owner: SkillOwner) {
+  const records = await listVisibleSkillRecords(prisma, owner);
+  const seen = new Set<string>();
+  return records.filter((skill) => {
+    const name = skill.name.trim().toLowerCase();
+    if (seen.has(name)) return false;
+    seen.add(name);
+    return true;
+  });
+}
+
+type SkillKey = Pick<AgentSkillRow, "id" | "name">;
+type SkillLookup = { skillId?: string; name?: string };
+
+function matchSkill<T extends SkillKey>(skills: readonly T[], input: SkillLookup) {
+  if (input.skillId) return skills.find((skill) => skill.id === input.skillId);
+  return input.name ? findSkillByName(skills, input.name) : undefined;
+}
+
+async function findOwnedSkill(prisma: PrismaClient, owner: SkillOwner, input: SkillLookup) {
+  return matchSkill(await listVisibleSkillRecords(prisma, owner), input);
+}
+
+async function findPersonalSkillName(prisma: PrismaClient, owner: SkillOwner, name: string) {
+  const rows = await prisma.agentSkill.findMany({
+    where: { ...availableInSpace(owner), organizationId: null },
+    select: { id: true, name: true },
+  });
+  return findSkillByName(mergeBuiltinSkills<SkillKey>(builtinAgentSkillRecords(), rows), name);
 }
 
 /** The text files stored beside a skill's SKILL.md, keyed by relative path. */
@@ -139,14 +237,39 @@ export async function skillReadFromTool(
   owner: SkillOwner,
   input: { name?: string; skillId?: string; file?: string },
 ): Promise<Record<string, unknown>> {
-  const skill = await findOwnedSkill(prisma, owner, input);
-  if (!skill) return { error: "Skill not found." };
-  const row = skill.id.startsWith("builtin:")
+  const keys = await prisma.agentSkill.findMany({
+    ...visibleSkillQuery(owner),
+    select: { id: true, name: true },
+  });
+  // Builtins already have a document. Stored entries have only a name and ID here.
+  const catalog = mergeBuiltinSkills<SkillKey | (SkillRecord & { id: string })>(
+    builtinAgentSkillRecords(),
+    keys,
+  );
+  const key = matchSkill(catalog, input);
+  if (!key) return { error: "Skill not found." };
+
+  const builtin = "readOnly" in key ? key : undefined;
+  const row = builtin
     ? null
     : await prisma.agentSkill.findFirst({
-        where: { id: skill.id, ...availableInSpace(owner) },
-        select: { files: true },
+        where: {
+          id: key.id,
+          ...personalOrOrganizationItemIn(owner),
+          ...(input.skillId ? {} : { name: key.name }),
+        },
+        select: {
+          id: true,
+          name: true,
+          description: true,
+          source: true,
+          organizationId: true,
+          content: true,
+          files: true,
+        },
       });
+  const skill = builtin ?? (row && toRecord(row));
+  if (!skill) return { error: "Skill not found." };
   const files = skillFiles(row?.files);
   const paths = Object.keys(files).sort();
   const wanted = input.file?.trim().replace(/^\.\//, "");
@@ -197,7 +320,7 @@ export async function skillCreateFromTool(
   const oversized = rejectOversizedContent(content);
   if (oversized) return { error: oversized };
 
-  const existing = await findOwnedSkill(prisma, owner, { name });
+  const existing = await findPersonalSkillName(prisma, owner, name);
   if (existing) return { error: `A skill named "${existing.name}" already exists.` };
 
   try {
@@ -234,6 +357,7 @@ export async function skillUpdateFromTool(
     body?: string;
     content?: string;
   },
+  events?: Pick<ThreadEvents, "publishSpaceChange">,
 ): Promise<Record<string, unknown>> {
   const existing = await findOwnedSkill(prisma, owner, {
     skillId: input.skillId,
@@ -277,8 +401,9 @@ export async function skillUpdateFromTool(
   const oversized = rejectOversizedContent(nextContent);
   if (oversized) return { error: oversized };
 
+  const renamed = nextName !== existing.name;
   if (nextName.toLowerCase() !== existing.name.toLowerCase()) {
-    const clash = await findOwnedSkill(prisma, owner, { name: nextName });
+    const clash = await findPersonalSkillName(prisma, owner, nextName);
     if (clash && clash.id !== existing.id) {
       return { error: `A skill named "${clash.name}" already exists.` };
     }
@@ -286,17 +411,58 @@ export async function skillUpdateFromTool(
 
   try {
     // Re-scope mutate to owner + user source so a stale id cannot cross tenants.
-    const updated = await prisma.agentSkill.updateMany({
-      where: { id: existing.id, ...onlyInSpace(owner), source: "user" },
-      data: {
-        name: nextName,
-        description: nextDescription,
-        content: nextContent,
-      },
+    const changed = await prisma.$transaction(async (tx) => {
+      // Held before the read, so a change to where the skill is available can't slip in between.
+      if (renamed) await lockOwner(tx, owner.userId, "names:skill");
+      const row = await tx.agentSkill.findFirst({
+        where: { id: existing.id, ...availableInSpace(owner) },
+        select: { spaceId: true, allSpaces: true, availableIn: AVAILABILITY_SELECT },
+      });
+      if (!row) return null;
+      const availability = spaceAvailability(row);
+      if (nextName.toLowerCase() !== existing.name.toLowerCase()) {
+        await assertNameFreeWhereAvailable(tx, "skill", owner, nextName, availability, existing.id);
+      }
+      const updated = await tx.agentSkill.updateMany({
+        where: {
+          id: existing.id,
+          ...availableInSpace(owner),
+          source: "user",
+          // A rename that lost a race must not leave routines pointing at a stale name.
+          name: existing.name,
+        },
+        data: {
+          name: nextName,
+          description: nextDescription,
+          content: nextContent,
+        },
+      });
+      if (updated.count !== 1) return null;
+      if (!renamed) return [];
+      // The owner's routines in the other spaces the skill is available in sit outside this run's
+      // space, so read them by owner as the settings screen does.
+      return runAsSystemInTransaction(
+        tx,
+        "owner's routines in the spaces a renamed skill is available in",
+        () =>
+          renameSkillInRoutines(
+            tx,
+            {
+              userId: owner.userId,
+              spaceIds: availability.allSpaces ? null : availability.spaceIds,
+            },
+            existing.id,
+            existing.name,
+            nextName,
+          ),
+      );
     });
-    if (updated.count !== 1) return { error: SHARED_SKILL_ERROR };
+    if (!changed)
+      return { error: "Could not update skill. It may have changed; read it and try again." };
+    await signalRenamedRoutines(events, changed);
     return { ok: true, id: existing.id, name: nextName, description: nextDescription };
-  } catch {
+  } catch (error) {
+    if (error instanceof ClientError) return { error: error.message };
     return { error: "Could not update skill." };
   }
 }
@@ -312,8 +478,8 @@ export async function skillDeleteFromTool(
     return { error: "Builtin and plugin skills are read-only." };
   }
   const deleted = await prisma.agentSkill.deleteMany({
-    where: { id: existing.id, ...onlyInSpace(owner), source: "user" },
+    where: { id: existing.id, ...availableInSpace(owner), source: "user" },
   });
-  if (deleted.count !== 1) return { error: SHARED_SKILL_ERROR };
+  if (deleted.count !== 1) return { error: "Skill not found." };
   return { ok: true, name: existing.name };
 }

@@ -4,19 +4,23 @@
   "license": "Apache-2.0",
   "type": "module",
   "exports": {
+    "./app-icon": "./src/app-icon.ts",
     "./compile": "./src/compile.ts",
+    "./icon": "./src/kit/icon.tsx",
+    "./icon-names": "./src/icon-names.ts",
     "./runtime": "./src/runtime.tsx",
     "./runtime-build": "./src/runtime-build.ts",
     "./validate": "./src/validate.ts"
   },
   "scripts": {
-    "check": "tsc --noEmit -p tsconfig.json",
+    "check": "tsrs --noEmit -p tsconfig.json",
     "test": "vitest run --root ../.. packages/page-kit/src"
   },
   "dependencies": {
     "@rakazo/contracts": "workspace:*",
     "@rakazo/ui-tokens": "workspace:*",
     "esbuild": "0.28.2",
+    "lucide-react": "1.70.0",
     "react": "19.3.1",
     "react-dom": "19.3.1",
     "sucrase": "3.35.1"

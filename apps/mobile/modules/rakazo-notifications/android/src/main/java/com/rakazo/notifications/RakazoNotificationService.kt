@@ -286,7 +286,9 @@ class RakazoNotificationService : Service() {
 
   private fun post(run: RunRecord, copy: NotificationCopy) {
     if (!run.notificationsEnabled || isOpenThread(run)) return
+    // A push can arrive alongside this status fallback. Only the server push can play sound.
     val notification = builder(copy.channel)
+      .withoutSound()
       .setSmallIcon(R.drawable.ic_rakazo_notification)
       .setContentTitle(copy.title)
       .setSubText(accountLabel())
@@ -514,6 +516,10 @@ private fun attentionCopy(context: Context, run: RunRecord): NotificationCopy = 
     Channels.ATTENTION,
   )
 }
+
+/** A child in a summary-only group stays silent even on a channel that allows sound. */
+internal fun Notification.Builder.withoutSound(): Notification.Builder =
+  setGroup("rakazo.silent").setGroupAlertBehavior(Notification.GROUP_ALERT_SUMMARY)
 
 internal object Channels {
   const val LIVE = "rakazo_live"

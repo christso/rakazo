@@ -16,9 +16,16 @@ vi.mock("@lingui/react/macro", () => ({
   Trans: ({ children }: { children: ReactNode }) => children,
 }));
 vi.mock("../../lib/query/query", () => ({
+  useSave: () => ({ pending: false, error: null }),
   useSpaceQueries: () => ({
+    pageReviews: {
+      grants: { key: () => ["grants"] },
+      state: { queryOptions: () => ({ queryKey: ["state"], queryFn: async () => ({}) }) },
+    },
     pages: {
+      list: { key: () => ["pages"] },
       get: {
+        queryKey: () => ["page"],
         // Like the server: the link only when asked for.
         queryOptions: ({ input }: { input: { pageId: string; link?: true } }) => ({
           queryKey: ["page", input],
@@ -26,6 +33,7 @@ vi.mock("../../lib/query/query", () => ({
             id: "p1",
             title: "Plan",
             code: "",
+            abilities: [],
             owner: { name: "" },
             visibility: "link",
             shareUrl: input.link === true ? "https://rakazo.example/p/1" : null,
@@ -34,9 +42,6 @@ vi.mock("../../lib/query/query", () => ({
       },
     },
   }),
-}));
-vi.mock("../../lib/pages/page-actions", () => ({
-  pageMutationOptions: () => ({ rename: {}, setVisibility: {} }),
 }));
 vi.mock("./PageView", () => ({
   PageView: ({ composer, share }: { composer: ReactNode; share: ReactNode }) => (

@@ -11,8 +11,8 @@ import {
   emailAllowed,
   isMessagingEmail,
   MAX_PASSWORD_LENGTH,
-  MESSAGING_EMAIL_SUFFIX,
   MIN_PASSWORD_LENGTH,
+  parseEnvFlag,
   partnerClickFromHeaders,
   signupAttributionFromHeaders,
   signupPolicyFromEnv,
@@ -20,9 +20,10 @@ import {
 import type { PrismaClient, SecurityEventType } from "@rakazo/db";
 import {
   bootstrapUserSpace,
+  clearAccountIdentity,
   OwnedOrganizationHasMembersError,
-  personalOrganizationIds,
   recordSecurityEvent,
+  runAsSystem,
   SpaceDeletionInProgressError,
 } from "@rakazo/db";
 import { bestEffort } from "@rakazo/logging";
@@ -53,6 +54,7 @@ import {
   MAX_SAVED_BROWSER_ACCOUNTS,
   requireSavedAccountCapacity,
 } from "./account-sessions.js";
+import { apiKeyMethods, apiKeys } from "./api-keys.js";
 import { createAppleClientSecretCache } from "./apple-client-secret.js";
 import { breachedPasswordCheck } from "./breached-password.js";
 import { DEACTIVATED_AT_FIELD } from "./directory.js";
@@ -75,6 +77,8 @@ import type { TokenKey } from "./token-storage.js";
 import { encryptStoredOAuthTokens, openIdToken, sealIdToken } from "./token-storage.js";
 
 export { agentImportEmail } from "./agent-import-email.js";
+export type { VerifiedApiKey } from "./api-keys.js";
+export { API_KEY_PREFIX } from "./api-keys.js";
 export type { DirectoryAccountChange } from "./directory.js";
 export { createDirectory } from "./directory.js";
 export {
@@ -83,10 +87,12 @@ export {
   signInCodeEmail,
   verificationEmail,
 } from "./email.js";
+export { emailCopyAvailable } from "./email-copy/deployment-copy.js";
 export type { HomeDeletionReason } from "./home-deletion-email.js";
 export { homeDeletionEmail } from "./home-deletion-email.js";
 export { modelConnectionEmail } from "./model-connection-email.js";
 export type { OidcConfig } from "./oidc.js";
+export { oidcAuthorizationParams } from "./oidc.js";
 export {
   organizationInvitationEmail,
   spaceInvitationEmail,
@@ -117,8 +123,8 @@ export interface AuthEnv {
   webOrigin: string;
   signupsEnabled: string | undefined;
   signupAllowlist: string | undefined;
-  /** Admits a new account only while there is none, for a deployment that serves one person. */
-  singleAccount?: boolean;
+  /** When set, only a request it accepts may create an account, whatever the signup policy. */
+  admitsSignup?: (headers: Headers | undefined) => boolean;
   extraOrigins?: string[];
   /** SHA-256 signing certificate fingerprints of Android apps allowed to use this server's passkeys. */
   androidAppCertFingerprints?: string[];
@@ -172,6 +178,27 @@ export const CLIENT_IP_HEADER = "x-rakazo-client-ip";
 /** Routes that end sessions other than the caller's own sign-out. Recorded per deleted session. */
 const REVOCATION_PATHS = new Set(["/revoke-session", "/revoke-sessions", "/revoke-other-sessions"]);
 
+/**
+ * Whether a successful request ends every other sign-in, as someone does after losing a device.
+ * Installed page apps hold their own tokens, so those end with it even when no session was left.
+ */
+function signsOutEverywhere(path: string, body: unknown): boolean {
+  if (path === "/revoke-sessions" || path === "/revoke-other-sessions") return true;
+  return path === "/change-password" && isRecord(body) && body.revokeOtherSessions === true;
+}
+
+/** Runs every cleanup even when one fails, then reports the first failure. */
+async function allThenThrow(work: readonly (Promise<unknown> | undefined)[]) {
+  const failed = (await Promise.allSettled(work)).find((outcome) => outcome.status === "rejected");
+  if (failed) throw failed.reason;
+}
+
+function revokePageApps(prisma: PrismaClient, userId: string) {
+  return runAsSystem("revoke page apps with every sign-in", () =>
+    prisma.pageApp.deleteMany({ where: { userId } }),
+  );
+}
+
 /** Successful account changes worth an audit row. Sign-in, sign-up, sign-out and deletion use hooks. */
 const ACCOUNT_EVENT_PATHS: Record<string, SecurityEventType> = {
   "/change-password": "auth.password.changed",
@@ -181,11 +208,17 @@ const ACCOUNT_EVENT_PATHS: Record<string, SecurityEventType> = {
   "/passkey/delete-passkey": "auth.passkey.removed",
 };
 
-/** Shared across API processes. Off outside production so tests can sign in freely. */
-export function authRateLimitOptions(nodeEnv = process.env.NODE_ENV) {
+/**
+ * Shared across API processes. Off outside production so tests can sign in freely, unless
+ * `AUTH_RATE_LIMIT_ENABLED` says otherwise.
+ */
+export function authRateLimitOptions(
+  nodeEnv = process.env.NODE_ENV,
+  override = process.env.AUTH_RATE_LIMIT_ENABLED,
+) {
   const rule = { window: 15 * 60, max: 10 };
   return {
-    enabled: nodeEnv === "production",
+    enabled: parseEnvFlag("AUTH_RATE_LIMIT_ENABLED", override, nodeEnv === "production"),
     storage: "database" as const,
     customRules: {
       ...Object.fromEntries(CREDENTIAL_PATHS.map((path) => [path, rule])),
@@ -213,43 +246,11 @@ export function createAuth(prisma: PrismaClient, env: AuthEnv) {
     }
   };
   const discovery = env.oidc ? oidcDiscovery(env.oidc) : undefined;
-  /** Whether another account with email sign-in already has a workspace. */
-  const hasAdmittedAccount = async (
-    client: Pick<PrismaClient, "user" | "spaceMember">,
-    exceptUserId?: string,
-  ) => {
-    const others = await client.user.findMany({
-      where: {
-        ...(exceptUserId ? { id: { not: exceptUserId } } : {}),
-        NOT: { email: { endsWith: MESSAGING_EMAIL_SUFFIX } },
-      },
-      select: { id: true },
-    });
-    return (
-      others.length > 0 &&
-      Boolean(
-        await client.spaceMember.findFirst({
-          where: { userId: { in: others.map((other) => other.id) } },
-          select: { userId: true },
-        }),
-      )
-    );
-  };
-  /** Refuses a new account early, before creating it, once a single-person deployment has one. */
-  const admission = async () => {
+  /** The signup policy as it applies to the request asking. */
+  const admission = (headers: Headers | undefined) => {
     const policy = signupPolicyFromEnv(env);
-    if (!env.singleAccount || !policy.enabled) return policy;
-    return (await hasAdmittedAccount(prisma)) ? { ...policy, enabled: false } : policy;
+    return env.admitsSignup && !env.admitsSignup(headers) ? { ...policy, enabled: false } : policy;
   };
-  /** Admits the sole account one at a time, so two first signups cannot both get in. */
-  const admitSoleAccount = (userId: string) =>
-    prisma.$transaction(async (tx) => {
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('rakazo:single-account'))`;
-      if (await hasAdmittedAccount(tx, userId)) return false;
-      // Committed before the lock is released, so the next signup sees it.
-      await bootstrapUserSpace(prisma, { id: userId });
-      return true;
-    });
   /** The directory provisioned this account, so it is admitted whatever the signup policy. */
   const provisioned = async (userId: string) =>
     Boolean(env.directoryProvisioning) &&
@@ -364,6 +365,7 @@ export function createAuth(prisma: PrismaClient, env: AuthEnv) {
       maxPasswordLength: MAX_PASSWORD_LENGTH,
       revokeSessionsOnPasswordReset: true,
       onPasswordReset: async ({ user }) => {
+        await revokePageApps(prisma, user.id);
         await recordSecurityEvent({
           type: "auth.password.changed",
           userId: user.id,
@@ -434,7 +436,7 @@ export function createAuth(prisma: PrismaClient, env: AuthEnv) {
         const email = String(user.email ?? "").toLowerCase();
         if (isMessagingEmail(email)) return { error: "EMAIL_NOT_AVAILABLE" };
         if (source.action === "create-user") {
-          const policy = await admission();
+          const policy = admission(ctx?.headers);
           const bypassAllowlist = providerId === "oidc" && env.oidc?.allowSignupBypass;
           if (!policy.enabled) return { error: "REGISTRATION_CLOSED" };
           if (!bypassAllowlist && !emailAllowed(email, policy.allowlist))
@@ -501,19 +503,7 @@ export function createAuth(prisma: PrismaClient, env: AuthEnv) {
               throw new APIError("CONFLICT", { message: error.message });
             throw error;
           }
-          const organizationIds = await personalOrganizationIds(prisma, user.id);
-
-          await prisma.$transaction(async (tx) => {
-            // Messaging identities are deliberately FK-free, so clear them
-            // here or the unique address would point at a deleted bot forever.
-            await tx.messagingIdentity.deleteMany({
-              where: { userId: user.id },
-            });
-            await tx.passkey.deleteMany({ where: { userId: user.id } });
-            await tx.organization.deleteMany({
-              where: { id: { in: organizationIds } },
-            });
-          });
+          await prisma.$transaction((tx) => clearAccountIdentity(tx, user.id));
         },
         afterDelete: async (user) => {
           await recordSecurityEvent({ type: "auth.account.deleted", userId: user.id });
@@ -567,6 +557,7 @@ export function createAuth(prisma: PrismaClient, env: AuthEnv) {
             }) as BetterAuthPlugin,
           ]
         : []),
+      apiKeys(),
       // Marks the method on the sign-in page; written only alongside a new session cookie.
       lastLoginMethod({ cookieName: LAST_SIGN_IN_COOKIE }),
       organization({
@@ -666,7 +657,7 @@ export function createAuth(prisma: PrismaClient, env: AuthEnv) {
             .trim()
             .toLowerCase();
           if (!(await ctx.context.internalAdapter.findUserByEmail(email))) {
-            const policy = await admission();
+            const policy = admission(ctx.headers);
             if (!policy.enabled || !emailAllowed(email, policy.allowlist)) {
               if (ctx.path === SEND_SIGN_IN_CODE_PATH) return ctx.json({ success: true });
               throw new APIError("BAD_REQUEST", { code: "INVALID_OTP", message: "Invalid OTP" });
@@ -675,7 +666,7 @@ export function createAuth(prisma: PrismaClient, env: AuthEnv) {
         }
         let policy =
           ctx.path === "/sign-up/email"
-            ? await admission()
+            ? admission(ctx.headers)
             : ctx.path === "/sign-in/email"
               ? signupPolicyFromEnv(env)
               : undefined;
@@ -771,6 +762,13 @@ export function createAuth(prisma: PrismaClient, env: AuthEnv) {
             metadata: { via: ctx.path },
           });
         }
+        const signedIn = ctx.context.session?.user.id;
+        if (
+          signedIn &&
+          signsOutEverywhere(ctx.path, ctx.body) &&
+          !(ctx.context.returned instanceof APIError)
+        )
+          await revokePageApps(prisma, signedIn);
         const returned = ctx.context.returned;
         // These routes fall back to the stored ID token, which is sealed at rest.
         if (
@@ -812,7 +810,7 @@ export function createAuth(prisma: PrismaClient, env: AuthEnv) {
             if (ctx?.headers) await requireSavedAccountCapacity(ctx, session.userId);
             // The auth adapter can still be inside the signup transaction.
             const user = await ctx?.context.internalAdapter.findUserById(session.userId);
-            const policy = signupPolicyFromEnv(env);
+            const policy = admission(ctx?.headers);
             const oidcSignIn = isOidcCallback(ctx);
             const bypassAllowlist = oidcSignIn && env.oidc?.allowSignupBypass;
             if (!user || isMessagingEmail(user.email)) {
@@ -846,12 +844,7 @@ export function createAuth(prisma: PrismaClient, env: AuthEnv) {
                   message: "Registration is closed",
                 });
               }
-              if (!env.singleAccount) await bootstrapUserSpace(prisma, user);
-              else if (!(await admitSoleAccount(user.id)))
-                throw new APIError("FORBIDDEN", {
-                  code: "REGISTRATION_CLOSED",
-                  message: "Registration is closed",
-                });
+              await bootstrapUserSpace(prisma, user);
             }
           },
           after: async (session, ctx) => {
@@ -897,7 +890,17 @@ export function createAuth(prisma: PrismaClient, env: AuthEnv) {
               });
             }
             const previous = replacedSession(ctx);
-            if (previous) await env.afterReplaceSession?.(previous, session);
+            if (previous) {
+              await allThenThrow([
+                runAsSystem("move page apps to the replacing sign-in", () =>
+                  prisma.pageApp.updateMany({
+                    where: { sessionId: previous.id },
+                    data: { sessionId: session.id },
+                  }),
+                ),
+                env.afterReplaceSession?.(previous, session),
+              ]);
+            }
           },
         },
         delete: {
@@ -911,7 +914,15 @@ export function createAuth(prisma: PrismaClient, env: AuthEnv) {
                 metadata: { via: ctx.path },
               });
             }
-            if (replacedSession(ctx)?.id !== session.id) await env.afterDeleteSession?.(session);
+            if (replacedSession(ctx)?.id !== session.id) {
+              // A page app ends with the sign-in it was installed through, as a paired computer does.
+              await allThenThrow([
+                runAsSystem("end page apps with their sign-in", () =>
+                  prisma.pageApp.deleteMany({ where: { sessionId: session.id } }),
+                ),
+                env.afterDeleteSession?.(session),
+              ]);
+            }
           },
         },
       },
@@ -1005,6 +1016,7 @@ export function createAuth(prisma: PrismaClient, env: AuthEnv) {
   authContext = auth.$context;
   return Object.assign(auth, {
     emailCodeSignIn,
+    registrationOpen: (headers: Headers) => admission(headers).enabled,
     /** Encrypts OAuth tokens stored before encryption was enabled. Safe to rerun. */
     encryptStoredOAuthTokens: async () => encryptStoredOAuthTokens(prisma, await tokenKey()),
     ssoAvailability: () => discovery?.availability(),
@@ -1015,6 +1027,7 @@ export function createAuth(prisma: PrismaClient, env: AuthEnv) {
       issueAccountExportToken((await auth.$context).internalAdapter, userId),
     consumeAccountExportToken: async (token: string) =>
       consumeAccountExportToken((await auth.$context).internalAdapter, token),
+    ...apiKeyMethods(auth.api),
     disposeOidcDiscovery: () => {
       discovery?.dispose();
     },
@@ -1030,6 +1043,7 @@ async function revokeUnprovenCredentials(prisma: PrismaClient, userId: string) {
     await tx.account.deleteMany({ where: { userId, providerId: { not: "credential" } } });
     await tx.messagingIdentity.deleteMany({ where: { userId } });
     await tx.messagingLinkCode.deleteMany({ where: { userId } });
+    await tx.pageApp.deleteMany({ where: { userId } });
     await tx.userDevice.updateMany({
       where: { userId, revokedAt: null },
       data: { revokedAt: new Date() },
@@ -1187,7 +1201,8 @@ function loopbackTwinOrigins(origin: string): string[] {
  * route under it stays closed, including ones a future plugin version adds.
  */
 export function isBlockedAuthPath(path: string): boolean {
-  return path.startsWith("/organization") || path.startsWith("/multi-session");
+  // API keys are managed through the app's procedures, which ask the person to confirm it's them.
+  return path.startsWith("/organization") || path.startsWith("/api-key") || path.startsWith("/multi-session");
 }
 
 /** Set while the directory has turned the account off. */

@@ -1,4 +1,5 @@
 import type { ComputerSize } from "@rakazo/contracts";
+import type { ConnectedCalendarProvider } from "./personal-calendar.js";
 import type {
   AdapterContext,
   AdapterDescriptor,
@@ -16,6 +17,7 @@ import type {
   BillingCheckoutRequest,
   BillingCreditCheckoutRequest,
   BillingCreditPurchase,
+  BillingInvoiceRefund,
   BillingPlanPayment,
   BillingPrice,
   BillingSubscriptionSnapshot,
@@ -322,7 +324,12 @@ export interface ConnectionAuthProvider {
   begin(
     request: { provider: string; redirectUrl: string },
     context: AdapterContext,
-  ): Promise<{ authorizationUrl: string | null; state: string }>;
+  ): Promise<{
+    authorizationUrl: string | null;
+    state: string;
+    requiresCompletion?: boolean;
+    expiresAt?: string;
+  }>;
   complete(
     request: { state: string; code?: string },
     context: AdapterContext,
@@ -334,6 +341,7 @@ export interface ConnectionAuthProvider {
 export interface ManagedConnectorProvider
   extends ConnectorProvider,
     Omit<ConnectionAuthProvider, "describe"> {
+  calendarProvider?: ConnectedCalendarProvider;
   catalog(context: AdapterContext, query?: string): Promise<ConnectorCatalogItem[]>;
   /** The actions one app offers, to show people what connecting it gives bots. */
   listAppTools?(context: AdapterContext, externalId: string): Promise<ConnectorTool[]>;
@@ -361,6 +369,22 @@ export interface ManagedConnectorProvider
     currentRef: string | null | undefined,
     excludeIds?: string[],
     spaceId?: string,
+    organizationId?: string,
+  ): Promise<string | undefined>;
+  /** Maximum lifetime of hosted links issued before expiration was stored locally. */
+  readonly legacySignInLifetimeMs?: number;
+  /** Snapshot before giving out a sign-in link that cannot identify its own remote account. */
+  listAccountsBeforeSignIn?(slug: string, context: AdapterContext): Promise<string[]>;
+  /** Prepare one owner-scoped identity lookup for a batch of account references. */
+  prepareAccountIdentityLookup?(
+    slug: string,
+    context: AdapterContext,
+  ): Promise<(ref: string) => Promise<string | undefined>>;
+  /** An upstream account identity verified using this exact authorization, when available. */
+  connectedAccountIdentity?(
+    slug: string,
+    connectionRef: string,
+    context: AdapterContext,
   ): Promise<string | undefined>;
   /** Invalidate an unfinished browser authorization by its request id. */
   cancelAuthorizationRequest?(requestId: string, context: AdapterContext): Promise<void>;
@@ -497,6 +521,14 @@ export interface JobWorkerHost {
   stop(): Promise<void>;
 }
 
+export interface HomeExportOptions {
+  directory?: string;
+  skipHidden?: boolean;
+  /** Omit files larger than this many bytes, including files that grow while being read. */
+  maxFileBytes?: number;
+  onOversizedFile?: (sizeAtLeast: number) => void;
+}
+
 export interface AgentHomeStore {
   describe(): AdapterDescriptor<{ revisions: boolean }>;
   /** The most one computer save copies; unset means the default of 5 GiB and a million files. */
@@ -511,7 +543,7 @@ export interface AgentHomeStore {
   exportHome(
     botId: string,
     context: AdapterContext,
-    options?: { directory?: string; skipHidden?: boolean },
+    options?: HomeExportOptions,
   ): AsyncIterable<PortableFile>;
   /** Throws `SandboxFileTooLargeError` for a file over `maxBytes`. */
   readFile(
@@ -634,6 +666,16 @@ export interface BillingProvider {
    * Credits never count.
    */
   listPlanPayments?(customerId: string, since: Date): Promise<BillingPlanPayment[]>;
+  /**
+   * Inspects or refunds the card payment for a customer-owned paid invoice, named by its number
+   * or id; without one, the newest paid invoice. Refunds `amountMinor`, or the whole charge.
+   */
+  refundInvoice?(
+    customerId: string,
+    invoice: string | undefined,
+    confirm: boolean,
+    amountMinor?: number,
+  ): Promise<BillingInvoiceRefund | null>;
   setMonthlyCredits?(customerId: string, amountCents: number): Promise<void>;
   /** Flat monthly own-key plan: access without credits. */
   createByokCheckout?(input: BillingByokCheckoutRequest): Promise<{ id: string; url: string }>;
@@ -644,12 +686,13 @@ export interface BillingProvider {
    * billing the prorated difference now: a change of interval restarts the period today, crediting
    * its unused part. A failed payment leaves the plan unchanged. Returns false without charging
    * when that subscription is no longer an active or trialing `from` plan, is set to cancel, or
-   * monthly credits have started.
+   * monthly credits have started. With `resume` it instead takes only a trial that is set to
+   * cancel, and keeps it: the trial runs on and `to` is billed when it ends.
    */
   changeByokPlan?(
     customerId: string,
     subscriptionId: string,
-    change: { from: BillingByokPlan; to: BillingByokPlan },
+    change: { from: BillingByokPlan; to: BillingByokPlan; resume?: boolean },
   ): Promise<boolean>;
   /** Ends every live own-key plan at its period end. */
   endByokPlans?(customerId: string): Promise<void>;

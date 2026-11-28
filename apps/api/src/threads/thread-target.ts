@@ -26,6 +26,7 @@ import {
   answerWaitingRunWithTextInTransaction,
   appendEventInTransaction,
   clearEndedRunState,
+  connectionIn,
   createGroupRepos,
   createRepos,
   createThreadMessageInTransaction,
@@ -134,8 +135,7 @@ async function resolveOwnedConnectorDisplayNames(
   const rows = await tx.connection.findMany({
     where: {
       id: { in: connectionIds },
-      spaceId: actor.spaceId,
-      userId: actor.userId,
+      ...connectionIn(actor),
       status: "connected",
     },
     select: { id: true, displayName: true },
@@ -220,10 +220,7 @@ async function replayExistingSend(
     select: { seq: true },
   });
   if (latestEvent) {
-    await deps.events.notify(threadId, latestEvent.seq).catch((error) => {
-      // Subscribers catch up from the durable event cursor after a missed realtime wake.
-      getLogger().error("thread send realtime notification", error);
-    });
+    await deps.events.notify(threadId, latestEvent.seq);
   }
   return sendResult(message, runs);
 }
@@ -501,6 +498,8 @@ export async function sendThreadMessage(
     replyQuote?: string;
     fromPage?: true;
     clientNonce?: string;
+    nativeCalendarSessionId?: string;
+    nativeCalendarDeviceDigest?: string;
     /** No model to start a turn: the send may only stop active work. */
     noModel?: boolean;
   },
@@ -672,6 +671,8 @@ export async function sendThreadMessage(
           replyToMessageId,
           replyQuote,
           clientNonce: input.clientNonce,
+          nativeCalendarSessionId: input.nativeCalendarSessionId,
+          nativeCalendarDeviceDigest: input.nativeCalendarDeviceDigest,
         });
         // A bare "stop" from the owner while work is active is the Stop button, not a reply.
         const stopping = activeRuns.length > 0 && !routineRuns.length && isStopMessage(input);
@@ -1127,10 +1128,7 @@ export async function sendThreadMessage(
     await finishThreadStop(deps, actor, target, committed.stop);
     return sendResult(committed.message, committed.runs);
   }
-  await deps.events.notify(target.threadId, committed.eventSeq).catch((error) => {
-    // Subscribers catch up from the durable event cursor after a missed realtime wake.
-    getLogger().error("thread send realtime notification", error);
-  });
+  await deps.events.notify(target.threadId, committed.eventSeq);
   if (committed.runs.length > 0 || committed.routineRuns.length > 0)
     await deps.events.publishSpaceChange?.(actor.spaceId, "runs");
   if (releaseTakeover) {

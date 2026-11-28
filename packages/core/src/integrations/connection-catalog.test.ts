@@ -1,8 +1,10 @@
 import type { Connection, ConnectionCatalogItem } from "@rakazo/contracts";
+import { CONNECTION_LABEL_MAX_LENGTH, ConnectionLabelSchema } from "@rakazo/contracts";
 import { describe, expect, it, vi } from "vitest";
 import {
   catalogItemAccounts,
   connectCatalogItem,
+  connectionLabelFrom,
   isCatalogItemConnected,
   nextCatalogAccountLabel,
   waitForConnection,
@@ -115,7 +117,11 @@ describe("connection catalog", () => {
       vi.useRealTimers();
     }
     expect(openUrl).toHaveBeenCalledWith("https://auth.example.test");
-    expect(await result).toEqual({ status: "connected", row: account("new", "connected") });
+    expect(await result).toEqual({
+      status: "connected",
+      connectionId: "new",
+      row: account("new", "connected"),
+    });
   });
 
   it("skips polling for apps that need no authorization", async () => {
@@ -126,7 +132,7 @@ describe("connection catalog", () => {
       openUrl: vi.fn(),
       signal: new AbortController().signal,
     });
-    expect(result).toEqual({ status: "connected" });
+    expect(result).toEqual({ status: "connected", connectionId: "new" });
     expect(complete).not.toHaveBeenCalled();
   });
 
@@ -269,5 +275,28 @@ describe("waitForSignIn", () => {
       vi.useRealTimers();
     }
     expect(stop).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("connection labels from catalog names", () => {
+  const longName = "A".repeat(120);
+
+  it("cuts a long name and keeps the account number whole", () => {
+    const long = { ...item, name: longName };
+    const first = nextCatalogAccountLabel([], long);
+    expect(first).toBe("A".repeat(CONNECTION_LABEL_MAX_LENGTH));
+    const second = nextCatalogAccountLabel(
+      [{ ...account("a", "connected"), displayName: first }],
+      long,
+    );
+    expect(second).toBe(`${"A".repeat(CONNECTION_LABEL_MAX_LENGTH - 2)} 2`);
+    expect(ConnectionLabelSchema.safeParse(second).success).toBe(true);
+  });
+
+  it("does not split a surrogate pair and falls back to the slug for a blank name", () => {
+    expect(connectionLabelFrom("a".repeat(CONNECTION_LABEL_MAX_LENGTH - 1) + "😀", "x")).toBe(
+      "a".repeat(CONNECTION_LABEL_MAX_LENGTH - 1),
+    );
+    expect(nextCatalogAccountLabel([], { ...item, name: "  " })).toBe("gmail");
   });
 });

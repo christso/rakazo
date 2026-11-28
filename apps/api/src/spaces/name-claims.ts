@@ -1,79 +1,20 @@
 import { ORPCError } from "@orpc/server";
 import type { AccountItem, Actor, AvailabilityKind, SpaceAvailability } from "@rakazo/contracts";
-import { ClientError } from "@rakazo/core";
 import type { Prisma, PrismaClient } from "@rakazo/db";
 import {
   AVAILABILITY_SELECT,
+  assertNameFreeWhereAvailable,
   availableInSpace,
   isUniqueViolation,
+  lockOwner,
   runAsSystem,
   runAsSystemInTransaction,
   spaceAvailability,
 } from "@rakazo/db";
 
-/** Serializes one owner's writes of a kind across all their spaces, until the transaction ends. */
-export function lockOwner(tx: Prisma.TransactionClient, userId: string, scope: string) {
-  return tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`${scope}:${userId}`}, 0))`;
-}
-
 /** What a user adds themselves follows them into every space; see VISION.md. */
 export function userAddedAvailability(actor: Pick<Actor, "spaceId">): SpaceAvailability {
   return { allSpaces: true, spaceIds: [actor.spaceId] };
-}
-
-function overlaps(a: SpaceAvailability, b: SpaceAvailability): boolean {
-  return a.allSpaces || b.allSpaces || a.spaceIds.some((id) => b.spaceIds.includes(id));
-}
-
-const CONFLICT_MESSAGE = {
-  skill: "A skill with that name already exists in one of these spaces.",
-  mcpServer: "An MCP server with that name already exists in one of these spaces.",
-} as const;
-
-/** The owner already has a skill or MCP server by this name where the new one would be seen. */
-export class NameTakenError extends ClientError {
-  constructor(kind: keyof typeof CONFLICT_MESSAGE) {
-    super("CONFLICT", CONFLICT_MESSAGE[kind]);
-    this.name = "NameTakenError";
-  }
-}
-
-/**
- * A skill name or MCP server slug must stay unique wherever its owner can see it. The owner's
- * rows in their other spaces are only reachable across tenants, so this reads them explicitly
- * by owner rather than through the current space.
- */
-export async function assertNameFreeWhereAvailable(
-  tx: Prisma.TransactionClient,
-  kind: "skill" | "mcpServer",
-  actor: Pick<Actor, "userId">,
-  name: string,
-  availability: SpaceAvailability,
-  excludeId?: string,
-): Promise<void> {
-  // Held until the caller's write commits, so two spaces can't both claim a name at once.
-  await lockOwner(tx, actor.userId, `names:${kind}`);
-  const read = async () =>
-    kind === "skill"
-      ? tx.agentSkill.findMany({
-          where: {
-            userId: actor.userId,
-            name: { equals: name, mode: "insensitive" },
-            ...(excludeId ? { NOT: { id: excludeId } } : {}),
-          },
-          select: { spaceId: true, allSpaces: true, availableIn: AVAILABILITY_SELECT },
-        })
-      : tx.mcpServer.findMany({
-          where: {
-            userId: actor.userId,
-            slug: name,
-            ...(excludeId ? { NOT: { id: excludeId } } : {}),
-          },
-          select: { spaceId: true, allSpaces: true, availableIn: AVAILABILITY_SELECT },
-        });
-  const rows = await runAsSystemInTransaction(tx, "owner's names across their spaces", read);
-  if (rows.some((row) => overlaps(spaceAvailability(row), availability)))
-    throw new NameTakenError(kind);
 }
 
 async function assertOwnSpaces(
@@ -89,6 +30,13 @@ async function assertOwnSpaces(
 }
 
 type Joined = { spaceId: string; userId: string; allSpaces: boolean; secretId?: string | null };
+
+/** A member's own server; an organization's is never placed in Spaces, so it is left out. */
+function personalItem<Row extends { spaceId: string | null; userId: string | null }>(
+  row: Row | null,
+) {
+  return row?.spaceId && row.userId ? { ...row, spaceId: row.spaceId, userId: row.userId } : null;
+}
 
 /** Secrets of an item available beyond one space are the account's, so every such space reads them. */
 async function settleSecret(
@@ -237,10 +185,10 @@ export async function setAvailability(
     // A plugin's own skills and connectors are placed through the plugin.
     const item: (Joined & { id: string }) | null =
       input.kind === "skill"
-        ? await tx.agentSkill.findFirst({ where: { ...visible, source: "user" } })
+        ? personalItem(await tx.agentSkill.findFirst({ where: { ...visible, source: "user" } }))
         : input.kind === "mcpServer"
-          ? await tx.mcpServer.findFirst({ where: { ...visible, installId: null } })
-          : await tx.capabilityInstall.findFirst({ where: visible });
+          ? personalItem(await tx.mcpServer.findFirst({ where: { ...visible, installId: null } }))
+          : personalItem(await tx.capabilityInstall.findFirst({ where: visible }));
     if (!item) throw new ORPCError("NOT_FOUND");
     return place(tx, actor, input.kind, item, input);
   });
@@ -282,9 +230,18 @@ async function ownItems(tx: Prisma.TransactionClient, actor: Actor): Promise<Own
       row,
     });
     return [
-      ...installs.map((row) => item("install", row)),
-      ...servers.map((row) => item("mcpServer", row)),
-      ...skills.map((row) => item("skill", row)),
+      ...installs.flatMap((row) => {
+        const own = personalItem(row);
+        return own ? [item("install", own)] : [];
+      }),
+      ...servers.flatMap((row) => {
+        const own = personalItem(row);
+        return own ? [item("mcpServer", own)] : [];
+      }),
+      ...skills.flatMap((row) => {
+        const own = personalItem(row);
+        return own ? [item("skill", own)] : [];
+      }),
     ];
   });
 }
@@ -391,9 +348,13 @@ export async function rehomeItemsLeaving(prisma: PrismaClient, spaceId: string):
         if (!isUniqueViolation(error)) throw error;
       }
     };
-    for (const row of installs) await move("install", row);
-    for (const row of servers) await move("mcpServer", row);
-    for (const row of skills) await move("skill", row);
+    for (const row of installs)
+      if (row.userId) await move("install", { ...row, userId: row.userId });
+    for (const row of servers) {
+      const own = personalItem(row);
+      if (own) await move("mcpServer", own);
+    }
+    for (const row of skills) if (row.userId) await move("skill", { ...row, userId: row.userId });
   });
 }
 
@@ -406,13 +367,4 @@ export async function serverAvailability(
     select: { spaceId: true },
   });
   return spaceAvailability({ ...server, availableIn });
-}
-
-/** A server's new secret goes where every space it is available in can read it. */
-export async function serverSecretSpace(
-  tx: Prisma.TransactionClient,
-  server: { id: string; spaceId: string; allSpaces: boolean },
-): Promise<string | null> {
-  const { allSpaces, spaceIds } = await serverAvailability(tx, server);
-  return allSpaces || spaceIds.length > 1 ? null : server.spaceId;
 }

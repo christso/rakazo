@@ -1,7 +1,7 @@
 import { Plural, Trans, useLingui } from "@lingui/react/macro";
 import type { CapabilityInstall, PluginMarketplaceEntry } from "@rakazo/contracts";
 import { PluginPreviewSchema } from "@rakazo/contracts";
-import { installedPluginParts, matchesPluginQuery } from "@rakazo/core";
+import { installedPluginParts, installedPluginSelection, matchesPluginQuery } from "@rakazo/core";
 import {
   Button,
   Dialog,
@@ -66,10 +66,7 @@ export function SkillsDialog({
   );
   const catalogEntries = catalog.data?.entries ?? NO_ENTRIES;
   function installedSelection(install: CapabilityInstall): PluginSelection {
-    const entry = catalogEntries.find((row) => row.installedSource === install.source);
-    return entry
-      ? pluginSelection(entry)
-      : { source: install.source, installedSource: install.source, name: install.name };
+    return installedPluginSelection(install, catalogEntries);
   }
 
   async function refresh() {
@@ -98,7 +95,7 @@ export function SkillsDialog({
     if (selection)
       return (
         <PluginDetail
-          key={selection.installedSource}
+          key={selection.installId ?? selection.installedSource}
           selection={selection}
           installs={pluginInstalls}
           servers={NO_SERVERS}
@@ -159,12 +156,27 @@ export function SkillsDialog({
             <AgentSkills />
           </div>
         </section>
+        {installs.isLoadingError ? (
+          <div
+            role="alert"
+            className="mx-2.5 flex flex-wrap items-center gap-3 text-body text-muted-foreground"
+          >
+            <Trans>Could not load installed skill packs.</Trans>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void installs.refetch({ cancelRefetch: false })}
+            >
+              <Trans>Retry</Trans>
+            </Button>
+          </div>
+        ) : null}
         {skillSets.length ? (
           <section data-testid="plugin-skill-sets">
             <h3 className="mb-2 px-2.5 text-body font-medium text-muted-foreground">
               <Trans>Plugins</Trans>
             </h3>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
               {skillSets.map((install) => {
                 const set = installedSelection(install);
                 return (
@@ -173,13 +185,17 @@ export function SkillsDialog({
                     type="button"
                     data-testid="plugin-skill-set"
                     onClick={() => setSelection(set)}
-                    className={`flex min-w-0 items-center gap-3 rounded-xl px-2.5 py-2 text-start focus-visible:outline-none ${ROW_HOVER}`}
+                    className={`flex min-w-0 items-center gap-3 rounded-xl px-2.5 py-2 text-start focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50 ${ROW_HOVER}`}
                   >
                     <PluginLogo name={set.name} logo={set.logo} site={set.site} />
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-body-lg font-medium">{set.name}</span>
                       <span className="block truncate text-body-sm text-muted-foreground">
-                        <Plural value={skillCount(install)} one="# skill" other="# skills" />
+                        {install.organization ? (
+                          <Trans>Organization</Trans>
+                        ) : (
+                          <Plural value={skillCount(install)} one="# skill" other="# skills" />
+                        )}
                       </span>
                     </span>
                   </button>
@@ -217,7 +233,7 @@ export function SkillsDialog({
               </Button>
             </div>
           ) : null}
-          <div data-testid="skill-packs" className="grid grid-cols-2 gap-2">
+          <div data-testid="skill-packs" className="grid grid-cols-1 gap-2 sm:grid-cols-2">
             {packs.map((entry) => {
               const pack = pluginSelection(entry);
               return (
@@ -233,6 +249,15 @@ export function SkillsDialog({
               );
             })}
           </div>
+          {!catalog.isPending &&
+          !catalog.error &&
+          !catalog.data?.unavailableRegistries.length &&
+          query.trim() !== "" &&
+          packs.length === 0 ? (
+            <p role="status" className="text-muted-foreground/80">
+              <Trans>No skills match your search.</Trans>
+            </p>
+          ) : null}
         </section>
       </div>
     );

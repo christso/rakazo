@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
-import { flush } from "@rakazo/core/test-async";
+import type { PageSectionAnchor } from "@rakazo/contracts";
+import { deferred, flush } from "@rakazo/core/test-async";
 import type { ReactNode } from "react";
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
@@ -10,6 +11,7 @@ const host = vi.hoisted(() => ({
   message: undefined as ((data: string, answer: (message: object) => void) => void) | undefined,
   copied: [] as string[],
   opened: [] as string[],
+  asked: [] as string[],
   t: (text: string) => text,
   routes: [] as { name: string; params?: object }[],
   went: [] as unknown[],
@@ -17,24 +19,30 @@ const host = vi.hoisted(() => ({
   runtimeFails: false,
   theme: "light",
   readError: null as unknown,
+  headerAction: undefined as { label: string; onPress: () => void } | undefined,
+  reviewSections: [] as PageSectionAnchor[],
+  documentReady: undefined as Promise<void> | undefined,
+  sharedListFails: false,
   page: {
     id: "page-1",
     title: "Plan",
     code: "",
     botId: "bot-1" as string | null,
     groupId: null as string | null,
+    abilities: ["ask"],
   },
 }));
 
 vi.mock("react-native", () => ({
   ActivityIndicator: () => null,
   Platform: { OS: "android" },
+  ScrollView: ({ children }: { children?: ReactNode }) => createElement("div", {}, children),
   Text: ({ children }: { children?: ReactNode }) => createElement("p", {}, children),
   View: ({ children, ...props }: { children?: ReactNode } & Record<string, unknown>) => {
     if (props.onTouchStart) host.touch = props as typeof host.touch;
     return createElement("div", {}, children);
   },
-  StyleSheet: { create: (styles: unknown) => styles, hairlineWidth: 1 },
+  StyleSheet: { create: (styles: unknown) => styles, hairlineWidth: 1, absoluteFill: {} },
 }));
 vi.mock("expo-clipboard", () => ({
   setStringAsync: async (text: string) => {
@@ -43,6 +51,7 @@ vi.mock("expo-clipboard", () => ({
   },
 }));
 vi.mock("expo-router", () => ({
+  useFocusEffect: () => {},
   useLocalSearchParams: () => ({ pageId: "page-1" }),
   useRouter: () => ({
     back: () => host.went.push("back"),
@@ -84,9 +93,71 @@ vi.mock("../../components/media/sandboxed-html-preview", () => ({
     return null;
   },
 }));
-vi.mock("../api/api", () => ({ currentApiBase: () => "https://app.example", rpc: vi.fn() }));
-vi.mock("../api/session", () => ({ registerSessionDiskCache: () => undefined }));
+vi.mock("../api/api", () => ({
+  currentApiBase: () => "https://app.example",
+  selectedSpaceId: () => "space-1",
+  captureApiRequestContext: async () => ({
+    apiBase: "https://app.example",
+    sessionGeneration: 0,
+    headers: {},
+  }),
+  rpc: vi.fn(async (proc: string, input: { requestId?: string }) => {
+    if (proc === "pageReviews/get")
+      return {
+        id: "page-1",
+        title: "Plan",
+        code: "review",
+        version: 1,
+        currentVersion: 1,
+        owner: true,
+        canRequestRevision: true,
+      };
+    if (proc === "pageReviews/draft") return { code: input.requestId };
+    if (proc === "pageReviews/publish") throw new Error("Draft could not publish");
+    if (proc === "pageReviews/list") {
+      if (host.sharedListFails) throw new Error("Shared Pages could not load");
+      return { items: [{ id: "page-1", title: "Shared plan" }], nextCursor: null };
+    }
+    throw new Error(`unexpected ${proc}`);
+  }),
+}));
+vi.mock("../api/session", () => ({
+  currentSessionGeneration: () => 0,
+  registerSessionDiskCache: () => undefined,
+}));
+vi.mock("../platform/app-foreground", () => ({ useAppForeground: () => true }));
+vi.mock("../navigation/screen-header", () => ({
+  useScreenHeader: ({ action }: { action: typeof host.headerAction }) => {
+    host.headerAction = action;
+  },
+}));
+vi.mock("./page-review-reads", () => ({ usePageReviewSignals: () => {} }));
+vi.mock("../../components/settings/settings-group", () => ({
+  SettingsGroup: ({ children }: { children: ReactNode }) => children,
+  SettingsRow: ({ title, onPress }: { title: string; onPress: () => void }) =>
+    createElement("button", { type: "button", onClick: onPress }, title),
+}));
+vi.mock("./page-review-comments", () => ({
+  PageReviewComments: ({
+    sections,
+    onDraft,
+  }: {
+    sections: PageSectionAnchor[];
+    onDraft: (requestId: string) => void;
+  }) => {
+    host.reviewSections = sections;
+    return ["first draft", "second draft"].map((draft) =>
+      createElement("button", { type: "button", key: draft, onClick: () => onDraft(draft) }, draft),
+    );
+  },
+}));
 vi.mock("./page-runtime", () => ({ loadPageRuntime: async () => "" }));
+vi.mock("./page-ask", () => ({
+  askPageBot: async (_page: unknown, text: string) => {
+    host.asked.push(text);
+    return "Step two";
+  },
+}));
 vi.mock("../native/native", () => ({
   useMobileTokens: () => ({}),
   useResolvedAppearance: () => host.theme,
@@ -99,11 +170,15 @@ vi.mock("./pages", async (original) => ({
   },
   pageDocument: async (...args: unknown[]) => {
     if (host.runtimeFails) throw new Error("Page runtime returned 503");
+    if (host.documentReady) await host.documentReady;
     return `<p>page</p>${JSON.stringify(args[4] ?? {})}`;
   },
 }));
 
 const { default: PageScreen } = await import("../../app/page");
+const { default: PageReviewScreen } = await import("../../app/page-review");
+const { default: SharedPagesScreen } = await import("../../app/shared-pages");
+const { queryClient } = await import("../query/query");
 const { takePageReply } = await import("./pages");
 
 /** A finger at `x`,`y` on the screen, as React Native reports a touch. */
@@ -177,6 +252,34 @@ it("copies and opens links for a page only right after the person tapped it", as
   await act(async () => root.unmount());
 });
 
+it("asks the page's bot once per tap and answers every question the page waits on", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.spyOn(Date, "now").mockReturnValue(4_000_000);
+  const root = createRoot(document.createElement("div"));
+  await act(async () => root.render(createElement(PageScreen)));
+  expect(host.html).toContain('"ask":true');
+  const answers: object[] = [];
+  const ask = (id: string) =>
+    act(async () => {
+      host.message?.(JSON.stringify({ type: "rakazo-page:ask", id, text: "Next?" }), (answer) =>
+        answers.push(answer),
+      );
+      await flush();
+    });
+  await ask("before-tap");
+  host.touch.onTouchStart?.(at(10, 10));
+  host.touch.onTouchEnd?.(at(10, 10));
+  await ask("tapped");
+  await ask("same-tap");
+  expect(host.asked).toEqual(["Next?"]);
+  expect(answers).toEqual([
+    { type: "rakazo-page:answer", id: "before-tap", ok: false },
+    { type: "rakazo-page:answer", id: "tapped", ok: true, text: "Step two" },
+    { type: "rakazo-page:answer", id: "same-tap", ok: false },
+  ]);
+  await act(async () => root.unmount());
+});
+
 it("does not let a page that reloads right after a tap act on that tap", async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.spyOn(Date, "now").mockReturnValue(3_000_000);
@@ -225,7 +328,7 @@ it("puts a tapped reply in the page's own chat unsent, closing the page or openi
   // Opened from its chat: the reply goes back there.
   host.routes = [{ name: "thread", params: { botId: "bot-1" } }];
   let root = await show();
-  expect(host.html).toContain('{"reply":true}');
+  expect(host.html).toContain('{"reply":true,"ask":true}');
   await act(async () =>
     host.message?.(JSON.stringify({ type: "rakazo-page:reply", text: "B" }), () => {}),
   );
@@ -258,7 +361,7 @@ it("puts a tapped reply in the page's own chat unsent, closing the page or openi
   host.went = [];
   host.page = { ...host.page, botId: null, groupId: null };
   root = await show();
-  expect(host.html).toContain('{"reply":false}');
+  expect(host.html).toContain('{"reply":false,"ask":false}');
   await tapThenReply("Orphan");
   expect(host.went).toEqual([]);
   host.page = { ...host.page, botId: "bot-1" };
@@ -310,10 +413,96 @@ it("closes and shares the page with the native icon buttons", async () => {
     ]),
   ).toEqual([
     ["Close", "xmark close", ""],
+    ["Review page", "bubble chatbubble-outline", ""],
     ["Share", "square.and.arrow.up share-outline", ""],
   ]);
   await act(async () => buttons[0]!.click());
   await act(async () => buttons[1]!.click());
-  expect(host.went).toEqual(["back", { pathname: "/page-share", params: { pageId: "page-1" } }]);
+  await act(async () => buttons[2]!.click());
+  expect(host.went).toEqual([
+    "back",
+    { pathname: "/page-review", params: { pageId: "page-1" } },
+    { pathname: "/page-share", params: { pageId: "page-1" } },
+  ]);
   await act(async () => root.unmount());
+});
+
+it("discovers the Page headings even when Comments opens before the viewer loads", async () => {
+  const documentReady = deferred<void>();
+  host.documentReady = documentReady.promise;
+  host.message = undefined;
+  queryClient.clear();
+  const root = createRoot(document.createElement("div"));
+  try {
+    await act(async () => root.render(createElement(PageReviewScreen)));
+    await act(flush);
+    expect(host.headerAction?.label).toBe("Comments");
+    await act(async () => host.headerAction!.onPress());
+    const anchor = { section: "Timeline", sectionOccurrence: 0 };
+    await act(async () => {
+      documentReady.resolve();
+      await flush();
+    });
+    await act(flush);
+    expect(host.message).toBeTypeOf("function");
+    await act(async () =>
+      host.message?.(
+        JSON.stringify({ type: "rakazo-page:sections", sections: ["Timeline"], anchors: [anchor] }),
+        () => undefined,
+      ),
+    );
+    expect(host.reviewSections).toEqual([anchor]);
+  } finally {
+    host.documentReady = undefined;
+    await act(async () => root.unmount());
+  }
+});
+
+it("keeps a publish error scoped to the draft whose save failed", async () => {
+  queryClient.clear();
+  const container = document.createElement("div");
+  const root = createRoot(container);
+  const press = async (title: string) => {
+    const button = [...container.querySelectorAll("button")].find(
+      (row) => row.textContent === title,
+    );
+    await act(async () => button!.click());
+    await act(flush);
+  };
+  try {
+    await act(async () => root.render(createElement(PageReviewScreen)));
+    await act(flush);
+    await act(async () => host.headerAction!.onPress());
+    await press("first draft");
+    expect(host.headerAction?.label).toBe("Publish revision");
+    await act(async () => host.headerAction!.onPress());
+    await act(flush);
+    expect(container.textContent).toContain("Draft could not publish");
+    await press("Back to comments");
+    await press("second draft");
+    expect(container.textContent).not.toContain("Draft could not publish");
+  } finally {
+    await act(async () => root.unmount());
+  }
+});
+
+it("retries a failed shared Pages list without leaving the screen", async () => {
+  queryClient.clear();
+  host.sharedListFails = true;
+  const container = document.createElement("div");
+  const root = createRoot(container);
+  try {
+    await act(async () => root.render(createElement(SharedPagesScreen)));
+    await act(flush);
+    expect(container.textContent).toContain("Shared Pages could not load");
+    const retry = container.querySelector<HTMLButtonElement>('button[aria-label="Try again"]');
+    expect(retry).not.toBeNull();
+    host.sharedListFails = false;
+    await act(async () => retry!.click());
+    await act(flush);
+    expect(container.textContent).toBe("Shared plan");
+  } finally {
+    host.sharedListFails = false;
+    await act(async () => root.unmount());
+  }
 });

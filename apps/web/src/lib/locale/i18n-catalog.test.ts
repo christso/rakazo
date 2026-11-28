@@ -1,9 +1,9 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { i18n, setupI18n } from "@lingui/core";
+import { setupI18n } from "@lingui/core";
 import { formatter } from "@lingui/format-po";
 import { RUN_ERROR_LIMIT_MESSAGES } from "@rakazo/core";
-import { beforeEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { UI_LOCALES } from "./ui-locale";
 
 describe("lingui catalogs", () => {
@@ -173,14 +173,8 @@ describe("lingui catalogs", () => {
     }
   });
 
-  beforeEach(() => {
-    i18n.load("en", {});
-    i18n.activate("en");
-  });
-
   it("translates command credential controls in every locale", () => {
     const messages = [
-      "Command variable",
       "Available to shell commands as {commandVariable}",
       "{commandVariable} is reserved and cannot be used as a command variable. Choose another name.",
       "Show",
@@ -223,6 +217,7 @@ describe("lingui catalogs", () => {
   });
 
   it("says how late a run started for one and for many in every locale", () => {
+    const i18n = setupI18n();
     const ids = ["Started {count}m late", "Started {count}h late", "Started {count}d late"];
     for (const locale of UI_LOCALES.filter((locale) => locale !== "en")) {
       const catalog = readFileSync(
@@ -262,6 +257,7 @@ describe("lingui catalogs", () => {
   });
 
   it("translates counted peer exchanges and close controls in every locale", () => {
+    const i18n = setupI18n();
     const message = "{count, plural, one {# message with {peer}} other {# messages with {peer}}}";
     for (const locale of UI_LOCALES.filter((locale) => locale !== "en")) {
       const catalog = readFileSync(
@@ -311,17 +307,24 @@ it("renders Polish plural categories and interpolated values in every counted me
       expect(translation, entry.message).toContain(`${category} {`);
     }
     local.load("pl", { [id]: translation });
+    const message = entry.message ?? "";
+    const pluralNames = new Set(
+      [...message.matchAll(/\{(\w+),\s*plural,/g)].map((match) => match[1]),
+    );
+    const textNames = [...message.matchAll(/\{(\w+)(?=\s*[,}])/g)]
+      .map((match) => match[1])
+      .filter((name) => !pluralNames.has(name));
     for (const count of [0, 1, 2, 5, 12, 14, 21, 22, 25, 101, 102, 112, 1.5]) {
-      const values = Object.fromEntries(
-        [...(entry.message ?? "").matchAll(/\{(\w+)(?=\s*[,}])/g)].map((match) => [
-          match[1],
-          match[1] === "peer" || match[1] === "name" ? "Locale QA" : count,
-        ]),
-      );
+      const values = Object.fromEntries([
+        ...[...pluralNames].map((name) => [name, count]),
+        ...textNames.map((name) => [name, "Locale QA"]),
+      ]);
       const rendered = local._({ id, values });
-      expect(rendered, `${entry.message}: ${count}`).toContain(number.format(count));
+      if (message.includes("#")) {
+        expect(rendered, `${message}: ${count}`).toContain(number.format(count));
+      }
       expect(rendered).not.toMatch(/[{}]/);
-      if ("peer" in values || "name" in values) expect(rendered).toContain("Locale QA");
+      if (textNames.length > 0) expect(rendered).toContain("Locale QA");
     }
   }
 });

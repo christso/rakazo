@@ -219,9 +219,10 @@ it("only selects and opens the newest notification when an older account verifie
       },
     },
   });
-  const older = openNotificationResponse(tap("work"));
+  const navigation = { getRootState: vi.fn(), dispatch: vi.fn() };
+  const older = openNotificationResponse(tap("work"), navigation);
   await vi.waitFor(() => expect(pending.has("work")).toBe(true));
-  const newer = openNotificationResponse(tap("family"));
+  const newer = openNotificationResponse(tap("family"), navigation);
   await vi.waitFor(() => expect(pending.has("family")).toBe(true));
   pending.get("work")!.resolve(Response.json({ user: { id: "work", email: "work@example.test" } }));
   expect(await older).toBe(false);

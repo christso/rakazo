@@ -8,12 +8,12 @@ import type {
   NotificationProvider,
 } from "@rakazo/adapter-kit";
 import { pushReceiptJob } from "@rakazo/adapter-kit";
-import { ResponseTooLargeError } from "@rakazo/core";
+import { chatAlertNeedsAttention } from "@rakazo/contracts";
+import { ResponseTooLargeError, readResponseWithin } from "@rakazo/core";
 import { bestEffort, getLogger } from "@rakazo/logging";
 import type { IncomingCallPush, VoipPushProvider } from "../calls/apns-voip.js";
 import { combineSignals } from "../integrations/connector-safety.js";
 import { credentialDigest } from "../secrets/credential-digest.js";
-import { readBodyCapped, withAbort } from "../web/web-ssrf.js";
 import type { PushRecord, PushTokenStore } from "./push-token-store.js";
 import { PushSessionEndedError } from "./push-token-store.js";
 
@@ -185,6 +185,7 @@ function expoPushReceipts(body: unknown): Record<string, ExpoPushTicket | undefi
 export type ExpoPushOptions = {
   voip?: VoipPushProvider;
   sessionExpiresAt?: PushSessionExpiresAt;
+  notificationSounds?: (userId: string) => Promise<boolean>;
   /** Schedules the receipt check; without it receipts are not read. */
   jobs?: JobPublisher;
   /** Sent as a bearer token when the Expo project enforces enhanced push security. */
@@ -200,6 +201,7 @@ export type ExpoPushOptions = {
 export class ExpoPushProvider implements NotificationProvider {
   private readonly voip?: VoipPushProvider;
   private readonly sessionExpiresAt?: PushSessionExpiresAt;
+  private readonly notificationSounds?: ExpoPushOptions["notificationSounds"];
   private readonly jobs?: JobPublisher;
   private readonly accessToken?: string;
   private readonly retryDelaysMs: readonly number[];
@@ -210,6 +212,7 @@ export class ExpoPushProvider implements NotificationProvider {
   ) {
     this.voip = options.voip;
     this.sessionExpiresAt = options.sessionExpiresAt;
+    this.notificationSounds = options.notificationSounds;
     this.jobs = options.jobs;
     this.accessToken = options.accessToken?.trim() || undefined;
     this.retryDelaysMs = options.retryDelaysMs ?? EXPO_PUSH_RETRY_DELAYS_MS;
@@ -346,8 +349,18 @@ export class ExpoPushProvider implements NotificationProvider {
    */
   async deliver(message: NotificationMessage, context: AdapterContext): Promise<ExpoPushDelivery> {
     const registrations = await this.deliverableTokens(context.userId);
+    const urgent = chatAlertNeedsAttention(message.kind);
+    const sound =
+      urgent &&
+      registrations.length > 0 &&
+      (await bestEffort(
+        "read notification sound preference",
+        this.notificationSounds?.(context.userId),
+      )) === true;
     const results = await Promise.allSettled(
-      registrations.map((registration) => this.deliverTo(registration, message, context)),
+      registrations.map((registration) =>
+        this.deliverTo(registration, message, context, urgent, sound),
+      ),
     );
     const delivered = results.some(
       (result) => result.status === "fulfilled" && result.value === "delivered",
@@ -370,6 +383,8 @@ export class ExpoPushProvider implements NotificationProvider {
     registration: PushRecord,
     message: NotificationMessage,
     context: AdapterContext,
+    urgent: boolean,
+    sound: boolean,
   ): Promise<ExpoPushDelivery> {
     const token = registration.token;
     const device = this.options.deviceForToken
@@ -400,8 +415,6 @@ export class ExpoPushProvider implements NotificationProvider {
       collapseId: tag,
       ...(badge === undefined ? {} : { badge }),
     };
-    const urgent =
-      message.kind === "help" || message.kind === "takeover" || message.kind === "failure";
     const build = () =>
       registration.presentation === "android_sender"
         ? {
@@ -413,6 +426,7 @@ export class ExpoPushProvider implements NotificationProvider {
               ...data,
               notificationTitle: title,
               notificationBody: text,
+              ...(sound ? { notificationSound: true } : {}),
               ...(badge === undefined ? {} : { notificationBadge: badge }),
             },
           }
@@ -425,6 +439,7 @@ export class ExpoPushProvider implements NotificationProvider {
             data,
             ...(message.sender ? { mutableContent: true } : {}),
             ...(urgent ? { priority: "high" } : {}),
+            ...(sound ? { sound: "default" } : {}),
           };
     let payload = build();
     while (Buffer.byteLength(JSON.stringify(payload)) > MAX_PUSH_PAYLOAD_BYTES && bodyChars > 1) {
@@ -610,23 +625,15 @@ function capped(text: string, maxChars: number): string {
 }
 
 async function readExpoPushBody(response: Response, signal: AbortSignal): Promise<unknown> {
-  const declared = Number(response.headers.get("content-length") ?? 0);
-  if (Number.isFinite(declared) && declared > MAX_EXPO_PUSH_RESPONSE_BYTES) {
-    const cancel = response.body?.cancel() ?? Promise.resolve();
-    await withAbort(
-      cancel.catch(() => undefined),
-      signal,
-    ).catch(() => undefined);
-    throw new ResponseTooLargeError(RESPONSE_TOO_LARGE);
-  }
+  const bytes = await readResponseWithin(response, {
+    maxBytes: MAX_EXPO_PUSH_RESPONSE_BYTES,
+    tooLargeMessage: RESPONSE_TOO_LARGE,
+    signal,
+  });
+  if (bytes.byteLength === 0) return undefined;
   try {
-    const bytes = await readBodyCapped(response, MAX_EXPO_PUSH_RESPONSE_BYTES, signal);
-    if (bytes.byteLength === 0) return undefined;
     return JSON.parse(new TextDecoder().decode(bytes)) as unknown;
   } catch (error) {
-    if (error instanceof ResponseTooLargeError) {
-      throw new ResponseTooLargeError(RESPONSE_TOO_LARGE, { cause: error });
-    }
     if (error instanceof SyntaxError) return undefined;
     throw error;
   }

@@ -3,22 +3,27 @@ import {
   canonicalPiProviderId,
   compatibleEndpointPresets,
   OPENAI_COMPATIBLE_PROVIDER_ID,
+  providerDisplayName,
   savedCompatibleEndpointMatches,
 } from "@rakazo/contracts";
 import { isFirstModelConnection, popularModelProvidersFirst } from "@rakazo/core";
 import { fetchFresh } from "@rakazo/core/query";
+import { localizeModelEntry } from "@rakazo/i18n/model-provider";
+import { bestEffort } from "@rakazo/logging/best-effort";
 import { isCancelledError, useQuery } from "@tanstack/react-query";
 import type { Href } from "expo-router";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, ScrollView, StyleSheet, Text } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { MediaModelSettings } from "../../components/models/media-model-settings";
 import { ModelProviders } from "../../components/models/model-providers";
 import type {
   ConnectableProvider,
   ModelConnectIntent,
 } from "../../components/models/model-role-settings";
 import { ModelRoleSettings } from "../../components/models/model-role-settings";
+import { OrganizationModelSettings } from "../../components/models/organization-model-settings";
 import { SpaceBotsModel } from "../../components/settings/space-bots-model";
 import { LoadFailure } from "../../components/ui/load-failure";
 import type { MobileBot, MobileModel, MobileModelCredential } from "../../lib/api/mobile-types";
@@ -70,6 +75,8 @@ export default function Models() {
   const bots =
     useQuery({ ...rpcQuery("bots/list", undefined, spaceId), enabled: false }, queryClient).data ??
     noBots;
+  const mediaRead = rpcQuery("models/media", { scope: target.scope }, spaceId);
+  const media = useQuery({ ...mediaRead, enabled: false }, queryClient).data ?? null;
   const [loadError, setLoadError] = useState<string | null>(null);
   const openedRef = useRef(false);
   const pickerRequestRef = useRef<string | null>(null);
@@ -100,6 +107,13 @@ export default function Models() {
           fetchFresh(queryClient, rpcQuery("bots/list", undefined, spaceId), { reuse }).catch(
             () => undefined,
           ),
+          // Without it only the image and video model rows are missing.
+          bestEffort(
+            "read the image and video models",
+            fetchFresh(queryClient, rpcQuery("models/media", { scope: target.scope }, spaceId), {
+              reuse,
+            }),
+          ),
         ]);
         setLoadError(null);
       } catch (err) {
@@ -107,7 +121,7 @@ export default function Models() {
         if (!isCancelledError(err)) setLoadError(errorText(err, t`Could not load model settings`));
       }
     },
-    [spaceId, t],
+    [spaceId, target.scope, t],
   );
 
   useFocusEffect(
@@ -169,13 +183,13 @@ export default function Models() {
     });
 
   /** Every provider, popular first, plus the hosted presets of the compatible one. */
-  const allProviders = useMemo(() => {
+  const allProviders = (() => {
     const grouped = new Map<string, ConnectableProvider>();
     for (const entry of catalog) {
       if (grouped.has(entry.provider)) continue;
       grouped.set(entry.provider, {
         id: entry.provider,
-        name: entry.providerName ?? entry.provider,
+        name: providerDisplayName(localizeModelEntry(entry)),
       });
     }
     const all = [...grouped.values()];
@@ -186,10 +200,10 @@ export default function Models() {
       (provider) => provider.id,
       (provider) => provider.name,
     );
-  }, [catalog]);
+  })();
 
   // Deployment-funded providers stay listed so people can still add their own key.
-  const providers = useMemo(() => {
+  const providers = (() => {
     const connected = new Set(credentials.map((entry) => canonicalPiProviderId(entry.provider)));
     const savedPreset = (baseUrl: string) =>
       credentials.some(
@@ -202,7 +216,7 @@ export default function Models() {
         ? !savedPreset(provider.baseUrl)
         : !connected.has(canonicalPiProviderId(provider.id)),
     );
-  }, [allProviders, credentials]);
+  })();
 
   const providerKey = (provider: ConnectableProvider) =>
     `connect:${provider.id}:${provider.baseUrl ?? ""}`;
@@ -301,6 +315,11 @@ export default function Models() {
         ) : null}
         {me ? (
           <>
+            <OrganizationModelSettings
+              key={spaceId ?? me.spaceId}
+              spaceId={spaceId ?? me.spaceId}
+              providers={allProviders}
+            />
             <ModelRoleSettings
               {...shared}
               modelRole="main"
@@ -328,6 +347,15 @@ export default function Models() {
                 defaultLabel={t`Same as main model`}
               />
             )}
+            {media && !firstConnection ? (
+              <MediaModelSettings
+                view={media}
+                target={target}
+                scope={target.scope}
+                readKey={mediaRead.queryKey}
+                openPicker={pushModelPicker}
+              />
+            ) : null}
             {/* Connections are the account's in every Space, so a Space's override lists only its models. */}
             {target.scope === "account" && !firstConnection ? (
               <ModelProviders

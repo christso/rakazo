@@ -70,6 +70,7 @@ export const PAGE_KIT_COMPONENTS = [
   "MonthView",
   "WeekView",
   "DayView",
+  "Icon",
 ] as const;
 
 export type PageKitComponentName = (typeof PAGE_KIT_COMPONENTS)[number];
@@ -84,8 +85,19 @@ export const PAGE_HOOKS = [
   "useReducer",
 ] as const;
 
-/** Functions from the kit that are not components: the theme, sources and diagram layout. */
-export const PAGE_HELPERS = ["useTheme", "useSource", "computeDAGLayout", "copyText"] as const;
+/**
+ * Functions from the kit that are not components: the theme, sources, layout, saved values and
+ * the host requests a page's abilities come from.
+ */
+export const PAGE_HELPERS = [
+  "useTheme",
+  "useSource",
+  "computeDAGLayout",
+  "copyText",
+  "usePageState",
+  "askBot",
+  "notify",
+] as const;
 
 export type PageHelperName = (typeof PAGE_HELPERS)[number];
 

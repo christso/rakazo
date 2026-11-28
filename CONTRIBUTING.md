@@ -35,7 +35,7 @@ Run `pnpm install --frozen-lockfile` when you need to run or test the worktree.
 | `pnpm test:computer-replay` | Real Pi and Docker Chromium against a local model fixture. Needs the computer image; no keys or Electron windows.                                   |
 | `pnpm test:evals --list`    | List agent-quality cases. Add `--live` and a model connection to measure repeated real-model task success.                                          |
 | `pnpm test:computer`        | Real vision model + E2B desktop. Needs keys; see [computer verification](docs/computer-runtime.md#verification). Not PR CI.                         |
-| `pnpm check`                | TypeScript (`tsc`) across the monorepo.                                                                                                             |
+| `pnpm check`                | TypeScript checks via `tsrs` and Astro's own checker for the marketing site.                                                                        |
 | `pnpm lint`                 | Biome lint and format check.                                                                                                                        |
 
 PR CI always runs `pnpm lint`. Typechecks and unit tests target affected packages and
@@ -82,7 +82,7 @@ generated `*.js`/`*.mjs` catalog files or unrelated changes to existing catalogs
 
 Update the shared and platform locale tests, including normalization and plural rules, and a
 UI E2E scenario for each supported surface. The marketing homepage in `apps/www` and the
-native Electron setup window and menus (`apps/desktop/src/main/i18n.ts` and `apps/desktop/src/main/locales/`) have
+native Electron setup window and menus (`apps/desktop/src/main/locale-catalogs.ts` and `apps/desktop/src/main/locales/`) have
 separate localization paths; scope and test those changes explicitly instead of assuming the
 web catalog covers them.
 
@@ -125,7 +125,7 @@ capability config, fixtures, logs, or snapshots; use the encrypted secret store 
 
 - Keep PRs small and easy to review.
 - Target the `main` branch.
-- Describe why the change is needed, what changed, and **how you tested** (e.g. `pnpm test`, manual steps).
+- Title and describe it as [AGENTS.md](AGENTS.md) says: a plain-sentence title, then What, Why, Changes and Tested (the PR template has the headings).
 - Link related issues when applicable.
 
 ## Contact

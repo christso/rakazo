@@ -1,17 +1,55 @@
 import { createHash, randomBytes } from "node:crypto";
-import type { SecretStore } from "@rakazo/adapter-kit";
+import type { AdapterContext, ArtifactStore, SecretStore } from "@rakazo/adapter-kit";
 import { forgetPageShareSecrets } from "@rakazo/adapters";
-import type { Actor, PageDetail, PageSummary, PageVisibility, SharedPage } from "@rakazo/contracts";
-import { pageShareTokenFromSlug, pageShareUrl } from "@rakazo/contracts";
+import type {
+  Actor,
+  PageDetail,
+  PageImageSource,
+  PageSummary,
+  PageVisibility,
+  SharedPage,
+} from "@rakazo/contracts";
+import {
+  knownPageAbilities,
+  PageIconColorSchema,
+  pageReviewPath,
+  pageShareTokenFromSlug,
+  pageShareUrl,
+} from "@rakazo/contracts";
 import { ClientError, escapeSearchWildcards } from "@rakazo/core";
-import type { PageShareSecret, Prisma, PrismaClient } from "@rakazo/db";
-import { IsolationError, isRecordNotFound, runAsSystem } from "@rakazo/db";
+import type {
+  PageShareSecret,
+  Prisma,
+  PrismaClient,
+  StoredPageImage,
+  ThreadEvents,
+} from "@rakazo/db";
+import {
+  cancelPageGrantRequests,
+  findPageVersionImage,
+  IsolationError,
+  isRecordNotFound,
+  lockPage,
+  pageImageSource,
+  pageImageStorageKeys,
+  pageVersionImages,
+  readPageState,
+  runAsSystem,
+  signalPage,
+  signalPageUsers,
+} from "@rakazo/db";
 import { getLogger } from "@rakazo/logging";
 
 const PAGE_SHARE_SECRET_KIND = "page_share";
 const DEFAULT_LIST_LIMIT = 30;
 
-type PageDeps = { prisma: PrismaClient; secrets: SecretStore; webOrigin: string };
+type PageDeps = {
+  prisma: PrismaClient;
+  secrets: SecretStore;
+  artifacts: ArtifactStore;
+  webOrigin: string;
+  events?: ThreadEvents;
+};
 
 const summarySelect = {
   id: true,
@@ -21,6 +59,8 @@ const summarySelect = {
   visibility: true,
   currentVersion: true,
   pinnedAt: true,
+  icon: true,
+  iconColor: true,
   createdAt: true,
   updatedAt: true,
 } satisfies Prisma.PageSelect;
@@ -33,9 +73,12 @@ function pageSummary(row: SummaryRow): PageSummary {
     title: row.title,
     botId: row.botId,
     groupId: row.groupId,
-    visibility: row.visibility === "link" ? "link" : "private",
+    visibility:
+      row.visibility === "link" || row.visibility === "people" ? row.visibility : "private",
     currentVersion: row.currentVersion,
     pinned: row.pinnedAt !== null,
+    icon: row.icon,
+    iconColor: PageIconColorSchema.safeParse(row.iconColor).data ?? null,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
@@ -64,6 +107,15 @@ async function requirePage(prisma: PrismaClient, actor: Actor, pageId: string) {
   });
   if (!row) throw new IsolationError();
   return row;
+}
+
+/** Title, icon and color of the actor's own page, without its code. */
+export async function getPageSummary(
+  prisma: PrismaClient,
+  actor: Actor,
+  pageId: string,
+): Promise<PageSummary> {
+  return pageSummary(await requirePage(prisma, actor, pageId));
 }
 
 export class PageListCursorError extends ClientError {
@@ -140,8 +192,9 @@ export async function listPages(
 
 async function shareUrlFor(
   deps: PageDeps,
-  row: { title: string; visibility: string; shareSecretId: string | null },
+  row: { id: string; title: string; visibility: string; shareSecretId: string | null },
 ): Promise<string | null> {
+  if (row.visibility === "people") return new URL(pageReviewPath(row.id), deps.webOrigin).href;
   if (row.visibility !== "link" || !row.shareSecretId) return null;
   const secret = await deps.prisma.secret.findUnique({
     where: { id: row.shareSecretId },
@@ -159,21 +212,29 @@ export async function getPage(
 ): Promise<PageDetail> {
   const row = await requirePage(deps.prisma, actor, input.pageId);
   const version = input.version ?? row.currentVersion;
-  const [stored, owner] = await Promise.all([
+  const latest = version === row.currentVersion;
+  const [stored, owner, readerState] = await Promise.all([
     deps.prisma.pageVersion.findUnique({
       where: { pageId_version: { pageId: row.id, version } },
-      select: { code: true },
+      select: { id: true, code: true, images: true, abilities: true },
     }),
     deps.prisma.user.findUnique({
       where: { id: actor.userId },
       select: { name: true, image: true },
     }),
+    latest
+      ? runAsSystem("read the owner's saved page values", () =>
+          readPageState(deps.prisma, row.id, actor.userId),
+        )
+      : undefined,
   ]);
   if (!stored) throw new IsolationError();
   return {
     ...pageSummary(row),
     version,
     code: stored.code,
+    images: pageVersionImages(stored),
+    abilities: knownPageAbilities(stored.abilities),
     owner: { name: owner?.name ?? "", image: owner?.image ?? null },
     // Cards skip the secret store; a token it cannot read hides only the link.
     shareUrl: input.link
@@ -182,6 +243,7 @@ export async function getPage(
           return null;
         })
       : null,
+    ...(readerState ? { readerState } : {}),
   };
 }
 
@@ -190,9 +252,10 @@ export async function renamePage(
   actor: Actor,
   pageId: string,
   title: string,
+  events?: ThreadEvents,
 ) {
   await requirePage(prisma, actor, pageId);
-  return pageSummary(
+  const renamed = pageSummary(
     await stillThere(
       prisma.page.update({
         where: { id: pageId },
@@ -201,6 +264,8 @@ export async function renamePage(
       }),
     ),
   );
+  if (events) await signalPage(prisma, events, pageId);
+  return renamed;
 }
 
 export async function pinPage(prisma: PrismaClient, actor: Actor, pageId: string, pinned: boolean) {
@@ -238,39 +303,57 @@ async function swapPageShare(
     secret: { id: string; data: Prisma.SecretUncheckedCreateInput };
     unreadable: string | null;
   } | null,
-): Promise<{ kept: boolean; replaced: PageShareSecret | null }> {
+  scope: { spaceId: string; userId: string },
+  visibility: PageVisibility,
+): Promise<{ kept: boolean; replaced: PageShareSecret | null; revoked: (string | null)[] }> {
   for (let attempt = 0; ; attempt++) {
-    const outcome = await prisma
-      .$transaction(async (tx) => {
+    const outcome = await runAsSystem("change sharing on an owned page", () =>
+      prisma.$transaction(async (tx) => {
         const current = await tx.page.findUnique({
-          where: { id: pageId },
-          select: { shareSecretId: true },
+          where: { id: pageId, spaceId: scope.spaceId, userId: scope.userId },
+          select: { shareSecretId: true, visibility: true },
         });
         if (!current) throw new IsolationError();
         if (next && current.shareSecretId && current.shareSecretId !== next.unreadable) {
-          return { kept: true, replaced: null };
+          return { kept: true, replaced: null, revoked: [] };
         }
         if (next) await tx.secret.create({ data: next.secret.data });
         const moved = await tx.page.updateMany({
-          where: { id: pageId, shareSecretId: current.shareSecretId },
+          where: {
+            id: pageId,
+            shareSecretId: current.shareSecretId,
+            visibility: current.visibility,
+          },
           data: next
             ? { visibility: "link", shareTokenHash: next.tokenHash, shareSecretId: next.secret.id }
-            : { visibility: "private", shareTokenHash: null, shareSecretId: null },
+            : { visibility, shareTokenHash: null, shareSecretId: null },
         });
         // Rolling back drops the new secret with the failed swap.
         if (moved.count === 0) throw new PageShareConflictError();
-        if (!current.shareSecretId) return { kept: false, replaced: null };
+        const revoked =
+          current.visibility === "people" && visibility !== "people"
+            ? await tx.pageGrant.findMany({ where: { pageId }, select: { id: true, userId: true } })
+            : [];
+        if (revoked.length) {
+          await cancelPageGrantRequests(
+            tx,
+            revoked.map(({ id }) => id),
+          );
+          await tx.pageGrant.deleteMany({ where: { pageId } });
+        }
+        const userIds = revoked.map(({ userId }) => userId);
+        if (!current.shareSecretId) return { kept: false, replaced: null, revoked: userIds };
         const replaced = await tx.secret.findUnique({
           where: { id: current.shareSecretId },
           select: { id: true, ciphertext: true },
         });
         await tx.secret.deleteMany({ where: { id: current.shareSecretId } });
-        return { kept: false, replaced };
-      })
-      .catch((error: unknown) => {
-        if (error instanceof PageShareConflictError && attempt === 0) return null;
-        throw error;
-      });
+        return { kept: false, replaced, revoked: userIds };
+      }),
+    ).catch((error: unknown) => {
+      if (error instanceof PageShareConflictError && attempt === 0) return null;
+      throw error;
+    });
     if (outcome) return outcome;
   }
 }
@@ -287,17 +370,31 @@ export async function setPageVisibility(
   signal: AbortSignal,
 ): Promise<{ visibility: PageVisibility; shareUrl: string | null }> {
   const row = await requirePage(deps.prisma, actor, input.pageId);
-  if (input.visibility === "private") {
-    const { replaced } = await swapPageShare(deps.prisma, row.id, null);
+  if (input.visibility !== "link") {
+    const { replaced, revoked } = await swapPageShare(
+      deps.prisma,
+      row.id,
+      null,
+      actor,
+      input.visibility,
+    );
     if (replaced) await forgetPageShareSecrets(deps.secrets, [replaced]);
-    return { visibility: "private", shareUrl: null };
+    if (deps.events) await signalPageUsers(deps.events, [actor.userId, ...revoked]);
+    return {
+      visibility: input.visibility,
+      shareUrl:
+        input.visibility === "people" ? new URL(pageReviewPath(row.id), deps.webOrigin).href : null,
+    };
   }
   let unreadable: string | null = null;
-  const existing = await shareUrlFor(deps, row).catch((error: unknown) => {
-    getLogger().error("page link token load", error);
-    unreadable = row.shareSecretId;
-    return null;
-  });
+  const existing =
+    row.visibility === "link"
+      ? await shareUrlFor(deps, row).catch((error: unknown) => {
+          getLogger().error("page link token load", error);
+          unreadable = row.shareSecretId;
+          return null;
+        })
+      : null;
   if (existing) return { visibility: "link", shareUrl: existing };
   const token = randomBytes(32).toString("base64url");
   const stored = await deps.secrets.put(token, {
@@ -309,20 +406,26 @@ export async function setPageVisibility(
   });
   let swapped: Awaited<ReturnType<typeof swapPageShare>>;
   try {
-    swapped = await swapPageShare(deps.prisma, row.id, {
-      tokenHash: hashPageShareToken(token),
-      secret: {
-        id: stored.id,
-        data: {
+    swapped = await swapPageShare(
+      deps.prisma,
+      row.id,
+      {
+        tokenHash: hashPageShareToken(token),
+        secret: {
           id: stored.id,
-          userId: actor.userId,
-          spaceId: actor.spaceId,
-          kind: PAGE_SHARE_SECRET_KIND,
-          ciphertext: stored.ciphertext,
+          data: {
+            id: stored.id,
+            userId: actor.userId,
+            spaceId: actor.spaceId,
+            kind: PAGE_SHARE_SECRET_KIND,
+            ciphertext: stored.ciphertext,
+          },
         },
+        unreadable,
       },
-      unreadable,
-    });
+      actor,
+      "link",
+    );
   } catch (error) {
     await forgetPageShareSecrets(deps.secrets, [stored]);
     throw error;
@@ -330,38 +433,53 @@ export async function setPageVisibility(
   if (swapped.kept) {
     // Another turn-on won while this one sealed its token: both callers get the winner's link.
     await forgetPageShareSecrets(deps.secrets, [stored]);
-    const winner = await shareUrlFor(deps, await requirePage(deps.prisma, actor, row.id));
+    const latest = await requirePage(deps.prisma, actor, row.id);
+    const winner = latest.visibility === "link" ? await shareUrlFor(deps, latest) : null;
     if (winner) return { visibility: "link", shareUrl: winner };
     throw new PageShareConflictError();
   }
   if (swapped.replaced) await forgetPageShareSecrets(deps.secrets, [swapped.replaced]);
+  if (deps.events) await signalPageUsers(deps.events, [actor.userId, ...swapped.revoked]);
   return { visibility: "link", shareUrl: pageShareUrl(deps.webOrigin, row.title, token) };
 }
 
 export async function removePage(deps: PageDeps, actor: Actor, pageId: string) {
   const row = await requirePage(deps.prisma, actor, pageId);
-  const removed = await deps.prisma.$transaction(async (tx) => {
-    // The deleted row's link, not the one read before: a share may have swapped it since.
-    const deleted = await stillThere(
-      tx.page.delete({ where: { id: row.id }, select: { shareSecretId: true } }),
-    );
-    if (!deleted.shareSecretId) return null;
-    const secret = await tx.secret.findUnique({
-      where: { id: deleted.shareSecretId },
-      select: { id: true, ciphertext: true },
-    });
-    await tx.secret.deleteMany({ where: { id: deleted.shareSecretId } });
-    return secret;
-  });
+  const { removed, reviewers, imageKeys } = await runAsSystem(
+    "remove an owned page and notify its reviewers",
+    () =>
+      deps.prisma.$transaction(async (tx) => {
+        if (deps.events) await lockPage(tx, pageId);
+        const reviewers = deps.events
+          ? (await tx.pageGrant.findMany({ where: { pageId }, select: { userId: true } })).map(
+              ({ userId }) => userId,
+            )
+          : [];
+        const imageKeys = await pageImageStorageKeys(tx, { id: row.id });
+        // The deleted row's link, not the one read before: a share may have swapped it since.
+        const deleted = await stillThere(
+          tx.page.delete({
+            where: { id: row.id, userId: actor.userId, spaceId: actor.spaceId },
+            select: { shareSecretId: true },
+          }),
+        );
+        if (!deleted.shareSecretId) return { removed: null, reviewers, imageKeys };
+        const secret = await tx.secret.findUnique({
+          where: { id: deleted.shareSecretId },
+          select: { id: true, ciphertext: true },
+        });
+        await tx.secret.deleteMany({ where: { id: deleted.shareSecretId } });
+        return { removed: secret, reviewers, imageKeys };
+      }),
+  );
+  await removePageImageFiles(deps.artifacts, actor, imageKeys);
+  if (deps.events) await signalPageUsers(deps.events, [actor.userId, ...reviewers]);
   if (removed) await forgetPageShareSecrets(deps.secrets, [removed]);
   return { ok: true as const };
 }
 
 /** The current version of a page shared by link, or null for any token that does not open one. */
-export async function readSharedPage(
-  prisma: PrismaClient,
-  token: string,
-): Promise<SharedPage | null> {
+async function sharedPageVersion(prisma: PrismaClient, token: string) {
   if (pageShareTokenFromSlug(token) !== token) return null;
   const page = await runAsSystem("page share link", () =>
     prisma.page.findUnique({
@@ -372,6 +490,8 @@ export async function readSharedPage(
         currentVersion: true,
         updatedAt: true,
         id: true,
+        userId: true,
+        spaceId: true,
         shareSecretId: true,
       },
     }),
@@ -381,14 +501,77 @@ export async function readSharedPage(
   const version = await runAsSystem("page share link", () =>
     prisma.pageVersion.findUnique({
       where: { pageId_version: { pageId: page.id, version: page.currentVersion } },
-      select: { code: true },
+      select: { id: true, pageId: true, code: true, images: true },
     }),
   );
-  if (!version) return null;
+  return version ? { page, version } : null;
+}
+
+export async function readSharedPage(
+  prisma: PrismaClient,
+  token: string,
+): Promise<SharedPage | null> {
+  const shared = await sharedPageVersion(prisma, token);
+  if (!shared) return null;
+  const { page, version } = shared;
   return {
     title: page.title,
     code: version.code,
+    images: pageVersionImages(version),
     version: page.currentVersion,
     updatedAt: page.updatedAt.toISOString(),
   };
+}
+
+export async function readSharedPageImage(
+  deps: { prisma: PrismaClient; artifacts: ArtifactStore },
+  token: string,
+  imageId: string,
+): Promise<PageImageSource | null> {
+  const shared = await sharedPageVersion(deps.prisma, token);
+  if (!shared) return null;
+  const image = await runAsSystem("page share link image", () =>
+    findPageVersionImage(deps.prisma, shared.version, imageId),
+  );
+  return image && readPageImage(deps.artifacts, shared.page, image);
+}
+
+function pageImageContext(
+  owner: Pick<Actor, "spaceId" | "userId">,
+  operationId: string,
+): AdapterContext {
+  const { spaceId, userId } = owner;
+  return {
+    operationId,
+    traceId: operationId,
+    spaceId,
+    userId,
+    signal: new AbortController().signal,
+  };
+}
+
+/** A stored page picture as the viewer embeds it, read from the page's own Space. */
+export async function readPageImage(
+  artifacts: ArtifactStore,
+  reader: { userId: string },
+  image: StoredPageImage,
+): Promise<PageImageSource> {
+  const context = pageImageContext(
+    { spaceId: image.spaceId, userId: reader.userId },
+    "page-image-read",
+  );
+  return pageImageSource(image, await artifacts.get(image.storageKey, context));
+}
+
+/** Removes deleted pages' pictures once the deletion commits; the rows are gone, so failures only log. */
+async function removePageImageFiles(
+  artifacts: ArtifactStore,
+  actor: Pick<Actor, "spaceId" | "userId">,
+  storageKeys: string[],
+) {
+  const context = pageImageContext(actor, "page-image-delete");
+  for (const result of await Promise.allSettled(
+    storageKeys.map((storageKey) => artifacts.remove(storageKey, context)),
+  ))
+    if (result.status === "rejected") getLogger().error("page picture cleanup", result.reason);
 }

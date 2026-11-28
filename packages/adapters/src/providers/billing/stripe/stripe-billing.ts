@@ -27,6 +27,7 @@ import {
 } from "@rakazo/contracts";
 import { readBoundedJsonResponse } from "@rakazo/core";
 import { z } from "zod";
+import { stripeInvoiceRefund } from "./stripe-invoice-refund.js";
 
 export const STRIPE_API_VERSION = "2026-09-30.endive";
 const WEBHOOK_TOLERANCE_SECONDS = 300;
@@ -171,6 +172,21 @@ export class StripeBillingProvider implements BillingProvider {
       interval: price.recurring.interval,
       intervalCount: price.recurring.interval_count,
     };
+  }
+
+  refundInvoice(
+    customerId: string,
+    invoice: string | undefined,
+    confirm: boolean,
+    amountMinor?: number,
+  ) {
+    return stripeInvoiceRefund(
+      { request: this.request.bind(this), listPages: this.listPages.bind(this) },
+      customerId,
+      invoice,
+      confirm,
+      amountMinor,
+    );
   }
 
   async createCustomer(input: { email: string; organizationId: string }) {
@@ -335,7 +351,7 @@ export class StripeBillingProvider implements BillingProvider {
   async changeByokPlan(
     customerId: string,
     subscriptionId: string,
-    { from, to }: { from: BillingByokPlan; to: BillingByokPlan },
+    { from, to, resume = false }: { from: BillingByokPlan; to: BillingByokPlan; resume?: boolean },
   ) {
     // Re-read just before charging: a credit checkout may have completed since the caller checked.
     const subscriptions = await this.listSubscriptions(customerId);
@@ -349,9 +365,9 @@ export class StripeBillingProvider implements BillingProvider {
       !item ||
       !isByokPlan(subscription) ||
       // Paid up and not cancelling: an overdue period must not be credited against the new plan.
-      (status !== "active" && status !== "trialing") ||
-      subscription.cancel_at_period_end ||
-      subscription.cancel_at != null ||
+      // Resuming takes only a cancelling trial, which has paid nothing to credit.
+      (resume ? status !== "trialing" : status !== "active" && status !== "trialing") ||
+      (Boolean(subscription.cancel_at_period_end) || subscription.cancel_at != null) !== resume ||
       // Still the one plan the caller saw, as own-key checkout creates it.
       subscription.items.data.length !== 1 ||
       (item.quantity ?? 1) !== 1 ||
@@ -367,6 +383,9 @@ export class StripeBillingProvider implements BillingProvider {
       items: [{ id: item.id, price: await this.byokPrice(to), quantity: 1 }],
       proration_behavior: "always_invoice",
       payment_behavior: "error_if_incomplete",
+      // An empty date clears a cancellation that was scheduled as a date.
+      ...(resume &&
+        (subscription.cancel_at_period_end ? { cancel_at_period_end: false } : { cancel_at: "" })),
     });
     return true;
   }
@@ -740,7 +759,28 @@ export class StripeBillingProvider implements BillingProvider {
 
   async getCustomerSubscription(customerId: string): Promise<BillingSubscriptionSnapshot | null> {
     const chosen = pickStripeSubscription(await this.listLiveSubscriptions(customerId));
-    return chosen ? toSnapshot(chosen.subscription, chosen.status) : null;
+    if (!chosen) return null;
+    const snapshot = toSnapshot(chosen.subscription, chosen.status);
+    if (snapshot.paidAt || grantsAccess(chosen.status)) return snapshot;
+    // One that stopped billing may have paid for earlier periods before its latest charge failed.
+    const paidAt = await this.firstPaymentAt(chosen.subscription.id);
+    return paidAt ? { ...snapshot, paidAt } : snapshot;
+  }
+
+  private async firstPaymentAt(subscriptionId: string) {
+    const invoices = await this.listPages(
+      `/v1/invoices?subscription=${encodeURIComponent(subscriptionId)}&status=paid`,
+      z.object({
+        total: z.number().int().nullish(),
+        status_transitions: z.object({ paid_at: z.number().int().nullish() }).nullish(),
+      }),
+    );
+    const paid = invoices.flatMap((invoice) =>
+      (invoice.total ?? 0) > 0 && invoice.status_transitions?.paid_at
+        ? [invoice.status_transitions.paid_at]
+        : [],
+    );
+    return paid.length ? fromSeconds(Math.min(...paid)) : null;
   }
 
   async updateSeats(customerId: string, seats: number) {

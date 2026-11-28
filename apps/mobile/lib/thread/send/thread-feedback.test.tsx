@@ -769,7 +769,8 @@ describe("scoped mobile outbox", () => {
       plan: resolveComposerSendPlan({ text, mentions, hasAttachments: true }),
     };
     const attempt = feedback.sendAttempt(sendPayload);
-    const deliver = () => deliverSend(sendPayload, attempt, request as unknown as typeof rpc);
+    const deliver = () =>
+      deliverSend(sendPayload, attempt, request as unknown as typeof rpc, () => "phone-proof");
     request.mockRejectedValueOnce(new Error("Upload failed"));
     await expect(deliver()).rejects.toThrow("Upload failed");
     expect(request.mock.calls.map(([proc]) => proc)).toEqual(["artifacts/create"]);
@@ -794,6 +795,7 @@ describe("scoped mobile outbox", () => {
       text: "Hello",
       artifactIds: ["artifact-a"],
       routineIds: ["routine-1", "routine-2"],
+      nativeCalendarDeviceKey: "phone-proof",
     });
     expect(retried).toEqual(first);
   });
@@ -1172,6 +1174,52 @@ describe("scoped mobile outbox", () => {
     expect(request).toHaveBeenCalledOnce();
     expect(notDelivered).not.toHaveBeenCalled();
   });
+  it("resumes the ordered outbox after Retry-After without another user action", async () => {
+    vi.useFakeTimers();
+    try {
+      request.mockRejectedValueOnce(
+        new AiConsentBlocked(
+          "Consent check",
+          Object.assign(new Error("Slow down"), { status: 429, retryAfterMs: 2_000 }),
+        ),
+      );
+      const attempt = feedback.sendAttempt({ ...payload("First"), attachments: [] });
+      await act(async () => {
+        await feedback.send(attempt);
+        await feedback.send(feedback.sendAttempt({ ...payload("Second"), attachments: [] }), true);
+        await vi.advanceTimersByTimeAsync(1_999);
+      });
+      expect(request).toHaveBeenCalledOnce();
+      await act(async () => void (await vi.advanceTimersByTimeAsync(1)));
+      expect(request.mock.calls.map(([, body]) => body)).toMatchObject([
+        { text: "First" },
+        { text: "First" },
+        { text: "Second" },
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("preserves a forced retry during the rate-limit wait", async () => {
+    vi.useFakeTimers();
+    try {
+      request.mockRejectedValueOnce(
+        Object.assign(new Error("Slow down"), { status: 429, retryAfterMs: 2_000 }),
+      );
+      const attempt = feedback.sendAttempt({ ...payload("First"), attachments: [] });
+      await act(async () => void (await feedback.send(attempt)));
+      reachable = false;
+      await sendWaitingMessages(true);
+      expect(request).toHaveBeenCalledOnce();
+
+      await act(async () => void (await vi.advanceTimersByTimeAsync(2_000)));
+      expect(attempt.acceptedSeq).toBe(42);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   describe("a send in flight while a password change replaces the session", () => {
     let current: typeof scope | null;
     let refuse: (() => void) | undefined;

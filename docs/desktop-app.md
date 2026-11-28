@@ -16,7 +16,9 @@ The first time it opens, the app asks which server to use:
   the Docker Desktop download (Docker Engine on Linux) and carries on by itself once Docker is
   installed and open; if Docker is installed but stopped, the app opens it. Everything, including
   your bots' computers, then
-  runs on your machine. It is yours alone: once you create your account, it accepts no other.
+  runs on your machine. It is yours alone: once you create your account, it accepts no other, and
+  only this computer can reach it, so the mobile app can't connect to it
+  ([details](./self-host-clients.md#desktop-this-computer-servers)).
 - **Existing instance**: connect to a Rakazo server you or your team already run. Enter its
   **Server address** and choose **Check connection**.
 
@@ -69,7 +71,9 @@ you are.
 - Cmd+N: create a bot, group or space.
 - Cmd+Shift+N (desktop app): start a group chat.
 - Cmd+K: open the command menu to jump to a bot, page or setting, or run an action.
-- Cmd+Shift+M: connect apps.
+- Cmd+Shift+A (desktop app): connect apps.
+- Cmd+Shift+M: choose the chat's model, when the model shows beside Send.
+- Cmd+Shift+E: switch to the model's next thinking level.
 - Cmd+Shift+, : open the chat's details.
 - Cmd+I: jump to the message box.
 - Cmd+D in an empty message box: dictate. Press it again to send.

@@ -17,7 +17,6 @@ import android.util.Base64
 import android.util.Log
 import org.json.JSONObject
 
-/** What the messaging service does with a message push that is not a call. */
 internal enum class PushDisposition { EXPO, DROP, POST }
 
 /**
@@ -28,7 +27,6 @@ internal enum class PushDisposition { EXPO, DROP, POST }
 internal object SenderPush {
   private const val MAX_AVATAR_CHARS = 1400
   private const val MAX_AVATAR_PIXELS = 96
-  private const val SILENT_GROUP = "rakazo.silent"
 
   /** Sender posts replace only the same owner's thread and stay separate from poller posts. */
   fun notificationId(apiBase: String, userId: String, threadId: String) = "push:$apiBase:$userId:$threadId".hashCode()
@@ -82,6 +80,9 @@ internal object SenderPush {
     }
   }
 
+  internal fun shouldPlaySound(data: JSONObject, foreground: Boolean): Boolean =
+    !foreground && data.optBoolean("notificationSound")
+
   private fun post(
     context: Context,
     data: JSONObject,
@@ -110,13 +111,9 @@ internal object SenderPush {
       .setAutoCancel(true)
       .setCategory(Notification.CATEGORY_MESSAGE)
       .apply { if (data.has("notificationBadge")) setNumber(data.optInt("notificationBadge")) }
-      // Notification.Builder has no setSilent; this is what NotificationCompat's setSilent does:
-      // a child of a group that alerts only for its summary posts without sound or heads-up.
       .apply {
-        if (foreground && Build.VERSION.SDK_INT >= 31) {
-          setGroup(SILENT_GROUP)
-          setGroupAlertBehavior(Notification.GROUP_ALERT_SUMMARY)
-        }
+        if (!shouldPlaySound(data, foreground)) withoutSound()
+        else if (Build.VERSION.SDK_INT < 26) setDefaults(Notification.DEFAULT_SOUND)
       }
       .addExtras(Bundle().apply {
         putString("rakazo.botId", botId)

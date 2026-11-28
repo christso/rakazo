@@ -1,13 +1,28 @@
 import { useLingui } from "@lingui/react/macro";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useState } from "react";
-import { useSearchParams } from "react-router-dom";
-import { pageMutationOptions } from "../../lib/pages/page-actions";
+import type { PageVisibility } from "@rakazo/contracts";
+import { pageReviewPath } from "@rakazo/contracts";
+import { Button } from "@rakazo/ui-web";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { MessageSquare } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import { usePageStateSaver } from "../../lib/pages/page-state";
 import type { PageSession } from "../../lib/pages/pages";
-import { PAGE_PARAM, useMedia, usePageDocument, usePageSession } from "../../lib/pages/pages";
-import { useSpaceQueries } from "../../lib/query/query";
+import {
+  askPageBot,
+  PAGE_PARAM,
+  pageAskChat,
+  useMedia,
+  usePageDocument,
+  usePageSession,
+  useReviewedPageContent,
+} from "../../lib/pages/pages";
+import { useSave, useSpaceQueries } from "../../lib/query/query";
+import { useSpaceRpc } from "../../lib/query/space-rpc";
 import { errorCode } from "../../lib/query/user-error";
+import { PageAppButton } from "./PageAppButton";
 import { PageNotice } from "./PageNotice";
+import { PagePeople } from "./PagePeople";
 import { PageView } from "./PageView";
 import { SharePopover } from "./SharePopover";
 
@@ -48,6 +63,7 @@ function OpenPage({
   const compact = useMedia(COARSE);
   const sheet = useMedia(SHEET);
   const { t } = useLingui();
+  const navigate = useNavigate();
   const [, setSearchParams] = useSearchParams();
   const queries = useSpaceQueries();
   const queryClient = useQueryClient();
@@ -55,11 +71,29 @@ function OpenPage({
     ...queries.pages.get.queryOptions({ input: { pageId: shownId } }),
     enabled: pageId !== null,
   });
+  const savedState = pageId === null ? undefined : page.data?.readerState;
+  const content = useReviewedPageContent(shownId, page.data);
+  const rpc = useSpaceRpc();
+  // Questions still waiting end when the page closes, which happens before it animates out.
+  const asking = useRef<AbortController | null>(null);
+  useEffect(() => {
+    const controller = new AbortController();
+    asking.current = controller;
+    return () => controller.abort();
+  }, [pageId]);
+  const askChat =
+    pageId !== null &&
+    page.data?.abilities.includes("ask") === true &&
+    pageAskChat(page.data) !== null;
   const viewer = usePageDocument(
-    page.data?.code,
+    content,
     sheet ? "background" : "card",
     true,
     DOCK_CLEARANCE,
+    false,
+    undefined,
+    savedState,
+    askChat,
   );
   const [shareOpen, setShareOpen] = useState(false);
   const link = useQuery({
@@ -82,15 +116,33 @@ function OpenPage({
   const code = errorCode(page.error);
   const gone = failed && (code === "NOT_FOUND" || code === "FORBIDDEN");
 
-  const actions = pageMutationOptions(queries, queryClient);
-  const rename = useMutation(actions.rename);
-  const visibility = useMutation(actions.setVisibility);
+  // This partial key matches all reads for the page, including the share popover’s link input.
+  const reads = [
+    queries.pages.get.queryKey({ input: { pageId: shownId } }),
+    queries.pages.list.key(),
+  ];
+  const reconcile = () => {
+    void queryClient.invalidateQueries({ queryKey: reads[0] });
+  };
+  const rename = useSave({
+    save: (title: string, rpc) => rpc.pages.rename({ pageId: shownId, title }),
+    stale: reads,
+    onFailed: reconcile,
+  });
+  const readerState = usePageStateSaver(
+    shownId,
+    queries.pages.get.queryKey({ input: { pageId: shownId } }),
+  );
+  const visibility = useSave({
+    save: (visibility: PageVisibility, rpc) =>
+      rpc.pages.setVisibility({ pageId: shownId, visibility }),
+    stale: [...reads, queries.pageReviews.grants.key()],
+    onFailed: reconcile,
+  });
   // A failed change may have been saved with only its answer lost: until the page is read again,
   // who can view it is unknown, and either choice is sent, so the link can always be turned off.
   const shownVisibility =
-    visibility.isError && page.dataUpdatedAt < visibility.submittedAt
-      ? null
-      : (page.data?.visibility ?? null);
+    visibility.error && (page.isError || page.isFetching) ? null : (page.data?.visibility ?? null);
 
   // Share asked for with this page opens once it has loaded; any other request is dropped.
   const loaded = page.data !== undefined;
@@ -137,36 +189,75 @@ function OpenPage({
           />
         ) : null
       }
-      renameError={rename.isError ? t`Could not rename this page. Try again.` : null}
+      titleError={
+        rename.error
+          ? t`Could not rename this page. Try again.`
+          : readerState.failed
+            ? t`Your changes aren't saved. Check your connection.`
+            : null
+      }
       onRename={
-        rename.isPending || !data
+        rename.pending || !data
           ? undefined
           : (title) => {
-              if (pageId) rename.mutate({ pageId, title });
+              if (pageId) rename.run(title);
             }
       }
       composer={<div ref={setDockNode} />}
       onReply={session.offerReply}
+      onAsk={
+        data && askChat ? (text) => askPageBot(rpc, data, text, asking.current?.signal) : undefined
+      }
+      onSaveState={savedState ? readerState.save : undefined}
       share={
         data ? (
-          <SharePopover
-            compact={compact}
-            title={data.title}
-            owner={data.owner}
-            visibility={shownVisibility}
-            shareUrl={link.data?.shareUrl ?? null}
-            open={shareOpen}
-            onOpenChange={setShareOpen}
-            pending={visibility.isPending}
-            error={
-              visibility.isError ? t`Could not change who can view this page. Try again.` : null
-            }
-            onVisibilityChange={(next) => {
-              if (pageId && next !== shownVisibility && !visibility.isPending) {
-                visibility.mutate({ pageId, visibility: next });
+          <>
+            <PageAppButton page={data} />
+            <SharePopover
+              compact={compact}
+              title={data.title}
+              owner={data.owner}
+              visibility={shownVisibility}
+              shareUrl={
+                !link.isError && link.data?.visibility === shownVisibility
+                  ? (link.data?.shareUrl ?? null)
+                  : null
               }
-            }}
-          />
+              open={shareOpen}
+              onOpenChange={setShareOpen}
+              people={
+                shareOpen ? (
+                  <PagePeople
+                    pageId={shownId}
+                    url={
+                      link.data?.visibility === "people" && !link.isError
+                        ? link.data.shareUrl
+                        : null
+                    }
+                  />
+                ) : null
+              }
+              pending={visibility.pending}
+              error={
+                visibility.error ? t`Could not change who can view this page. Try again.` : null
+              }
+              onVisibilityChange={(next) => {
+                if (pageId && next !== shownVisibility && !visibility.pending) {
+                  visibility.run(next);
+                }
+              }}
+            />
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label={t`Review page`}
+              onClick={() => {
+                void navigate(pageReviewPath(shownId), { state: { returnToPrevious: true } });
+              }}
+            >
+              <MessageSquare />
+            </Button>
+          </>
         ) : null
       }
     />

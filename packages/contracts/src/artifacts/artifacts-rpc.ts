@@ -22,9 +22,24 @@ import {
   TicketSchema,
   UpdateTicketInput,
 } from "./board.js";
+import { PageAskEventSchema, PageAskInputSchema } from "./page-abilities.js";
+import { PageAppInstallInputSchema, PageAppInstallSchema } from "./page-apps.js";
+import {
+  PageAccessInput,
+  PageCommentBody,
+  PageCommentSchema,
+  PageGrantSchema,
+  PageReviewSchema,
+  PageSection,
+  PageSectionOccurrence,
+  PageVersionNumber,
+} from "./page-collaboration.js";
+import { PageStateSchema } from "./page-reader-state.js";
 import {
   PAGE_LIST_MAX_LIMIT,
   PageDetailSchema,
+  PageImageSourceSchema,
+  PageImagesSchema,
   PageSummarySchema,
   PageTitleSchema,
   PageVisibilitySchema,
@@ -69,7 +84,11 @@ export const artifactsRpc = {
       .input(
         threadTarget.and(
           z.object({
-            name: z.string().min(1).max(ARTIFACT_NAME_MAX_LENGTH),
+            name: z
+              .string()
+              .min(1)
+              .max(ARTIFACT_NAME_MAX_LENGTH)
+              .refine((name) => name.trim().length > 0),
             description: z.string().max(ARTIFACT_DESCRIPTION_MAX_LENGTH).optional(),
             mimeType: z.string().min(1),
             contentBase64: z.string().min(1),
@@ -82,6 +101,55 @@ export const artifactsRpc = {
     get: oc.input(threadTarget.and(z.object({ artifactId: Id }))).output(ArtifactWithContentSchema),
     getById: oc.input(z.object({ artifactId: Id })).output(ArtifactWithContentSchema),
     remove: oc.input(z.object({ artifactId: Id })).output(z.object({ ok: z.literal(true) })),
+  },
+  /** Review pages the caller owns or has been granted access to. */
+  pageReviews: {
+    list: oc.input(z.strictObject({ cursor: Id.optional() })).output(
+      z.strictObject({
+        items: z.array(z.strictObject({ id: Id, title: z.string() })),
+        nextCursor: Id.nullable(),
+      }),
+    ),
+    get: oc
+      .input(PageAccessInput.extend({ version: PageVersionNumber.optional() }))
+      .output(PageReviewSchema),
+    grants: oc.input(PageAccessInput).output(z.array(PageGrantSchema)),
+    grant: oc.input(PageAccessInput.extend({ email: z.email().max(254) })).output(PageGrantSchema),
+    revoke: oc
+      .input(PageAccessInput.extend({ grantId: Id }))
+      .output(z.object({ ok: z.literal(true) })),
+    comments: oc
+      .input(PageAccessInput.extend({ cursor: Id.optional() }))
+      .output(z.strictObject({ items: z.array(PageCommentSchema), nextCursor: Id.nullable() })),
+    comment: oc
+      .input(
+        PageAccessInput.extend({
+          submissionId: z.uuid(),
+          version: PageVersionNumber,
+          section: PageSection,
+          sectionOccurrence: PageSectionOccurrence.optional(),
+          body: PageCommentBody,
+        }),
+      )
+      .output(z.object({ id: Id })),
+    resolve: oc
+      .input(PageAccessInput.extend({ commentId: Id, resolved: z.boolean() }))
+      .output(z.object({ ok: z.literal(true) })),
+    askRevision: oc
+      .input(PageAccessInput.extend({ commentId: Id, retryOf: Id.optional() }))
+      .output(z.object({ ok: z.literal(true) })),
+    draft: oc
+      .input(PageAccessInput.extend({ requestId: Id }))
+      .output(z.object({ code: z.string(), images: PageImagesSchema })),
+    image: oc
+      .input(PageAccessInput.extend({ version: PageVersionNumber, imageId: Id }))
+      .output(PageImageSourceSchema),
+    publish: oc
+      .input(PageAccessInput.extend({ requestId: Id }))
+      .output(z.object({ version: PageVersionNumber })),
+    saveState: oc
+      .input(PageAccessInput.extend({ values: PageStateSchema }))
+      .output(z.object({ ok: z.literal(true) })),
   },
   /** Pages bots built for the caller in this Space. */
   pages: {
@@ -124,5 +192,15 @@ export const artifactsRpc = {
       ),
     pin: oc.input(z.strictObject({ pageId: Id, pinned: z.boolean() })).output(PageSummarySchema),
     remove: oc.input(z.strictObject({ pageId: Id })).output(z.object({ ok: z.literal(true) })),
+    /** A page's question to its bot, sent in the page's chat; ends with the bot's answer. */
+    ask: oc
+      .input(PageAskInputSchema.extend({ pageId: Id }))
+      .output(eventIterator(PageAskEventSchema)),
+  },
+  /** The caller's own pages installed as apps on their devices. */
+  pageApps: {
+    /** Issues the app's token, which the response carries once. */
+    install: oc.input(PageAppInstallInputSchema).output(PageAppInstallSchema),
+    remove: oc.input(z.strictObject({ appId: Id })).output(z.object({ ok: z.literal(true) })),
   },
 };

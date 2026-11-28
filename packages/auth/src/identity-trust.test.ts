@@ -1286,25 +1286,33 @@ function cbor(value: unknown): Buffer {
   throw new Error("unsupported CBOR value");
 }
 
-describe("single-person deployments", () => {
+describe("deployments that admit signups only from some requests", () => {
   const password = "offline-password12";
 
-  it("admits the first account, then closes registration to anyone else", async () => {
-    const f = fixture({ delivery: false, singleAccount: true });
+  it("creates any number of accounts from accepted requests and none from others", async () => {
+    let accepted = true;
+    const admitsSignup = vi.fn(() => accepted);
+    const f = fixture({ admitsSignup });
     expect((await f.signup("owner@example.test")).status).toBe(200);
+    expect((await f.signup("second@example.test")).status).toBe(200);
+    expect(admitsSignup).toHaveBeenCalledWith(expect.any(Headers));
 
-    const second = await f.signup("someone@example.test");
-    expect(second.status).toBe(400);
-    expect(await second.json()).toMatchObject({ code: "REGISTRATION_CLOSED" });
-    expect(f.data.user!.map((user) => user.email)).toEqual(["owner@example.test"]);
-
-    expect((await f.signin("owner@example.test")).status).toBe(200);
-    expect(bootstrapUserSpace).toHaveBeenCalledTimes(1);
+    accepted = false;
+    const stranger = await f.signup("stranger@example.test");
+    expect(stranger.status).toBe(400);
+    expect(await stranger.json()).toMatchObject({ code: "REGISTRATION_CLOSED" });
+    const sent = f.messages.length;
+    expect((await f.sendCode("stranger@example.test")).status).toBe(200);
+    expect(f.messages).toHaveLength(sent);
+    expect(f.data.user!.map((user) => user.email)).toEqual([
+      "owner@example.test",
+      "second@example.test",
+    ]);
+    expect((await f.signin("second@example.test")).status).toBe(200);
   });
 
-  it("refuses a session to an account that was never admitted", async () => {
-    const f = fixture({ delivery: false, singleAccount: true });
-    expect((await f.signup("owner@example.test")).status).toBe(200);
+  it("refuses a first session to an account made outside an accepted request", async () => {
+    const f = fixture({ delivery: false, admitsSignup: () => false });
     const now = new Date();
     f.data.user!.push({
       id: "late-user",
@@ -1327,43 +1335,6 @@ describe("single-person deployments", () => {
     expect(response.status).toBe(403);
     expect(await response.json()).toMatchObject({ code: "REGISTRATION_CLOSED" });
     expect(f.members.has("late-user")).toBe(false);
-  });
-
-  it("does not create an account from an emailed code once there is one", async () => {
-    const f = fixture({ singleAccount: true });
-    expect((await f.signup("owner@example.test")).status).toBe(200);
-    const sent = f.messages.length;
-    expect((await f.sendCode("someone@example.test")).status).toBe(200);
-    expect(f.messages).toHaveLength(sent);
-  });
-
-  it("ignores messaging-only users when admitting the first account", async () => {
-    const f = fixture({ delivery: false, singleAccount: true });
-    const now = new Date();
-    f.data.user!.push({
-      id: "msg-user",
-      name: "Chat",
-      email: "msg-abc@messaging.invalid",
-      emailVerified: false,
-      createdAt: now,
-      updatedAt: now,
-    });
-    expect((await f.signup("owner@example.test")).status).toBe(200);
-  });
-
-  it("is not closed by an earlier signup that never got in", async () => {
-    const f = fixture({ delivery: false, singleAccount: true });
-    const now = new Date();
-    f.data.user!.push({
-      id: "abandoned",
-      name: "Abandoned",
-      email: "abandoned@example.test",
-      emailVerified: false,
-      createdAt: now,
-      updatedAt: now,
-    });
-    expect((await f.signup("owner@example.test")).status).toBe(200);
-    expect((await f.signup("someone@example.test")).status).toBe(400);
   });
 
   it("keeps registration open on other deployments", async () => {
@@ -1402,6 +1373,13 @@ describe("ending sessions", () => {
     expect(reset.status).toBe(200);
     expect(f.data.session).toHaveLength(0);
     expect(ended(afterDeleteSession)).toEqual([...ids].sort());
+  });
+
+  it("still reports an ended session when its page apps could not be removed", async () => {
+    const { f, first, ids, afterDeleteSession } = await signedInTwice();
+    vi.mocked(f.prisma.pageApp.deleteMany).mockRejectedValue(new Error("database unavailable"));
+    await f.request("/sign-out", {}, first);
+    expect(ended(afterDeleteSession)).toEqual([ids[0]]);
   });
 
   it("reports every session that signing out everywhere ends", async () => {

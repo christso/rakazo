@@ -176,7 +176,7 @@ export function ComputerDeviceSettings() {
               ) : null}
               <Button
                 variant="ghost"
-                size="icon-sm"
+                size="icon"
                 aria-label={t`Remove ${device.name}`}
                 disabled={pending}
                 className="text-destructive hover:text-destructive"

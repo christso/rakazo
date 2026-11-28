@@ -2,6 +2,7 @@ import type {
   AgentHomeStore,
   AgentRuntime,
   ArtifactStore,
+  BackgroundJobAttempt,
   BackgroundJobExecution,
   BackgroundJobHandlers,
   BackgroundJobPayloads,
@@ -61,6 +62,7 @@ import { pollPurchase } from "../../payments/purchase-poll.js";
 import { compactHistory } from "../../runtime/context/history-compaction.js";
 import { expireRunSecrets } from "../../secrets/run-secrets-expiry.js";
 import { retrySecretCleanup } from "../../secrets/secret-cleanup.js";
+import { deliverTaskCallback } from "../../tasks/task-callbacks.js";
 import type { createRunExecutor } from "../executor/executor.js";
 
 type Tenant = { spaceId: string; userId: string };
@@ -122,8 +124,11 @@ export function createBackgroundJobHandlers(deps: {
   maxUploadSizeBytes?: number;
   /** Sends a lifecycle mail; absent where account mail is not configured, and the job is dropped. */
   meetingCalendarSync?: (job: BackgroundJobPayloads["meeting.calendar-sync"]) => Promise<void>;
+  pageRevisionWork?: (requestId: string, attempt?: BackgroundJobAttempt) => Promise<void>;
   meetingWork?: (job: BackgroundJobPayloads["meeting.work"]) => Promise<unknown>;
   lifecycleEmail?: (job: BackgroundJobPayloads["email.lifecycle"]) => Promise<void>;
+  /** Derives each task callback's signing secret; see `taskCallbackRootKey`. Absent sends none. */
+  taskCallbackRootKey?: string;
 }): BackgroundJobHandlers {
   const delivery = deps.messagingDelivery;
   const cleanupDeps = { prisma: deps.prisma, secrets: deps.secretStore };
@@ -135,6 +140,8 @@ export function createBackgroundJobHandlers(deps: {
     deps.prisma.computer.findUnique({ where: { id: computerId }, select: OWNER });
   const thread = ({ threadId }: { threadId: string }) =>
     deps.prisma.thread.findUnique({ where: { id: threadId }, select: OWNER });
+  const taskCallback = ({ taskId }: { taskId: string }) =>
+    deps.prisma.taskCallback.findUnique({ where: { taskId }, select: OWNER });
   const skill = ({ skillId }: { skillId: string }) =>
     deps.prisma.taughtSkill.findUnique({ where: { id: skillId }, select: OWNER });
   const cloudAgent = ({ agentId }: { agentId: string }) =>
@@ -159,6 +166,14 @@ export function createBackgroundJobHandlers(deps: {
     )?.computer ?? null;
 
   return {
+    "page.revise": async ({ requestId }, _execution, attempt) => {
+      await deps.pageRevisionWork?.(requestId, attempt);
+    },
+    "page.app-unused": async ({ appId }) => {
+      await runAsSystem("remove an unused page app", () =>
+        deps.prisma.pageApp.deleteMany({ where: { id: appId, lastUsedAt: null } }),
+      );
+    },
     "run.continue": asOwner(run, async (payload, execution, { spaceId }) => {
       try {
         if (execution)
@@ -199,6 +214,21 @@ export function createBackgroundJobHandlers(deps: {
         );
       },
     ),
+    "connection.hosted-sign-in-cleanup": async (payload) => {
+      const connectors = deps.connectors;
+      if (!connectors) throw new Error("connection cleanup has no connector registry");
+      await runAsSystem("remove a cancelled hosted sign-in", () =>
+        retryConnectionCleanup({ prisma: deps.prisma, connectors, jobs: deps.jobs }, payload),
+      );
+    },
+    "connection.organization-cleanup": async (payload) => {
+      const connectors = deps.connectors;
+      if (!connectors) throw new Error("connection cleanup has no connector registry");
+      // The admin or Space that started this authorization can be gone by the time it is retried.
+      await runAsSystem("remove an unused organization authorization", () =>
+        retryConnectionCleanup({ prisma: deps.prisma, connectors, jobs: deps.jobs }, payload),
+      );
+    },
     // The machine belongs to no Space: nothing stores it.
     "computer.machine-cleanup": async (machine, _execution, attempt) => {
       await retryMachineCleanup(deps, machine, attempt);
@@ -245,6 +275,13 @@ export function createBackgroundJobHandlers(deps: {
       await performComputerUpdate(deps, updateId);
     }),
     "computer.teardown": ({ computerId }) => retryComputerTeardown(deps, computerId),
+    "task.callback": asOwner(taskCallback, async ({ taskId }) => {
+      if (!deps.taskCallbackRootKey) return;
+      await deliverTaskCallback(
+        { prisma: deps.prisma, jobs: deps.jobs, rootKey: deps.taskCallbackRootKey },
+        taskId,
+      );
+    }),
     "computer.sleep": asOwner(computer, async (payload) => {
       await sleepComputerIfIdle(deps, payload.computerId);
     }),

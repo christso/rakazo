@@ -92,13 +92,14 @@ it("acts for a page only in an interactive frame, right after the person used th
   const container = document.body.appendChild(document.createElement("div"));
   const composer = document.body.appendChild(document.createElement("input"));
   const root = createRoot(container);
-  const render = (interactive: boolean) =>
+  const render = (interactive: boolean, previewScrollTop?: number) =>
     act(async () =>
       root.render(
         <PageFrame
           document="<p>x</p>"
           title="Board"
           interactive={interactive}
+          previewScrollTop={previewScrollTop}
           onReply={(text) => replies.push(text)}
           onHeight={(height) => heights.push(height)}
         />,
@@ -119,12 +120,13 @@ it("acts for a page only in an interactive frame, right after the person used th
     ].map((action) => ({ ...action, gesture: vouched ? `k:${++gestures}` : null }));
 
   // A preview only draws: even a focused, vouched-for request does nothing, though it sizes.
-  await render(false);
+  await render(false, 0);
   expect(container.querySelector("iframe")!.hasAttribute("allow")).toBe(false);
   container.querySelector("iframe")!.focus();
   for (const action of actions(true)) await send(action);
-  await send({ type: "rakazo-page:height", height: 300 });
-  expect(heights).toHaveLength(1);
+  await send({ type: "rakazo-page:height", height: 300, scrollHeight: 900 });
+  await send({ type: "rakazo-page:height", height: 320 });
+  expect(heights).toEqual([900, 320]);
 
   await render(true);
   // Not used: the shell does not vouch for a click inside it.
@@ -145,10 +147,11 @@ it("acts for a page only in an interactive frame, right after the person used th
   await send({ type: "rakazo-page:copy", id: "b", text: "first", gesture: "k:once" });
   await send({ type: "rakazo-page:copy", id: "c", text: "second", gesture: "k:once" });
   await send({ type: "rakazo-page:reply", text: "And reply", gesture: "k:once" });
-  await send({ type: "rakazo-page:height", height: 400 });
+  await send({ type: "rakazo-page:height", height: 400, scrollHeight: 1_000 });
   expect(writeText.mock.calls.slice(1)).toEqual([["first"]]);
   expect(replies).toEqual(["Ship it"]);
-  expect(heights).toHaveLength(2);
+  expect(heights).toEqual([900, 320, 400]);
+  expect(container.querySelector("div")?.style.getPropertyValue("--page-height")).toBe("400px");
   // The next click works again.
   await send({ type: "rakazo-page:reply", text: "Next", gesture: "k:again" });
   expect(replies).toEqual(["Ship it", "Next"]);
@@ -157,5 +160,38 @@ it("acts for a page only in an interactive frame, right after the person used th
   await send({ type: "rakazo-page:open-link", url: "https://example.com/x", gesture: "k:next" });
   expect(opened).toHaveBeenCalledTimes(1);
   expect(document.body.textContent).toContain("example.com/x");
+  await act(async () => root.unmount());
+});
+
+it("asks the bot once per click and answers every question the page waits on", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  const onAsk = vi.fn(async (text: string) => (text === "Next?" ? "Step two" : null));
+  const container = document.body.appendChild(document.createElement("div"));
+  const root = createRoot(container);
+  await act(async () =>
+    root.render(<PageFrame document="<p>x</p>" title="Plan" interactive onAsk={onAsk} />),
+  );
+  const frame = container.querySelector("iframe")!;
+  frame.focus();
+  const answers = vi.spyOn(frame.contentWindow!, "postMessage").mockImplementation(() => {});
+  const send = (data: object) =>
+    act(async () => {
+      window.dispatchEvent(new MessageEvent("message", { data, source: frame.contentWindow }));
+      await flush();
+    });
+
+  await send({ type: "rakazo-page:ask", id: "a", text: "Next?", gesture: "k:1" });
+  // The same click again, no click at all, or a question the bot has no answer for.
+  await send({ type: "rakazo-page:ask", id: "b", text: "Again?", gesture: "k:1" });
+  await send({ type: "rakazo-page:ask", id: "c", text: "On load?", gesture: null });
+  await send({ type: "rakazo-page:ask", id: "d", text: "Unknown?", gesture: "k:2" });
+
+  expect(onAsk.mock.calls).toEqual([["Next?"], ["Unknown?"]]);
+  expect(answers.mock.calls.map(([message]) => message)).toEqual([
+    { type: "rakazo-page:answer", id: "a", ok: true, text: "Step two" },
+    { type: "rakazo-page:answer", id: "b", ok: false },
+    { type: "rakazo-page:answer", id: "c", ok: false },
+    { type: "rakazo-page:answer", id: "d", ok: false },
+  ]);
   await act(async () => root.unmount());
 });
