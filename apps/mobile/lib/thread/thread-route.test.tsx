@@ -57,11 +57,7 @@ vi.mock("../api/session", () => ({
   currentReadySessionGeneration: () => state.generation,
   currentSessionGeneration: () => state.generation,
   subscribeSessionGeneration: () => () => undefined,
-  loadVerifiedIntegrationsScope: state.verifyOwner,
-  loadVerifiedScope: async () => ({
-    apiBase: "https://app.example.test",
-    userId: "user-1",
-  }),
+  loadVerifiedScope: state.verifyOwner,
 }));
 vi.mock("../api/user-error", () => ({ errorText: () => "error" }));
 

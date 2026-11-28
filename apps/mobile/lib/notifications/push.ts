@@ -1,4 +1,5 @@
 import { newClientId } from "@rakazo/core";
+import { bestEffort } from "@rakazo/logging/best-effort";
 import Constants from "expo-constants";
 import { requireOptionalNativeModule } from "expo-modules-core";
 import * as Notifications from "expo-notifications";
@@ -25,7 +26,7 @@ async function notificationsAllowed() {
 export async function registerPushToken() {
   const apiBase = currentApiBase();
   // Revocation retries also run when permission is denied; they need no new push token.
-  await retryPendingSessionRevocations(apiBase).catch(() => undefined);
+  await bestEffort("retry pending sign-outs", retryPendingSessionRevocations(apiBase));
   if (!(await notificationsAllowed())) return;
   try {
     const projectId = Constants.easConfig?.projectId ?? Constants.expoConfig?.extra?.eas?.projectId;
@@ -90,16 +91,17 @@ export async function registerPushToken() {
         // A register response can arrive after sign-out's unregister. Remove only
         // this login's late association, retaining its queued session revocation.
         if (!(await stillSignedIn(sessionToken)))
-          await rpc("notifications/unregisterPush", undefined, { requestContext }).catch(
-            () => undefined,
+          await bestEffort(
+            "unregister late push association",
+            rpc("notifications/unregisterPush", undefined, { requestContext }),
           );
       }
     };
     const registering = accounts.map((account) =>
-      register(account.token, account.userId).catch(() => undefined),
+      bestEffort("register saved account for push", register(account.token, account.userId)),
     );
     if (activeToken && !accounts.some((account) => account.token === activeToken)) {
-      registering.push(register(activeToken).catch(() => undefined));
+      registering.push(bestEffort("register active account for push", register(activeToken)));
     }
     await Promise.all(registering);
     if (generation === currentSessionGeneration() && apiBase === currentApiBase())

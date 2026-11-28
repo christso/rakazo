@@ -1,5 +1,6 @@
 import { t } from "@lingui/core/macro";
 import { readBoundedJsonResponse } from "@rakazo/core";
+import { bestEffort } from "@rakazo/logging/best-effort";
 import { currentApiBase } from "../api/api";
 import { clearSpace, hangUpBeforeSessionEnd } from "../api/api-server";
 import { fetchServer } from "../api/server-headers";
@@ -100,7 +101,7 @@ export async function rememberCurrentAccount(): Promise<void> {
 /** Every request keeps its account's bearer; polling never changes the active account. */
 export async function refreshAccountSummaries(): Promise<AccountSummary[]> {
   const apiBase = currentApiBase();
-  await rememberCurrentAccount().catch(() => undefined);
+  await bestEffort("remember current login", rememberCurrentAccount());
   const rows = await loadSavedAccounts(apiBase);
   const summaries = await Promise.all(
     rows.map(async (account) => {
@@ -166,7 +167,7 @@ export async function selectSavedAccount(
   if (!current()) return false;
   if (!(await clearSpace())) throw new Error(t`Could not clear the local session`);
   if (!current()) return false;
-  await stopLiveNotifications(false).catch(() => undefined);
+  await bestEffort("stop live notifications", stopLiveNotifications(false));
   if (!current()) return false;
   await saveSessionToken(account.token);
   return (
@@ -186,7 +187,7 @@ export async function selectNotificationAccount(
     await refreshAccountSummaries();
     if (!(await isSavedServer(server, apiBase))) return "other-server";
   }
-  await rememberCurrentAccount().catch(() => undefined);
+  await bestEffort("remember current login", rememberCurrentAccount());
   const rows = await loadSavedAccounts(server);
   // Older deliveries have no account. They are safe only with one saved login.
   const target = userId ?? (rows.length === 1 ? rows[0]?.userId : undefined);
@@ -206,11 +207,14 @@ export async function signOutAllAccounts(): Promise<void> {
   await Promise.all(
     others.map(async (token) => {
       // A lost retry record must not block direct revocation or local removal.
-      await queueSessionRevocation(apiBase, token).catch(() => undefined);
+      await bestEffort("queue session revocation", queueSessionRevocation(apiBase, token));
       try {
         const { response, body } = await accountJson(apiBase, token, "/api/auth/sign-out", "POST");
         if (response.ok && (body as { success?: unknown } | null)?.success === true)
-          await completeSessionRevocation(apiBase, token).catch(() => undefined);
+          await bestEffort(
+            "complete session revocation",
+            completeSessionRevocation(apiBase, token),
+          );
         else failed = true;
       } catch {
         failed = true;

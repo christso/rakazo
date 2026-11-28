@@ -105,14 +105,9 @@ import { mountAccountImportRoute } from "./account/account-import.js";
 import { mountAccountSessions } from "./account/account-sessions.js";
 import { mountAuditExportRoute } from "./account/audit-export.js";
 import { mountAuthCapabilities } from "./auth/auth-capabilities.js";
-import {
-  authLibraryLogger,
-  emptyAuthBodyAsJson,
-  withAuthLibraryFailures,
-} from "./auth/auth-library-failures.js";
+import { authLibraryLogger, createAuthRequestHandler } from "./auth/auth-library-failures.js";
 import { scimDirectory } from "./auth/directory-route.js";
 import { requestSessions } from "./auth/request-session.js";
-import { createAuthResponseAudit } from "./auth/security-audit.js";
 import { accountLifecycleHooks } from "./auth/session-hooks.js";
 import { isTrustedOrigin, mobileAuthOrigins } from "./auth/trusted-origins.js";
 import { mountUserDeviceRoutes } from "./auth/user-devices.js";
@@ -141,7 +136,6 @@ import {
   createClientIpResolver,
   defaultTrustedProxies,
   requestClientIp,
-  withClientIp,
 } from "./http/client-ip.js";
 import { databaseProbe, healthRoutes } from "./http/health.js";
 import { startHourlySweep } from "./http/hourly-sweep.js";
@@ -806,15 +800,7 @@ async function buildApp(overrides: CreateAppOverrides): Promise<AppHandles> {
   mountScriptAssets(app);
   mountSharedPages(app, { prisma, artifacts }, requestClientIp);
   mountPageAppRoutes(app, { ...routerDeps, sessionActor }, requestClientIp);
-  const auditAuthResponse = createAuthResponseAudit();
-  const handleAuthRequest = async (request: Request, ip: string | undefined) => {
-    const path = new URL(request.url).pathname.replace("/api/auth", "");
-    const response = await withAuthLibraryFailures(() =>
-      auth.handler(withClientIp(emptyAuthBodyAsJson(request), ip)),
-    );
-    await auditAuthResponse(path, ip, response);
-    return response;
-  };
+  const handleAuthRequest = createAuthRequestHandler(auth);
   for (const [path, reason] of SYSTEM_CONTEXT_PATHS) {
     app.use(path, (_c, next) => runAsSystem(reason, next));
   }

@@ -1,4 +1,5 @@
 import { readBoundedJsonResponse } from "@rakazo/core";
+import { bestEffort } from "@rakazo/logging/best-effort";
 import * as SecureStore from "expo-secure-store";
 import { fetchServer } from "../api/server-headers";
 
@@ -27,7 +28,7 @@ async function read(): Promise<Revocation[]> {
     )
   ) {
     // An unreadable queue cannot be repaired; its sign-outs simply are not retried.
-    await SecureStore.deleteItemAsync(INDEX_KEY).catch(() => undefined);
+    await bestEffort("remove unreadable revocation queue", SecureStore.deleteItemAsync(INDEX_KEY));
     return [];
   }
   const rows = await Promise.all(
@@ -49,7 +50,7 @@ async function writeIndex(rows: Revocation[]): Promise<void> {
 }
 
 function serialized(task: () => Promise<void>): Promise<void> {
-  const next = writes.catch(() => undefined).then(task);
+  const next = bestEffort("wait for the previous revocation write", writes).then(task);
   writes = next;
   return next;
 }
@@ -72,14 +73,15 @@ export function completeSessionRevocation(apiBase: string, token: string): Promi
     const done = rows.filter((row) => row.apiBase === apiBase && row.token === token);
     if (!done.length) return;
     await writeIndex(rows.filter((row) => !done.includes(row)));
-    await Promise.all(done.map((row) => SecureStore.deleteItemAsync(revocationKey(row.id)))).catch(
-      () => undefined,
+    await bestEffort(
+      "remove completed revocations",
+      Promise.all(done.map((row) => SecureStore.deleteItemAsync(revocationKey(row.id)))),
     );
   });
 }
 
 export async function pendingSessionTokens(apiBase: string): Promise<Set<string>> {
-  await writes.catch(() => undefined);
+  await bestEffort("wait for revocation writes", writes);
   return new Set((await read()).filter((row) => row.apiBase === apiBase).map((row) => row.token));
 }
 

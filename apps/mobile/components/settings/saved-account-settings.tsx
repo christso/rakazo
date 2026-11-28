@@ -1,5 +1,6 @@
 import { MenuView } from "@expo/ui/community/menu";
 import { useLingui } from "@lingui/react/macro";
+import { bestEffort } from "@rakazo/logging/best-effort";
 import { useFocusEffect, useRouter } from "expo-router";
 import { useCallback, useState } from "react";
 import { Alert } from "react-native";
@@ -37,11 +38,12 @@ export function SavedAccountSettings({
   useFocusEffect(
     useCallback(() => {
       let active = true;
-      void refreshAccountSummaries()
-        .then((rows) => {
+      void bestEffort(
+        "refresh saved account summaries",
+        refreshAccountSummaries().then((rows) => {
           if (active) setAccounts(rows);
-        })
-        .catch(() => undefined);
+        }),
+      );
       return () => {
         active = false;
       };

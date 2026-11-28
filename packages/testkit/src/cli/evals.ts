@@ -105,13 +105,13 @@ import {
   TOOL_CHOICE_JUDGE_VERSION,
 } from "../evals/suites/tool-choice.js";
 import { TOOL_CHOICE_CASES } from "../evals/suites/tool-choice-cases.js";
-import { WINDOWS_SCREEN_SUITE } from "../evals/suites/windows-screen.js";
 import {
   WEBHOOK_SILENCE_EVAL_CASES,
   WEBHOOK_SILENCE_FIXTURE_VERSION,
   WEBHOOK_SILENCE_JUDGE_CALIBRATION,
   WEBHOOK_SILENCE_JUDGE_VERSION,
 } from "../evals/suites/webhook-silence.js";
+import { WINDOWS_SCREEN_SUITE } from "../evals/suites/windows-screen.js";
 import type { ObservedToolCall, ObservedToolList } from "../evals/tool-calls.js";
 import type { DiagnosticWireObservation } from "../evals/wire-observer.js";
 import { diagnosticWireFetch } from "../evals/wire-observer.js";

@@ -1,3 +1,4 @@
+import { bestEffort } from "@rakazo/logging/best-effort";
 import * as SecureStore from "expo-secure-store";
 import { normalizeApiBase } from "../api/endpoint";
 import { loadSessionToken } from "../api/session";
@@ -40,7 +41,8 @@ async function readIndex(): Promise<Index | null> {
   )
     return data as Index;
   // An unreadable index cannot be repaired; dropping it only asks for sign-in again.
-  if (raw) await SecureStore.deleteItemAsync(INDEX_KEY).catch(() => undefined);
+  if (raw)
+    await bestEffort("remove unreadable account index", SecureStore.deleteItemAsync(INDEX_KEY));
   return null;
 }
 
@@ -76,21 +78,22 @@ async function read(): Promise<{ index: Index | null; accounts: SavedAccount[] }
     const lost = index.userIds.filter((id) => !accounts.some((row) => row.userId === id));
     index.userIds = accounts.map((row) => row.userId);
     await writeIndex(index);
-    await Promise.all(lost.map((id) => SecureStore.deleteItemAsync(accountKey(id)))).catch(
-      () => undefined,
+    await bestEffort(
+      "remove unavailable saved accounts",
+      Promise.all(lost.map((id) => SecureStore.deleteItemAsync(accountKey(id)))),
     );
   }
   return { index, accounts };
 }
 
 function serialized<T>(task: () => Promise<T>): Promise<T> {
-  const next = writes.catch(() => undefined).then(task);
+  const next = bestEffort("wait for the previous account write", writes).then(task);
   writes = next;
   return next;
 }
 
 async function settled(): Promise<{ index: Index | null; accounts: SavedAccount[] }> {
-  await writes.catch(() => undefined);
+  await bestEffort("wait for saved account writes", writes);
   return read();
 }
 
@@ -168,9 +171,10 @@ export function rememberSavedAccount(
     if (!next.notifications) delete next.notifications;
     if (JSON.stringify(previous) === JSON.stringify(next)) return;
     if (!sameServer)
-      await Promise.all(
-        accounts.map((row) => SecureStore.deleteItemAsync(accountKey(row.userId))),
-      ).catch(() => undefined);
+      await bestEffort(
+        "remove logins from the previous server",
+        Promise.all(accounts.map((row) => SecureStore.deleteItemAsync(accountKey(row.userId)))),
+      );
     await writeAccount(next);
     if (!previous)
       await writeIndex({
@@ -196,7 +200,10 @@ function changeAccount(
       return true;
     }
     await writeIndex({ ...index, userIds: index.userIds.filter((id) => id !== account.userId) });
-    await SecureStore.deleteItemAsync(accountKey(account.userId)).catch(() => undefined);
+    await bestEffort(
+      "remove saved account",
+      SecureStore.deleteItemAsync(accountKey(account.userId)),
+    );
     return true;
   });
 }
@@ -228,8 +235,9 @@ export function clearSavedAccounts(): Promise<void> {
     const index = await readIndex();
     if (!index) return;
     await SecureStore.deleteItemAsync(INDEX_KEY);
-    await Promise.all(index.userIds.map((id) => SecureStore.deleteItemAsync(accountKey(id)))).catch(
-      () => undefined,
+    await bestEffort(
+      "remove saved accounts",
+      Promise.all(index.userIds.map((id) => SecureStore.deleteItemAsync(accountKey(id)))),
     );
   });
 }

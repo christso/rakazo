@@ -17,6 +17,7 @@ vi.mock("./context.js", () => ({
   computerMounts: [],
   computerDns: undefined,
   computerComputeGpus: undefined,
+  computerGpu: undefined,
   computerBrowserProxyPacUrl: undefined,
   controlViaLoopback: true,
   maxUploadSizeBytes: 8 * 1024 * 1024,

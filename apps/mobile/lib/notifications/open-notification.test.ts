@@ -107,7 +107,7 @@ it("routes an authenticated server alias through the configured API", async () =
       pathname: "/thread",
       params: { userId: "work", apiBase: "https://api.example.test", botId: "work-bot" },
     },
-    { dangerouslySingular: threadRouteId },
+    { dangerouslySingular: threadRouteId, withAnchor: true },
   );
 });
 
@@ -139,7 +139,7 @@ describe("opening a notification tap", () => {
     await expect(older).resolves.toBe(false);
     expect(router.push).toHaveBeenCalledExactlyOnceWith(
       { pathname: "/thread", params: { userId: "work", botId: "work-bot" } },
-      { dangerouslySingular: threadRouteId },
+      { dangerouslySingular: threadRouteId, withAnchor: true },
     );
     expect(router.replace).not.toHaveBeenCalled();
   });

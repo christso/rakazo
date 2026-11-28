@@ -1,3 +1,4 @@
+import { bestEffort } from "@rakazo/logging/best-effort";
 import * as Notifications from "expo-notifications";
 
 type InboxChats = {
@@ -37,7 +38,7 @@ export function syncAppBadge(count: number): Promise<void> {
     const set = await Notifications.setBadgeCountAsync(count).catch(() => false);
     if (currentGeneration === generation) written = set ? count : null;
   });
-  writes = next.catch(() => undefined);
+  writes = bestEffort("write app badge", next);
   return next;
 }
 

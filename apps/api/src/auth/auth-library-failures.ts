@@ -1,11 +1,14 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import type { Auth } from "@rakazo/auth";
 import { databaseOutage } from "@rakazo/db";
 import { getLogger } from "@rakazo/logging";
+import { withClientIp } from "../http/client-ip.js";
 import {
   DATABASE_RETRY_AFTER_SECONDS,
   failedOnDatabaseOutage,
   requestHitDatabaseOutage,
 } from "../rpc-errors.js";
+import { createAuthResponseAudit } from "./security-audit.js";
 
 type AuthLibraryFailure = { event: string; message: string; error?: Error };
 const authLibraryFailures = new AsyncLocalStorage<AuthLibraryFailure[]>();
@@ -73,4 +76,16 @@ export function emptyAuthBodyAsJson(request: Request) {
   headers.set("content-type", "application/json");
   headers.delete("content-length");
   return new Request(request, { headers, body: "{}" });
+}
+
+export function createAuthRequestHandler(auth: Auth) {
+  const auditAuthResponse = createAuthResponseAudit();
+  return async (request: Request, ip: string | undefined) => {
+    const path = new URL(request.url).pathname.replace("/api/auth", "");
+    const response = await withAuthLibraryFailures(() =>
+      auth.handler(withClientIp(emptyAuthBodyAsJson(request), ip)),
+    );
+    await auditAuthResponse(path, ip, response);
+    return response;
+  };
 }

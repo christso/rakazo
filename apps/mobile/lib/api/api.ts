@@ -14,6 +14,7 @@ import {
   withAbort,
 } from "@rakazo/core";
 import { identityLabels } from "@rakazo/i18n/identity-display";
+import { bestEffort } from "@rakazo/logging/best-effort";
 import { clientCorrelationHeaders, responseCorrelation } from "@rakazo/logging/monitoring";
 import * as SecureStore from "expo-secure-store";
 import { completeSessionRevocation } from "../auth/pending-session-revocations";
@@ -584,7 +585,10 @@ export function deliverSignOutRecord(record: PendingSignOut, persisted = true): 
         : record;
       if (current && (await deliverPendingSignOut(current)) === "delivered") {
         await removePendingSignOut(current);
-        await completeSessionRevocation(current.apiBase, current.token).catch(() => undefined);
+        await bestEffort(
+          "complete session revocation",
+          completeSessionRevocation(current.apiBase, current.token),
+        );
       }
     } catch {
       // Delivery problems never surface; the record waits for the next pass.
@@ -655,7 +659,7 @@ async function rejectSession(token: string) {
   // The server ended the session; the user never asked to leave. Keep the unsent
   // queue, so the app can report those messages before a sign-in deletes them.
   await clearSessionToken({ keepUnsent: true });
-  await forgetSavedToken(apiBase, token).catch(() => undefined);
+  await bestEffort("remove the expired saved login", forgetSavedToken(apiBase, token));
   if (generation + 1 !== currentSessionGeneration() || apiBase !== currentApiBase()) return;
   for (const listener of sessionRejectedListeners) listener();
 }

@@ -10,6 +10,7 @@ import {
   RemoteImagesContext,
 } from "@rakazo/chat-ui/native";
 import { analyticsScreen } from "@rakazo/core";
+import { bestEffort } from "@rakazo/logging/best-effort";
 import {
   DarkTheme,
   Stack,
@@ -96,8 +97,7 @@ import {
 import { useNotificationResponses } from "../lib/notifications/open-notification";
 import { invalidateWatchChat } from "../lib/notifications/watch-chat";
 import { startWorkActivities } from "../lib/notifications/work-activity";
-import { useAppForeground } from "../lib/platform/app-foreground";
-import { subscribeAppState } from "../lib/platform/app-foreground";
+import { subscribeAppState, useAppForeground } from "../lib/platform/app-foreground";
 import { setMobileMonitoringScreen } from "../lib/platform/monitoring";
 import {
   completeMobileStartup,
@@ -305,7 +305,7 @@ function LayoutContent() {
   );
   const appForeground = useAppForeground();
   useEffect(() => {
-    if (ready && appForeground) void refreshAppBadge().catch(() => undefined);
+    if (ready && appForeground) void bestEffort("refresh app badge", refreshAppBadge());
   }, [ready, appForeground, accountGeneration]);
 
   useEffect(() => {

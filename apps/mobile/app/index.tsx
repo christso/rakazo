@@ -435,7 +435,7 @@ function Home({ embedded, onSelectSpace, onShareSelect }: InboxPaneProps & { emb
     : null;
   useEffect(() => {
     // Reading a chat here changes the count the icon shows.
-    if (badgeCount !== null) void refreshAppBadge().catch(() => undefined);
+    if (badgeCount !== null) void bestEffort("refresh app badge", refreshAppBadge());
   }, [badgeCount]);
   const initials = accountDisplay(me ?? {}, t`You`).initial ?? "?";
   const organizeSpace = organizeTarget

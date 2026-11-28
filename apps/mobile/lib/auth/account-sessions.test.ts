@@ -46,6 +46,7 @@ vi.mock("expo-notifications", () => ({
 vi.mock("expo-router", () => ({
   router: { push: state.push, dismissTo: vi.fn(), replace: vi.fn() },
 }));
+vi.mock("expo-router/react-navigation", () => ({ CommonActions: { reset: vi.fn() } }));
 vi.mock("react-native", () => ({ Alert: { alert: state.alert } }));
 vi.mock("../settings/settings-sheet", () => ({ closeSettingsSheet: vi.fn() }));
 vi.mock("../api/api", () => ({

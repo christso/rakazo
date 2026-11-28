@@ -3,8 +3,8 @@ import type { Actor } from "@rakazo/contracts";
 import type { PrismaClient } from "@rakazo/db";
 import { IsolationError, requireMembership } from "@rakazo/db";
 import { enrichLogContext } from "@rakazo/logging";
-import { mountAccountSessionGuard } from "../account/account-sessions.js";
 import type { Hono, MiddlewareHandler } from "hono";
+import { mountAccountSessionGuard } from "../account/account-sessions.js";
 
 /**
  * No membership is no actor, which the RPC layer answers as 401. A database
@@ -21,7 +21,15 @@ export async function actorFromMembership(membership: Promise<Actor>): Promise<A
 }
 
 /** Who sent a request: its session, and the member it acts as in the Space it names. */
-export function requestSessions({ app, auth, prisma }: { app: Hono; auth: Auth; prisma: PrismaClient }) {
+export function requestSessions({
+  app,
+  auth,
+  prisma,
+}: {
+  app: Hono;
+  auth: Auth;
+  prisma: PrismaClient;
+}) {
   // Reading a session here can renew it. The browser must get the renewed cookie too,
   // or it keeps the one from sign-in and is signed out when that one expires.
   const renewedSessionCookies = new WeakMap<Request, string[]>();
@@ -44,11 +52,14 @@ export function requestSessions({ app, auth, prisma }: { app: Hono; auth: Auth; 
   const sendRenewedCookies: MiddlewareHandler = async (c, next) => {
     const request = c.req.raw;
     await next();
-    const responseCookieNames = new Set(c.res.headers.getSetCookie().map((cookie) => cookie.split("=")[0]));
+    const responseCookieNames = new Set(
+      c.res.headers.getSetCookie().map((cookie) => cookie.split("=")[0]),
+    );
     for (const cookie of renewedSessionCookies.get(request) ??
       renewedSessionCookies.get(c.req.raw) ??
       []) {
-      if (!responseCookieNames.has(cookie.split("=")[0])) c.header("set-cookie", cookie, { append: true });
+      if (!responseCookieNames.has(cookie.split("=")[0]))
+        c.header("set-cookie", cookie, { append: true });
     }
   };
   app.use("*", sendRenewedCookies);

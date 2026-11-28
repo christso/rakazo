@@ -1202,7 +1202,11 @@ function loopbackTwinOrigins(origin: string): string[] {
  */
 export function isBlockedAuthPath(path: string): boolean {
   // API keys are managed through the app's procedures, which ask the person to confirm it's them.
-  return path.startsWith("/organization") || path.startsWith("/api-key") || path.startsWith("/multi-session");
+  return (
+    path.startsWith("/organization") ||
+    path.startsWith("/api-key") ||
+    path.startsWith("/multi-session")
+  );
 }
 
 /** Set while the directory has turned the account off. */

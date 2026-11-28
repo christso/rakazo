@@ -3,6 +3,7 @@ import { useTimeout } from "@rakazo/chat-ui/hooks";
 import type { PairedScreenInput, PairedScreenRequest, UserDeviceSummary } from "@rakazo/contracts";
 import { pairedScreenFrame, USER_DEVICE_PATH } from "@rakazo/contracts";
 import { readBoundedJsonResponse } from "@rakazo/core";
+import { bestEffort } from "@rakazo/logging/best-effort";
 import { Button, Dialog, DialogContent, DialogTitle } from "@rakazo/ui-web";
 import type { MouseEvent, PointerEvent } from "react";
 import { useEffect, useRef, useState } from "react";
@@ -76,7 +77,10 @@ export function PairedScreenDialog({
     return () => {
       controller.abort();
       if (activeId.current)
-        void request(device.deviceId, { action: "close", id: activeId.current }).catch(() => {});
+        void bestEffort(
+          "close paired screen",
+          request(device.deviceId, { action: "close", id: activeId.current }),
+        );
     };
   }, [device.deviceId]);
 
@@ -134,7 +138,10 @@ export function PairedScreenDialog({
     activeControl.current = undefined;
     dragging.current = undefined;
     queue.current.length = 0;
-    void request(device.deviceId, { action: "close", id: sessionId }).catch(() => {});
+    void bestEffort(
+      "close paired screen",
+      request(device.deviceId, { action: "close", id: sessionId }),
+    );
   }
 
   useTimeout(

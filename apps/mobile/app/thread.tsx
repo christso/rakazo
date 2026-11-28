@@ -15,9 +15,8 @@ import {
   subscribeSessionGeneration,
 } from "../lib/api/session";
 import { errorText } from "../lib/api/user-error";
-import { mobileTokens } from "../lib/appearance/appearance";
-
 import { verifiedScope } from "../lib/api/verified-scope";
+import { mobileTokens } from "../lib/appearance/appearance";
 import { useMobileTokens, useThemedStyles } from "../lib/native/native";
 import {
   notificationOpenTarget,

@@ -78,7 +78,11 @@ export async function startSecretStore(
   source: NodeJS.ProcessEnv,
   realtime?: RealtimeFanout,
 ): Promise<SecretStore> {
-  const store = createSecretStore(resolveEncryptionKey({ ...source, ENCRYPTION_KEY: encryptionKey }), source, realtime);
+  const store = createSecretStore(
+    resolveEncryptionKey({ ...source, ENCRYPTION_KEY: encryptionKey }),
+    source,
+    realtime,
+  );
   await store.start();
   return store;
 }

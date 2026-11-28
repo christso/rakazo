@@ -33,8 +33,8 @@ import {
 } from "./configured-sandbox.js";
 import type { SandboxProviderOptions } from "./sandbox-factory.js";
 import { createSandboxProvider } from "./sandbox-factory.js";
-import { loadComputerConnection } from "./space-computer-connections.js";
 import { sandboxKindCapabilities } from "./sandbox-kind-capabilities.js";
+import { loadComputerConnection } from "./space-computer-connections.js";
 
 export async function createRunSandbox(
   kind: string,

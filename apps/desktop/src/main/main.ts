@@ -5,12 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import type { HostScreen } from "@rakazo/adapters/host-screen";
 import { startUserDeviceClient } from "@rakazo/adapters/user-device-client";
-import type {
-  DesktopLocalStackState,
-  DesktopReachability,
-  DesktopSetup,
-  RakazoDesktopDevice,
-} from "@rakazo/contracts";
+import type { DesktopLocalStackState, DesktopSetup, RakazoDesktopDevice } from "@rakazo/contracts";
 import { bestEffort } from "@rakazo/logging";
 import type { Session } from "electron";
 import {
@@ -36,16 +31,12 @@ import { createLocaleHandler, errorDetail, startDesktopLocale, t, withDetail } f
 import type { IpcCaller } from "./ipc/ipc.js";
 import { handleIpc, sentFrom } from "./ipc/ipc.js";
 import { registerPageApps } from "./page-apps/page-apps-ipc.js";
+import { probeManagedStack, probeServer } from "./setup/server-probe.js";
 import { installServerHeaders } from "./setup/server-request-headers.js";
 import {
   DEFAULT_LOCAL_WEB_URL,
-  desktopStackImageTag,
-  isRakazoHealth,
   managedLocalOpenUrl,
-  maySendDesktopStackToken,
-  normalizeServerUrl,
   probeFailureMessage,
-  readProbeJson,
   resolveStartupTarget,
 } from "./setup/setup-config.js";
 import {
@@ -134,7 +125,6 @@ import {
   createWindow,
   installBundledRenderer,
   markOnce,
-  PROBE_TIMEOUT_MS,
   probeDocument,
   remoteServerOrigin,
   resolveSessionForTarget,
@@ -151,8 +141,6 @@ installDesktopEarlyErrorReporting();
 const PERFORMANCE_USER_DATA = process.env.RAKAZO_PERFORMANCE_USER_DATA;
 /** Test hook: where the app-managed stack answers. Mode `new` still requires loopback. */
 const LOCAL_WEB_URL = process.env.RAKAZO_LOCAL_WEB_URL?.trim() || DEFAULT_LOCAL_WEB_URL;
-const DESKTOP_STACK_PROBE_PATH = "/.well-known/rakazo-desktop-stack";
-const DESKTOP_STACK_TOKEN_HEADER = "x-rakazo-desktop-stack-token";
 let monitoringSession: Session | undefined;
 let monitoringTargetUrl: string | undefined;
 let stopMonitoringSession: (() => void) | undefined;
@@ -209,59 +197,6 @@ const installApplicationMenu = applicationMenuInstaller({
   revokeLocalComputerAccess,
   updaterEnvironment,
 });
-async function probeServer(
-  rawUrl: string,
-  signal?: AbortSignal,
-  headers: Record<string, string> = {},
-): Promise<DesktopReachability> {
-  const url = normalizeServerUrl(rawUrl);
-  if (url === null) return { ok: false, error: t("Enter a valid http:// or https:// address.") };
-  const timeout = AbortSignal.timeout(PROBE_TIMEOUT_MS);
-
-  try {
-    const response = await net.fetch(`${url}/rpc/health`, {
-      method: "POST",
-      headers: { ...headers, "content-type": "application/json" },
-      body: JSON.stringify({ json: {} }),
-      cache: "no-store",
-      credentials: "omit",
-      redirect: "manual",
-      signal: signal ? AbortSignal.any([timeout, signal]) : timeout,
-    });
-    if (response.status >= 300 && response.status < 400) {
-      return {
-        ok: false,
-        status: response.status,
-        url,
-        error: t("That address redirects elsewhere. Enter the final Rakazo server address."),
-      };
-    }
-    if (!response.ok) {
-      return {
-        ok: false,
-        status: response.status,
-        url,
-        error: t("The server answered with HTTP {status}.", { status: response.status }),
-      };
-    }
-    const health = await readProbeJson(response);
-    if (!isRakazoHealth(health)) {
-      return {
-        ok: false,
-        status: response.status,
-        url,
-        error: t("That address did not respond like a Rakazo server."),
-      };
-    }
-    return {
-      ok: true,
-      status: response.status,
-      url,
-    };
-  } catch (error) {
-    return { ok: false, url, error: probeFailureMessage(error) };
-  }
-}
 /**
  * Asked once, and only of someone running This computer on Docker while Docker answers: a
  * declined offer is remembered; an accepted one moves the data when the stack next starts.
@@ -300,31 +235,6 @@ async function offerDockerMove(userStackDir: string): Promise<StackChoice> {
     return "docker";
   }
   return choice;
-}
-/** A public health response is not enough: another checkout may own the same fixed port. */
-async function probeManagedStack(
-  rawUrl: string,
-  token: string,
-  signal?: AbortSignal,
-): Promise<string | null> {
-  const url = normalizeServerUrl(rawUrl);
-  // Never put the private stack token on a cleartext LAN or .local hop.
-  if (url === null || !maySendDesktopStackToken(url)) return null;
-  const timeout = AbortSignal.timeout(PROBE_TIMEOUT_MS);
-  try {
-    const response = await net.fetch(`${url}${DESKTOP_STACK_PROBE_PATH}`, {
-      method: "GET",
-      headers: { [DESKTOP_STACK_TOKEN_HEADER]: token },
-      cache: "no-store",
-      credentials: "omit",
-      redirect: "manual",
-      signal: signal ? AbortSignal.any([timeout, signal]) : timeout,
-    });
-    if (!response.ok) return null;
-    return desktopStackImageTag(await readProbeJson(response));
-  } catch {
-    return null;
-  }
 }
 /**
  * Failures raised here carry their translated detail; any other is a network error. Their

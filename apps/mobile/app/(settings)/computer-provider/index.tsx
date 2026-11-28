@@ -5,22 +5,22 @@ import { useLocalSearchParams } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
 import { ScrollView, StyleSheet, Text } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { NativeSwitch } from "../../components/native/native-switch";
+import { NativeSwitch } from "../../../components/native/native-switch";
 import {
   SettingsGroup,
   SettingsInputRow,
   SettingsRow,
-} from "../../components/settings/settings-group";
-import { LoadFailure } from "../../components/ui/load-failure";
-import { MenuPicker } from "../../components/ui/menu-picker";
-import { useSpaceChanges } from "../../lib/api/roster-signals";
-import { errorText } from "../../lib/api/user-error";
-import { useSideInsets } from "../../lib/layout/side-insets";
-import { native, useThemedStyles } from "../../lib/native/native";
-import { useScreenHeader } from "../../lib/navigation/screen-header";
-import { queryClient, targetRpcQuery, useSave } from "../../lib/query/query";
-import { useScreenQuery } from "../../lib/query/screen-query";
-import { settingsTarget } from "../../lib/query/settings-target";
+} from "../../../components/settings/settings-group";
+import { LoadFailure } from "../../../components/ui/load-failure";
+import { MenuPicker } from "../../../components/ui/menu-picker";
+import { useSpaceChanges } from "../../../lib/api/roster-signals";
+import { errorText } from "../../../lib/api/user-error";
+import { useSideInsets } from "../../../lib/layout/side-insets";
+import { native, useThemedStyles } from "../../../lib/native/native";
+import { useScreenHeader } from "../../../lib/navigation/screen-header";
+import { queryClient, targetRpcQuery, useSave } from "../../../lib/query/query";
+import { useScreenQuery } from "../../../lib/query/screen-query";
+import { settingsTarget } from "../../../lib/query/settings-target";
 
 type Form = {
   key: string;

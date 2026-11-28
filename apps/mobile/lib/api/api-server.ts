@@ -1,4 +1,5 @@
 import { t } from "@lingui/core/macro";
+import { bestEffort } from "@rakazo/logging/best-effort";
 import * as SecureStore from "expo-secure-store";
 import {
   pendingSessionTokens,
@@ -97,7 +98,7 @@ export async function loadApiBase() {
     if (generation === currentSessionGeneration() && apiBase === currentApiBase())
       await clearSessionToken().catch(() => undefined);
   }
-  void retryPendingSessionRevocations(apiBase).catch(() => undefined);
+  void bestEffort("retry pending sign-outs", retryPendingSessionRevocations(apiBase));
 
   try {
     const storedSpace = (await SecureStore.getItemAsync(SPACE_KEY)) ?? "";
@@ -409,8 +410,9 @@ async function restoreCredentials(previousToken: string, previousSpace: string):
     }
   }
   if (previousToken) {
-    await resumeLiveNotifications(currentApiBase(), previousToken, previousSpace).catch(
-      () => undefined,
+    await bestEffort(
+      "resume notifications for the previous Space",
+      resumeLiveNotifications(currentApiBase(), previousToken, previousSpace),
     );
   }
   return persisted ? previousToken : "";

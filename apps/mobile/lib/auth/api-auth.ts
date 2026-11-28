@@ -8,6 +8,7 @@ import {
   SIGNUP_SURFACE_HEADER,
 } from "@rakazo/contracts";
 import { displayName, signupRequiresEmailVerification } from "@rakazo/core";
+import { bestEffort } from "@rakazo/logging/best-effort";
 import { Platform } from "react-native";
 import type { PendingSignOut } from "../api/api";
 import {
@@ -290,7 +291,7 @@ async function replaceSessionAfterPasswordChange(
     await maybeResume();
     throw error;
   }
-  await replaceSavedToken(apiBase, previousToken, token).catch(() => undefined);
+  await bestEffort("replace saved session token", replaceSavedToken(apiBase, previousToken, token));
   await maybeResume();
 }
 export async function signOut(expectedTokens?: readonly string[], expectedApiBase?: string) {
@@ -322,7 +323,7 @@ export async function signOut(expectedTokens?: readonly string[], expectedApiBas
   // A failed write cannot block the local sign-out; the session still expires server-side.
   const persisted = revocation.token ? await savePendingSignOut(revocation) : false;
   if (revocation.token)
-    await queueSessionRevocation(apiBase, revocation.token).catch(() => undefined);
+    await bestEffort("queue session revocation", queueSessionRevocation(apiBase, revocation.token));
   // A sign-in that saved its token since the read has no record; as in a server switch, the
   // sign-out stops without clearing it. The record stays for the session the user signed out of.
   if (generation !== currentSessionGeneration() || sessionSaveInProgress()) {

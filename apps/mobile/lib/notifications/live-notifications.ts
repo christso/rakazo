@@ -1,4 +1,5 @@
 import { t } from "@lingui/core/macro";
+import { bestEffort } from "@rakazo/logging/best-effort";
 import { requireNativeModule } from "expo-modules-core";
 import * as Notifications from "expo-notifications";
 import { Platform } from "react-native";
@@ -113,7 +114,7 @@ export function configureForegroundNotifications(): void {
       // Finished work is already on screen while the app is open; only questions and failures alert.
       // Another login's work is not on screen.
       const data = request.content.data ?? {};
-      const active = await activeSavedAccount().catch(() => undefined);
+      const active = await bestEffort("read active account", activeSavedAccount());
       const show =
         !ownedBy(active, data) ||
         (data.kind !== "completion" && !notificationTargetsThread(data, openThread));
@@ -128,7 +129,7 @@ export function configureForegroundNotifications(): void {
 }
 
 export async function getLiveNotificationSettings(): Promise<LiveNotificationSettings> {
-  const active = await activeSavedAccount().catch(() => undefined);
+  const active = await bestEffort("read active account", activeSavedAccount());
   return (
     active?.notifications ??
     nativeNotifications?.getSettings() ??
@@ -289,7 +290,7 @@ export async function setOpenNotificationThread(
 
 export async function dismissThreadNotifications(target: NotificationThreadTarget): Promise<void> {
   if (!target.botId && !target.threadId && !target.groupId) return;
-  const active = await activeSavedAccount().catch(() => undefined);
+  const active = await bestEffort("read active account", activeSavedAccount());
   const presented = await Notifications.getPresentedNotificationsAsync();
   await Promise.all(
     presented
@@ -316,7 +317,10 @@ export async function afterChatNotifyChange(
     change.notify ? undefined : change.botId,
   ).catch(() => undefined);
   if (!change.notify && change.threadId) {
-    await dismissThreadNotifications({ threadId: change.threadId }).catch(() => undefined);
+    await bestEffort(
+      "dismiss chat notifications",
+      dismissThreadNotifications({ threadId: change.threadId }),
+    );
   }
 }
 

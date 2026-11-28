@@ -205,12 +205,17 @@ export async function runTrial(
     let clockShiftMs = 0;
     const now = () => new Date(Date.now() + clockShiftMs);
     const userComputer = scenario.userComputer?.();
-    handles = await options.createApp(services, messaging, {
-      notifications,
-      realtime,
-      now,
-      userDevices: userComputer?.gateway,
-    }, site);
+    handles = await options.createApp(
+      services,
+      messaging,
+      {
+        notifications,
+        realtime,
+        now,
+        userDevices: userComputer?.gateway,
+      },
+      site,
+    );
     const prisma = asSystem(handles.prisma);
     db = prisma;
     realtime.attach(prisma);

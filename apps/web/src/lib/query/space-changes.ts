@@ -71,7 +71,9 @@ export function spaceChanged(kind: ReadChangeKind, client = queryClient): Promis
           (procedure) => path.slice(-procedure.split("/").length).join("/") === procedure,
         );
       }
-      return procedures.some((procedure) => path.slice(-procedure.length).join(".") === procedure.join("."));
+      return procedures.some(
+        (procedure) => path.slice(-procedure.length).join(".") === procedure.join("."),
+      );
     },
   };
   return refreshQueriesAfterSignal(client, filters);

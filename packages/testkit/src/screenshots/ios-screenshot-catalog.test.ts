@@ -12,7 +12,7 @@ const catalogDir = path.join(mobileDir, "e2e", "ios-screenshots");
 
 /** Screens the catalog cannot reach yet, and why. Capture one and remove it here. */
 const UNCOVERED: Record<string, string> = {
-  "computer-provider":
+  "computer-provider/index":
     "requires a Space with computer provider settings; the catalog fixtures connect none",
   "integration-setup": "redirects to Integrations",
   "meeting-calendar": "the catalog fixtures do not enable a meeting calendar",
