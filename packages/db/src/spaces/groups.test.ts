@@ -245,6 +245,7 @@ describe("archiveGroup", () => {
           OR: [
             { threadId: "thread-1" },
             { trigger: "helper", sourceMessage: { threadId: "thread-1" } },
+            { approvalThreadId: "thread-1", trigger: "bot_message" },
           ],
         }),
       }),
@@ -328,6 +329,7 @@ describe("archiveGroup", () => {
         OR: [
           { threadId: "thread-1" },
           { trigger: "helper", sourceMessage: { threadId: "thread-1" } },
+          { approvalThreadId: "thread-1", trigger: "bot_message" },
         ],
         status: "cancelled",
       },
